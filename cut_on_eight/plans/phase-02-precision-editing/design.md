@@ -33,6 +33,7 @@ Phase 2 extends these boundaries rather than replacing them.
 ### Included
 
 - Backend-generated adaptive overview thumbnails.
+- Compact grouping policy for thumbnails and other immutable derived assets.
 - Editor-first application layout with standalone Editor and Library views.
 - Collapsible segment panel and minimized operational status.
 - One central, context-sensitive shortcut help popover.
@@ -144,6 +145,8 @@ Generated files live inside the managed project:
 └── ...
 ```
 
+Individual sampled frames exist only inside the generation staging directory. Successful promotion retains bounded WebP sprite pages and one compact manifest; it never leaves one file per thumbnail in the managed project.
+
 The manifest identifies:
 
 - Schema version.
@@ -154,7 +157,11 @@ The manifest identifies:
 - Sprite pages.
 - Timestamp and sprite rectangle for every sample.
 
+The persisted representation remains versioned JSON for portability, browser parsing, diagnostics, and straightforward migrations, but repetitive sample data uses documented positional arrays instead of repeating object keys for every thumbnail. The HTTP response may additionally use normal compression. A binary manifest format is deferred until measured size or parsing evidence justifies its migration cost.
+
 Thumbnail data is disposable. A missing, stale, corrupt, or incompatible set is removed and regenerated without changing the project sidecar.
+
+The same rule applies to future immutable derived assets: group many small outputs into bounded pages or bundles with one versioned index when they share a lifecycle. Mutable project sidecars, workspace/catalogue documents, and durable job records remain separate atomic files because they are updated and recovered independently.
 
 ## Timeline Navigation
 
