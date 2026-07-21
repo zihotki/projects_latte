@@ -1,19 +1,27 @@
 <script lang="ts">
+  import type { JobCounts } from '../lib/job-events.js';
+
   type ServiceState = 'checking' | 'ready' | 'unavailable';
 
   let {
     backendState,
     ffprobeState,
-    jobsLabel,
+    jobCounts,
     importing,
     onImport,
   }: {
     backendState: ServiceState;
     ffprobeState: ServiceState;
-    jobsLabel: string;
+    jobCounts: JobCounts | null;
     importing: boolean;
     onImport: () => void;
   } = $props();
+
+  const jobsLabel = $derived(
+    jobCounts === null
+      ? 'checking'
+      : `${jobCounts.queued} queued · ${jobCounts.running} running · ${jobCounts.completed} done · ${jobCounts.failed} failed`,
+  );
 </script>
 
 <header class="app-bar">
@@ -35,7 +43,13 @@
       >
       <span
         class="service-state"
-        data-state={jobsLabel === 'idle' ? 'ready' : 'checking'}
+        data-state={jobCounts === null
+          ? 'checking'
+          : jobCounts.failed > 0
+            ? 'unavailable'
+            : jobCounts.queued + jobCounts.running === 0
+              ? 'ready'
+              : 'checking'}
       >
         Jobs: {jobsLabel}
       </span>

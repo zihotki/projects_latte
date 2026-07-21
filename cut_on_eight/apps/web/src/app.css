@@ -144,7 +144,9 @@ button:disabled {
 }
 
 .error-banner,
-.save-error-banner {
+.save-error-banner,
+.tool-warning,
+.connection-warning {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -152,6 +154,17 @@ button:disabled {
   padding: 0.7rem 1.5rem;
   background: #5a252c;
   color: #ffd8dc;
+}
+.tool-warning,
+.connection-warning {
+  padding: 0.55rem 1.5rem;
+  background: #372f1d;
+  color: #f4d992;
+  font-size: 0.78rem;
+}
+.connection-warning {
+  background: #252d3a;
+  color: #c4d7f2;
 }
 .error-banner button,
 .save-error-banner button {
@@ -208,6 +221,10 @@ button:disabled {
 [data-save-state='unsaved'] {
   color: #f1c66b;
 }
+[data-job-state='failed'] {
+  color: #ff9da6;
+}
+.retry-inspection,
 .close-project {
   align-self: stretch;
   padding: 0 0.65rem;
@@ -216,6 +233,11 @@ button:disabled {
   background: transparent;
   color: #aeb5c0;
   cursor: pointer;
+}
+.retry-inspection {
+  color: #f1c66b;
+  font-size: 0.68rem;
+  font-weight: 700;
 }
 
 .workspace-layout {

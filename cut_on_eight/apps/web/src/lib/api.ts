@@ -1,11 +1,13 @@
 import {
   apiErrorSchema,
+  capabilitiesSchema,
   importSelectionResponseSchema,
   jobRecordSchema,
   jobSnapshotSchema,
   projectDocumentSchema,
   workspaceSnapshotSchema,
   type ApiError,
+  type Capabilities,
   type ImportSelectionResponse,
   type JobRecord,
   type JobSnapshot,
@@ -137,6 +139,10 @@ export function closeProject(
 
 export function loadJobs(): Promise<JobSnapshot> {
   return request('/api/jobs', jobSnapshotSchema);
+}
+
+export function loadCapabilities(): Promise<Capabilities> {
+  return request('/api/capabilities', capabilitiesSchema);
 }
 
 export function retryJob(jobId: string): Promise<JobRecord> {

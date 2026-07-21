@@ -1,7 +1,8 @@
 <script lang="ts">
   import type {
+    Capabilities,
+    JobRecord,
     JobSnapshot,
-    JobState,
     ProjectDocument,
     WorkspaceSnapshot,
   } from '@cut-on-eight/contracts';
@@ -13,12 +14,20 @@
   import {
     activateProject,
     closeProject,
-    loadJobs,
+    loadCapabilities,
     loadWorkspace,
     openProject,
     saveProject,
     selectImport,
+    retryJob,
   } from './lib/api.js';
+  import {
+    connectJobEvents,
+    countJobs,
+    mergeJobRecord,
+    mergeJobSnapshot,
+    newestInspectionJob,
+  } from './lib/job-events.js';
   import {
     SaveController,
     type SaveState,
@@ -34,23 +43,27 @@
   let workspace = $state.raw<WorkspaceSnapshot | null>(null);
   let jobs = $state.raw<JobSnapshot | null>(null);
   let backendState = $state<BackendState>('checking');
+  let ffprobeState = $state<BackendState>('checking');
   let loading = $state(true);
   let importing = $state(false);
   let openingProjectId = $state<string | null>(null);
   let busyProjectId = $state<string | null>(null);
   let errorMessage = $state<string | null>(null);
-  let jobsLabel = $state('checking');
+  let jobConnectionWarning = $state<string | null>(null);
   let saveStates = $state<Record<string, SaveState>>({});
   let saveErrors = $state<Record<string, string>>({});
   let retryingProjectId = $state<string | null>(null);
+  let retryingJobId = $state<string | null>(null);
 
   const controllers = new Map<string, SaveController>();
   const sampledPlaybackPositions = new Map<string, number>();
   let activeEditorControl: VideoEditorControl | null = null;
+  let closeJobEvents: (() => void) | null = null;
   let disposed = false;
 
   onDestroy(() => {
     disposed = true;
+    closeJobEvents?.();
     for (const controller of controllers.values()) controller.cancel();
     controllers.clear();
   });
@@ -61,6 +74,12 @@
   );
   const openProjectIds = $derived(
     new Set(workspace?.openProjects.map((project) => project.id) ?? []),
+  );
+  const jobCounts = $derived(countJobs(jobs));
+  const jobDataWarning = $derived(
+    jobs !== null && jobs.errors.length > 0
+      ? `${jobs.errors.length} inspection job record${jobs.errors.length === 1 ? ' is' : 's are'} unreadable and were left unchanged.`
+      : null,
   );
 
   function describeError(error: unknown, action: string): string {
@@ -237,30 +256,37 @@
     }
   }
 
-  function jobStateFor(projectId: string): JobState | null {
-    const projectJobs =
-      jobs?.jobs.filter((job) => job.projectId === projectId) ?? [];
-    return projectJobs.at(-1)?.state ?? null;
+  function inspectionJobFor(projectId: string): JobRecord | null {
+    return newestInspectionJob(jobs, projectId);
   }
 
-  async function refreshJobs(): Promise<void> {
+  async function loadToolCapabilities(): Promise<void> {
     try {
-      jobs = await loadJobs();
-      const activeJobs = jobs.jobs.filter(
-        (job) => job.state === 'queued' || job.state === 'running',
-      ).length;
-      jobsLabel = activeJobs === 0 ? 'idle' : `${activeJobs} active`;
+      const capabilities: Capabilities = await loadCapabilities();
+      ffprobeState = capabilities.ffprobeAvailable ? 'ready' : 'unavailable';
     } catch {
-      jobs = null;
-      jobsLabel = 'unavailable';
+      ffprobeState = 'unavailable';
     }
+  }
+
+  function startJobEvents(): void {
+    closeJobEvents?.();
+    closeJobEvents = connectJobEvents({
+      onSnapshot: (snapshot) => {
+        if (!disposed) jobs = mergeJobSnapshot(jobs, snapshot);
+      },
+      onWarning: (warning) => {
+        if (!disposed) jobConnectionWarning = warning;
+      },
+    });
   }
 
   async function initialize(): Promise<void> {
     try {
       applyWorkspace(await loadWorkspace(), false);
       backendState = 'ready';
-      void refreshJobs();
+      void loadToolCapabilities();
+      startJobEvents();
     } catch (error) {
       backendState = 'unavailable';
       errorMessage = describeError(error, 'Could not load the workspace');
@@ -282,7 +308,7 @@
       if (result.workspace.activeProjectId === prepared?.projectId) {
         prepared.control?.releaseAfterSave();
       }
-      void refreshJobs();
+      void loadToolCapabilities();
     } catch (error) {
       prepared?.control?.releaseAfterSave();
       errorMessage = describeError(error, 'Import failed');
@@ -358,6 +384,24 @@
     }
   }
 
+  async function retryInspection(job: JobRecord): Promise<void> {
+    if (retryingJobId !== null) return;
+
+    retryingJobId = job.id;
+    errorMessage = null;
+    try {
+      const updated = await retryJob(job.id);
+      jobs =
+        jobs === null
+          ? { jobs: [updated], errors: [] }
+          : mergeJobRecord(jobs, updated);
+    } catch (error) {
+      errorMessage = describeError(error, 'Could not retry inspection');
+    } finally {
+      retryingJobId = null;
+    }
+  }
+
   void initialize();
 </script>
 
@@ -371,11 +415,30 @@
 <main>
   <AppBar
     {backendState}
-    ffprobeState="unavailable"
-    {jobsLabel}
+    {ffprobeState}
+    {jobCounts}
     {importing}
     onImport={() => void importMp4()}
   />
+
+  {#if ffprobeState === 'unavailable'}
+    <div class="tool-warning" role="status">
+      FFprobe is unavailable, so video details cannot be inspected. Marking,
+      saving, and playback still work.
+    </div>
+  {/if}
+
+  {#if jobConnectionWarning !== null}
+    <div class="connection-warning" role="status">
+      {jobConnectionWarning}
+    </div>
+  {/if}
+
+  {#if jobDataWarning !== null}
+    <div class="connection-warning" role="status">
+      {jobDataWarning}
+    </div>
+  {/if}
 
   {#if errorMessage !== null}
     <div class="error-banner" role="alert">
@@ -411,9 +474,11 @@
       activeProjectId={workspace.activeProjectId}
       {busyProjectId}
       {saveStateFor}
-      {jobStateFor}
+      {inspectionJobFor}
+      {retryingJobId}
       onActivate={(projectId) => void switchProject(projectId)}
       onClose={(projectId) => void saveAndClose(projectId)}
+      onRetryInspection={(job) => void retryInspection(job)}
     />
 
     <div class="workspace-layout">

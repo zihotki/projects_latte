@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { JobState, ProjectDocument } from '@cut-on-eight/contracts';
+  import type { JobRecord, ProjectDocument } from '@cut-on-eight/contracts';
   import type { SaveState } from '../lib/save-controller.js';
 
   let {
@@ -7,17 +7,21 @@
     activeProjectId,
     busyProjectId,
     saveStateFor,
-    jobStateFor,
+    inspectionJobFor,
+    retryingJobId,
     onActivate,
     onClose,
+    onRetryInspection,
   }: {
     projects: ProjectDocument[];
     activeProjectId: string | null;
     busyProjectId: string | null;
     saveStateFor: (projectId: string) => SaveState;
-    jobStateFor: (projectId: string) => JobState | null;
+    inspectionJobFor: (projectId: string) => JobRecord | null;
+    retryingJobId: string | null;
     onActivate: (projectId: string) => void;
     onClose: (projectId: string) => void;
+    onRetryInspection: (job: JobRecord) => void;
   } = $props();
 </script>
 
@@ -25,7 +29,7 @@
   {#each projects as project (project.id)}
     {@const active = project.id === activeProjectId}
     {@const saveState = saveStateFor(project.id)}
-    {@const jobState = jobStateFor(project.id)}
+    {@const inspectionJob = inspectionJobFor(project.id)}
     <div class="project-tab" data-active={active}>
       <button
         class="project-switch"
@@ -37,9 +41,27 @@
         <span class="project-name">{project.source.fileName}</span>
         <span class="project-meta">
           <span data-save-state={saveState}>{saveState}</span>
-          {#if jobState !== null}<span>inspection {jobState}</span>{/if}
+          {#if inspectionJob !== null}
+            <span
+              data-job-state={inspectionJob.state}
+              title={inspectionJob.state === 'failed'
+                ? inspectionJob.error.message
+                : undefined}>inspection {inspectionJob.state}</span
+            >
+          {/if}
         </span>
       </button>
+      {#if inspectionJob?.state === 'failed' && inspectionJob.error.retryable}
+        <button
+          class="retry-inspection"
+          type="button"
+          title={inspectionJob.error.message}
+          disabled={retryingJobId !== null}
+          onclick={() => onRetryInspection(inspectionJob)}
+        >
+          {retryingJobId === inspectionJob.id ? 'Retrying…' : 'Retry'}
+        </button>
+      {/if}
       <button
         class="close-project"
         type="button"
