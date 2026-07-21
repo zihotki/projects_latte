@@ -5,22 +5,36 @@
     projects,
     openProjectIds,
     openingProjectId,
+    importing,
+    onImport,
     onOpen,
   }: {
     projects: ProjectSummary[];
     openProjectIds: ReadonlySet<string>;
     openingProjectId: string | null;
+    importing: boolean;
+    onImport: () => void;
     onOpen: (projectId: string) => void;
   } = $props();
 </script>
 
-<aside class="library-panel" aria-labelledby="library-title">
+<section class="library-panel" aria-labelledby="library-title">
   <div class="panel-heading">
     <div>
-      <p class="eyebrow">Managed files</p>
-      <h2 id="library-title">Library</h2>
+      <h1 id="library-title">Library</h1>
+      <p>Managed source videos</p>
     </div>
-    <span class="item-count">{projects.length}</span>
+    <div class="library-actions">
+      <span class="item-count">{projects.length}</span>
+      <button
+        class="primary-action"
+        type="button"
+        onclick={onImport}
+        disabled={importing}
+      >
+        {importing ? 'Selecting…' : 'Import MP4'}
+      </button>
+    </div>
   </div>
 
   {#if projects.length === 0}
@@ -54,4 +68,4 @@
       {/each}
     </ul>
   {/if}
-</aside>
+</section>

@@ -17,6 +17,8 @@
     onPlaybackSample,
     registerControl,
     onSave,
+    segmentsCollapsed,
+    onSegmentsCollapsedChange,
   }: {
     project: ProjectDocument;
     onChange: (
@@ -26,6 +28,8 @@
     onPlaybackSample: (projectId: string, seconds: number) => void;
     registerControl: RegisterVideoEditorControl;
     onSave: () => void;
+    segmentsCollapsed: boolean;
+    onSegmentsCollapsedChange: (collapsed: boolean) => void;
   } = $props();
 
   let video = $state<HTMLVideoElement>();
@@ -282,7 +286,7 @@
 <svelte:window onkeydown={handleKeyboard} />
 
 <div
-  class="video-editor"
+  class={['video-editor', segmentsCollapsed && 'segments-collapsed']}
   inert={interactionLocked}
   aria-busy={interactionLocked}
 >
@@ -307,6 +311,9 @@
     <div class="transport-summary" aria-live="off">
       <span>{currentSeconds.toFixed(2)}s / {displayDuration.toFixed(2)}s</span>
       <span>{playing ? 'Playing' : 'Paused'}</span>
+      <span
+        >{project.selectedSegmentId === null ? 'Full video' : 'Segment'}</span
+      >
       {#if pendingStartSeconds !== null}
         <span class="pending-label">In: {pendingStartSeconds.toFixed(2)}s</span>
       {/if}
@@ -326,7 +333,6 @@
     />
 
     <div class="editor-controls">
-      <span><kbd>Space</kbd> play · <kbd>I</kbd> in · <kbd>O</kbd> out</span>
       <label>
         <input
           type="checkbox"
@@ -336,13 +342,27 @@
         />
         Pause after creating a segment
       </label>
+      <button
+        class="secondary-action"
+        type="button"
+        aria-expanded={!segmentsCollapsed}
+        aria-controls="segment-panel"
+        onclick={() => onSegmentsCollapsedChange(!segmentsCollapsed)}
+      >
+        {segmentsCollapsed ? 'Show' : 'Hide'} segments ({project.segments
+          .length})
+      </button>
     </div>
   </section>
 
-  <SegmentList
-    segments={project.segments}
-    selectedSegmentId={project.selectedSegmentId}
-    onSelect={selectSegment}
-    onToggleExport={toggleExport}
-  />
+  {#if !segmentsCollapsed}
+    <div id="segment-panel">
+      <SegmentList
+        segments={project.segments}
+        selectedSegmentId={project.selectedSegmentId}
+        onSelect={selectSegment}
+        onToggleExport={toggleExport}
+      />
+    </div>
+  {/if}
 </div>

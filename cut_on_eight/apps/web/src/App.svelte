@@ -7,7 +7,10 @@
     WorkspaceSnapshot,
   } from '@cut-on-eight/contracts';
   import { onDestroy } from 'svelte';
-  import AppBar from './components/AppBar.svelte';
+  import EditorShell, {
+    type ActiveView,
+    type EditorMode,
+  } from './components/EditorShell.svelte';
   import LibraryPanel from './components/LibraryPanel.svelte';
   import ProjectStrip from './components/ProjectStrip.svelte';
   import VideoEditor from './components/VideoEditor.svelte';
@@ -40,6 +43,9 @@
 
   type BackendState = 'checking' | 'ready' | 'unavailable';
 
+  const ACTIVE_VIEW_KEY = 'cut-on-eight.active-view';
+  const SEGMENT_PANEL_KEY = 'cut-on-eight.segment-panel-collapsed';
+
   let workspace = $state.raw<WorkspaceSnapshot | null>(null);
   let jobs = $state.raw<JobSnapshot | null>(null);
   let backendState = $state<BackendState>('checking');
@@ -54,6 +60,8 @@
   let saveErrors = $state<Record<string, string>>({});
   let retryingProjectId = $state<string | null>(null);
   let retryingJobId = $state<string | null>(null);
+  let activeView = $state<ActiveView>('library');
+  let segmentPanelCollapsed = $state(false);
 
   const controllers = new Map<string, SaveController>();
   const sampledPlaybackPositions = new Map<string, number>();
@@ -81,6 +89,80 @@
       ? `${jobs.errors.length} inspection job record${jobs.errors.length === 1 ? ' is' : 's are'} unreadable and were left unchanged.`
       : null,
   );
+  const jobsLabel = $derived(
+    jobCounts === null
+      ? 'checking'
+      : `${jobCounts.queued} queued · ${jobCounts.running} running · ${jobCounts.completed} done · ${jobCounts.failed} failed`,
+  );
+  const statusState = $derived<'ready' | 'working' | 'attention'>(
+    backendState === 'unavailable' ||
+      ffprobeState === 'unavailable' ||
+      (jobCounts?.failed ?? 0) > 0 ||
+      errorMessage !== null ||
+      Object.keys(saveErrors).length > 0
+      ? 'attention'
+      : backendState === 'checking' ||
+          ffprobeState === 'checking' ||
+          importing ||
+          busyProjectId !== null ||
+          (jobCounts?.queued ?? 0) + (jobCounts?.running ?? 0) > 0
+        ? 'working'
+        : 'ready',
+  );
+  const statusLabel = $derived(
+    statusState === 'attention'
+      ? 'Attention'
+      : statusState === 'working'
+        ? 'Working'
+        : 'Ready',
+  );
+  const editorMode = $derived<EditorMode>(
+    activeProject?.selectedSegmentId === null || activeProject === null
+      ? 'video'
+      : 'segment',
+  );
+
+  function readActiveView(): ActiveView | null {
+    try {
+      const value = localStorage.getItem(ACTIVE_VIEW_KEY);
+      return value === 'editor' || value === 'library' ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function readCollapsedPreference(): boolean {
+    try {
+      return localStorage.getItem(SEGMENT_PANEL_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  function storePreference(key: string, value: string): void {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // The workspace remains usable when browser storage is unavailable.
+    }
+  }
+
+  function initializeUiPreferences(snapshot: WorkspaceSnapshot): void {
+    activeView =
+      readActiveView() ??
+      (snapshot.activeProjectId === null ? 'library' : 'editor');
+    segmentPanelCollapsed = readCollapsedPreference();
+  }
+
+  function changeView(view: ActiveView): void {
+    activeView = view;
+    storePreference(ACTIVE_VIEW_KEY, view);
+  }
+
+  function setSegmentPanelCollapsed(collapsed: boolean): void {
+    segmentPanelCollapsed = collapsed;
+    storePreference(SEGMENT_PANEL_KEY, String(collapsed));
+  }
 
   function describeError(error: unknown, action: string): string {
     return error instanceof Error
@@ -283,7 +365,9 @@
 
   async function initialize(): Promise<void> {
     try {
-      applyWorkspace(await loadWorkspace(), false);
+      const snapshot = await loadWorkspace();
+      initializeUiPreferences(snapshot);
+      applyWorkspace(snapshot, false);
       backendState = 'ready';
       void loadToolCapabilities();
       startJobEvents();
@@ -305,6 +389,7 @@
       }
       const result = await selectImport();
       applyWorkspace(result.workspace);
+      if (result.outcome !== 'cancelled') changeView('editor');
       if (result.workspace.activeProjectId === prepared?.projectId) {
         prepared.control?.releaseAfterSave();
       }
@@ -327,6 +412,7 @@
         await controllers.get(prepared.projectId)?.flush();
       }
       applyWorkspace(await openProject(projectId));
+      changeView('editor');
     } catch (error) {
       prepared?.control?.releaseAfterSave();
       errorMessage = describeError(error, 'Could not reopen the video');
@@ -413,106 +499,140 @@
 </svelte:head>
 
 <main>
-  <AppBar
-    {backendState}
-    {ffprobeState}
-    {jobCounts}
-    {importing}
-    onImport={() => void importMp4()}
-  />
+  <EditorShell
+    {activeView}
+    mode={editorMode}
+    {statusLabel}
+    {statusState}
+    onViewChange={changeView}
+  >
+    {#snippet status()}
+      <dl class="status-list">
+        <div>
+          <dt>Backend</dt>
+          <dd data-state={backendState}>{backendState}</dd>
+        </div>
+        <div>
+          <dt>FFprobe</dt>
+          <dd data-state={ffprobeState}>{ffprobeState}</dd>
+        </div>
+        <div>
+          <dt>Jobs</dt>
+          <dd>{jobsLabel}</dd>
+        </div>
+      </dl>
+    {/snippet}
 
-  {#if ffprobeState === 'unavailable'}
-    <div class="tool-warning" role="status">
-      FFprobe is unavailable, so video details cannot be inspected. Marking,
-      saving, and playback still work.
-    </div>
-  {/if}
+    {#snippet alerts()}
+      {#if ffprobeState === 'unavailable'}
+        <div class="tool-warning" role="status">
+          FFprobe is unavailable, so video details cannot be inspected. Marking,
+          saving, and playback still work.
+        </div>
+      {/if}
 
-  {#if jobConnectionWarning !== null}
-    <div class="connection-warning" role="status">
-      {jobConnectionWarning}
-    </div>
-  {/if}
+      {#if jobConnectionWarning !== null}
+        <div class="connection-warning" role="status">
+          {jobConnectionWarning}
+        </div>
+      {/if}
 
-  {#if jobDataWarning !== null}
-    <div class="connection-warning" role="status">
-      {jobDataWarning}
-    </div>
-  {/if}
+      {#if jobDataWarning !== null}
+        <div class="connection-warning" role="status">
+          {jobDataWarning}
+        </div>
+      {/if}
 
-  {#if errorMessage !== null}
-    <div class="error-banner" role="alert">
-      <span>{errorMessage}</span>
-      <button type="button" onclick={() => (errorMessage = null)}
-        >Dismiss</button
-      >
-    </div>
-  {/if}
+      {#if errorMessage !== null}
+        <div class="error-banner" role="alert">
+          <span>{errorMessage}</span>
+          <button type="button" onclick={() => (errorMessage = null)}
+            >Dismiss</button
+          >
+        </div>
+      {/if}
 
-  {#each Object.entries(saveErrors) as [projectId, saveError] (projectId)}
-    <div class="save-error-banner" role="alert">
-      <span
-        ><strong>{projectName(projectId)}</strong> was not saved: {saveError}</span
-      >
-      <button
-        type="button"
-        disabled={retryingProjectId !== null}
-        onclick={() => void retryAutosave(projectId)}
-      >
-        {retryingProjectId === projectId ? 'Retrying…' : 'Retry save'}
-      </button>
-    </div>
-  {/each}
+      {#each Object.entries(saveErrors) as [projectId, saveError] (projectId)}
+        <div class="save-error-banner" role="alert">
+          <span
+            ><strong>{projectName(projectId)}</strong> was not saved: {saveError}</span
+          >
+          <button
+            type="button"
+            disabled={retryingProjectId !== null}
+            onclick={() => void retryAutosave(projectId)}
+          >
+            {retryingProjectId === projectId ? 'Retrying…' : 'Retry save'}
+          </button>
+        </div>
+      {/each}
+    {/snippet}
 
-  {#if loading}
-    <section class="loading-state" aria-live="polite">
-      Restoring your workspace…
-    </section>
-  {:else if workspace !== null}
-    <ProjectStrip
-      projects={workspace.openProjects}
-      activeProjectId={workspace.activeProjectId}
-      {busyProjectId}
-      {saveStateFor}
-      {inspectionJobFor}
-      {retryingJobId}
-      onActivate={(projectId) => void switchProject(projectId)}
-      onClose={(projectId) => void saveAndClose(projectId)}
-      onRetryInspection={(job) => void retryInspection(job)}
-    />
-
-    <div class="workspace-layout">
-      <LibraryPanel
-        projects={workspace.library}
-        {openProjectIds}
-        {openingProjectId}
-        onOpen={(projectId) => void reopenProject(projectId)}
-      />
-
-      <section class="workspace-stage" aria-labelledby="workspace-title">
-        {#if activeProject !== null}
-          <div class="stage-heading">
-            <p class="eyebrow">Active video</p>
-            <h2 id="workspace-title">{activeProject.source.fileName}</h2>
-          </div>
-          {#key activeProject.id}
-            <VideoEditor
-              project={activeProject}
-              onChange={updateProject}
-              onPlaybackSample={samplePlaybackPosition}
-              registerControl={registerEditorControl}
-              onSave={saveActiveProject}
-            />
-          {/key}
-        {:else}
-          <div class="empty-workspace">
-            <p class="eyebrow">Nothing open</p>
-            <h2 id="workspace-title">
-              Choose a managed video or import an MP4.
-            </h2>
-          </div>
+    {#snippet editor()}
+      {#if loading}
+        <section class="loading-state" aria-live="polite">
+          Restoring your workspace…
+        </section>
+      {:else if workspace !== null}
+        {#if workspace.openProjects.length > 0}
+          <ProjectStrip
+            projects={workspace.openProjects}
+            activeProjectId={workspace.activeProjectId}
+            {busyProjectId}
+            {saveStateFor}
+            {inspectionJobFor}
+            {retryingJobId}
+            onActivate={(projectId) => void switchProject(projectId)}
+            onClose={(projectId) => void saveAndClose(projectId)}
+            onRetryInspection={(job) => void retryInspection(job)}
+          />
         {/if}
-      </section>
-    </div>
-  {/if}
+
+        <section class="workspace-stage" aria-labelledby="workspace-title">
+          {#if activeProject !== null}
+            <div class="stage-heading">
+              <h1 id="workspace-title">{activeProject.source.fileName}</h1>
+            </div>
+            {#key activeProject.id}
+              <VideoEditor
+                project={activeProject}
+                onChange={updateProject}
+                onPlaybackSample={samplePlaybackPosition}
+                registerControl={registerEditorControl}
+                onSave={saveActiveProject}
+                segmentsCollapsed={segmentPanelCollapsed}
+                onSegmentsCollapsedChange={setSegmentPanelCollapsed}
+              />
+            {/key}
+          {:else}
+            <div class="empty-workspace">
+              <h1 id="workspace-title">No video open</h1>
+              <button
+                class="primary-action"
+                type="button"
+                onclick={() => changeView('library')}>Open Library</button
+              >
+            </div>
+          {/if}
+        </section>
+      {/if}
+    {/snippet}
+
+    {#snippet library()}
+      {#if loading}
+        <section class="loading-state" aria-live="polite">
+          Restoring your library…
+        </section>
+      {:else if workspace !== null}
+        <LibraryPanel
+          projects={workspace.library}
+          {openProjectIds}
+          {openingProjectId}
+          {importing}
+          onImport={() => void importMp4()}
+          onOpen={(projectId) => void reopenProject(projectId)}
+        />
+      {/if}
+    {/snippet}
+  </EditorShell>
 </main>

@@ -174,29 +174,29 @@
 - Produces `EditorMode = 'video' | 'segment' | 'boundary'` for contextual help.
 - Browser keys: `cut-on-eight.active-view` (`editor | library`) and `cut-on-eight.segment-panel-collapsed` (`true | false`).
 
-- [ ] **Step 1: Implement the standalone navigation shell**
+- [x] **Step 1: Implement the standalone navigation shell**
 
   `EditorShell.svelte` accepts `activeView`, `onViewChange`, compact status content, help mode/content, and editor/library snippets. It renders only Editor, Library, status, and `?` in the top navigation. Import or reopen calls switch to Editor after the workspace update; a direct Library click stays on Library.
 
-- [ ] **Step 2: Make the workspace content-first**
+- [x] **Step 2: Make the workspace content-first**
 
   Give video the flexible central area, timeline a fixed compact band, and segments a collapsible lower/side panel. Remove permanent instructional copy and keep actionable empty/error states. Collapsing segments must preserve selection and playback.
 
-- [ ] **Step 3: Add central contextual help**
+- [x] **Step 3: Add central contextual help**
 
   The closed-by-default popover shows exact key rows for full-video seek/play, selected-segment loop/navigation, or focused-boundary nudging. `Escape` closes the popover before editor selection handling. Focus returns to `?` when closed.
 
-- [ ] **Step 4: Persist only view and collapsed preference**
+- [x] **Step 4: Persist only view and collapsed preference**
 
   Parse local-storage values defensively; default to Editor when a project is active and Library otherwise. Never persist whether help/status popovers are open.
 
-- [ ] **Step 5: Run Svelte validation**
+- [x] **Step 5: Run Svelte validation**
 
   Run the repository Svelte autofixer once for each changed `.svelte` file with target Svelte 5, then run `apps/web/node_modules/.bin/svelte-check --tsconfig apps/web/tsconfig.json --fail-on-warnings`.
 
   Expected: no local Svelte diagnostics. If the autofixer cannot reach its remote service, record that once and rely on `svelte-check` rather than retrying.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add apps/web/src/App.svelte apps/web/src/app.css apps/web/src/components

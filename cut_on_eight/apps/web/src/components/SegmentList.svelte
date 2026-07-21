@@ -25,17 +25,12 @@
 
 <section class="segment-list-panel" aria-labelledby="segment-list-title">
   <div class="segment-list-heading">
-    <div>
-      <p class="eyebrow">Rough cuts</p>
-      <h3 id="segment-list-title">Segments</h3>
-    </div>
+    <h2 id="segment-list-title">Segments</h2>
     <span class="item-count">{segments.length}</span>
   </div>
 
   {#if chronologicalSegments.length === 0}
-    <p class="segment-list-empty">
-      Press I for an in-point, then O for an out-point.
-    </p>
+    <p class="segment-list-empty">No segments yet.</p>
   {:else}
     <ol class="segment-list">
       {#each chronologicalSegments as segment, index (segment.id)}
