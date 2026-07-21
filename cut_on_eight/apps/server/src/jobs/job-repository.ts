@@ -99,7 +99,6 @@ export class JobRepository {
             await this.writeTransition(entries, job, {
               ...job,
               state: 'failed',
-              updatedAt: this.clock().toISOString(),
               error: {
                 code: 'job_attempts_exhausted',
                 message: 'The inspection job exhausted its allowed attempts.',
@@ -113,7 +112,6 @@ export class JobRepository {
           await this.writeTransition(entries, job, {
             ...job,
             state: 'queued',
-            updatedAt: this.clock().toISOString(),
             error: null,
           }),
         );
@@ -135,7 +133,6 @@ export class JobRepository {
         ...job,
         state: 'running',
         attempts: job.attempts + 1,
-        updatedAt: this.clock().toISOString(),
         error: null,
       }),
     );
@@ -151,7 +148,6 @@ export class JobRepository {
       this.writeTransition(entries, job, {
         ...job,
         state: 'completed',
-        updatedAt: this.clock().toISOString(),
         error: null,
       }),
     );
@@ -167,7 +163,6 @@ export class JobRepository {
       this.writeTransition(entries, job, {
         ...job,
         state: 'failed',
-        updatedAt: this.clock().toISOString(),
         error: {
           ...failure,
           retryable: job.attempts < job.maxAttempts && failure.retryable,
@@ -190,7 +185,6 @@ export class JobRepository {
       return this.writeTransition(entries, job, {
         ...job,
         state: 'queued',
-        updatedAt: this.clock().toISOString(),
         error: null,
       });
     });
@@ -294,7 +288,10 @@ export class JobRepository {
     ) {
       throw new Error('job_changed_concurrently');
     }
-    const validated = jobRecordSchema.parse(next);
+    const validated = jobRecordSchema.parse({
+      ...next,
+      updatedAt: this.nextUpdatedAt(previous.updatedAt),
+    });
     await writeJsonAtomic(target, validated);
     return validated;
   }
@@ -313,6 +310,14 @@ export class JobRepository {
       updatedAt: timestamp,
       error: null,
     });
+  }
+
+  private nextUpdatedAt(previous: string): string {
+    const previousMilliseconds = Date.parse(previous);
+    const clockMilliseconds = this.clock().getTime();
+    return new Date(
+      Math.max(clockMilliseconds, previousMilliseconds + 1),
+    ).toISOString();
   }
 
   private resolveProjectDirectories(projectDirectory: string): {

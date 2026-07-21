@@ -146,6 +146,42 @@ afterEach(async () => {
 });
 
 describe('durable inspection queue', () => {
+  it('persists strictly increasing transition timestamps with a fixed clock', async () => {
+    const { entries, layout } = await fixture();
+    const fixedNow = new Date('2026-07-21T10:00:00.000Z');
+    const repository = new JobRepository(
+      layout,
+      () => firstJobId,
+      () => fixedNow,
+    );
+    const queued = await repository.createQueuedInspection(
+      firstId,
+      layout.forProject(firstId, 'First.mp4').directory,
+    );
+    const running = await repository.markRunning(entries, queued);
+    const failed = await repository.markFailed(entries, running, {
+      code: 'ffprobe_failed',
+      message: 'Inspection failed.',
+      retryable: true,
+    });
+    const retried = await repository.retry(entries, failed.id);
+    const runningAgain = await repository.markRunning(entries, retried);
+    const completed = await repository.markCompleted(entries, runningAgain);
+    const timestamps = [
+      queued,
+      running,
+      failed,
+      retried,
+      runningAgain,
+      completed,
+    ].map((job) => Date.parse(job.updatedAt));
+
+    expect(queued.updatedAt).toBe(fixedNow.toISOString());
+    for (let index = 1; index < timestamps.length; index += 1) {
+      expect(timestamps[index]).toBeGreaterThan(timestamps[index - 1]!);
+    }
+  });
+
   it('reports corrupt job files without changing them or blocking other projects', async () => {
     const { entries, jobs, layout, projects } = await fixture();
     await jobs.createQueuedInspection(
