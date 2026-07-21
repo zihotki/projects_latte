@@ -7,6 +7,15 @@ import { readJsonValidated, writeJsonAtomic } from './atomic-json.js';
 import type { StorageLayout } from './layout.js';
 import { InvalidRepositoryDocumentError } from './repository-errors.js';
 
+export class MissingProjectSidecarError extends Error {
+  readonly code = 'missing_project_sidecar';
+
+  constructor() {
+    super('The managed project sidecar is missing');
+    this.name = 'MissingProjectSidecarError';
+  }
+}
+
 function emptyProject(
   projectId: string,
   managedSourceRelativePath: string,
@@ -61,6 +70,23 @@ export class ProjectRepository {
         parseProject(value, projectId, managedSourceRelativePath),
       )) ?? emptyProject(projectId, managedSourceRelativePath)
     );
+  }
+
+  async readRequired(
+    projectId: string,
+    managedSourceRelativePath: string,
+  ): Promise<ProjectDocument> {
+    const sidecar = this.layout.sidecarFile(managedSourceRelativePath);
+    await this.layout.assertNoSymlinkComponents(sidecar);
+    const project = await readJsonValidated(sidecar, (value) =>
+      parseProject(value, projectId, managedSourceRelativePath),
+    );
+
+    if (project === undefined) {
+      throw new MissingProjectSidecarError();
+    }
+
+    return project;
   }
 
   async save(

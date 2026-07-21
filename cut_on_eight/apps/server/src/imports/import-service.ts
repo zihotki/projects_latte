@@ -9,13 +9,18 @@ import {
   copyFile,
   lstat,
   mkdir,
+  open,
   readdir,
   rename,
   rm,
   unlink,
 } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { readJsonValidated, writeJsonAtomic } from '../storage/atomic-json.js';
+import {
+  readJsonValidated,
+  syncDirectory,
+  writeJsonAtomic,
+} from '../storage/atomic-json.js';
 import { CatalogRepository } from '../storage/catalog-repository.js';
 import {
   LibraryRepository,
@@ -80,6 +85,7 @@ type RemoveFile = (path: string) => Promise<void>;
 type JsonWriter = (path: string, value: unknown) => Promise<void>;
 type IdFactory = () => string;
 type Clock = () => Date;
+type SyncPath = (path: string) => Promise<void>;
 
 export interface ImportServiceOptions {
   readonly catalog?: Catalog;
@@ -93,6 +99,8 @@ export interface ImportServiceOptions {
   readonly removeDirectory?: RemoveDirectory;
   readonly removeFile?: RemoveFile;
   readonly renameDirectory?: RenameDirectory;
+  readonly syncDirectory?: SyncPath;
+  readonly syncFile?: SyncPath;
   readonly validateSource?: (path: string) => Promise<ValidatedSource>;
   readonly workspace?: WorkspaceRepository;
   readonly writeJson?: JsonWriter;
@@ -143,6 +151,31 @@ function activateProject(
   };
 }
 
+function removeProject(
+  workspace: WorkspaceDocument,
+  projectId: string,
+): WorkspaceDocument {
+  const openProjectIds = workspace.openProjectIds.filter(
+    (openProjectId) => openProjectId !== projectId,
+  );
+  const activeProjectId =
+    workspace.activeProjectId === projectId
+      ? (openProjectIds.at(-1) ?? null)
+      : workspace.activeProjectId;
+
+  return { schemaVersion: 1, openProjectIds, activeProjectId };
+}
+
+async function syncFile(path: string): Promise<void> {
+  const handle = await open(path, 'r');
+
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 function initialProject(
   projectId: string,
   sourceFileName: string,
@@ -185,6 +218,8 @@ export class ImportService {
   private readonly removeDirectory: RemoveDirectory;
   private readonly removeFile: RemoveFile;
   private readonly renameDirectory: RenameDirectory;
+  private readonly syncDirectory: SyncPath;
+  private readonly syncFile: SyncPath;
   private readonly validateSource: (path: string) => Promise<ValidatedSource>;
   private readonly workspace: WorkspaceRepository;
   private readonly writeJson: JsonWriter;
@@ -203,6 +238,8 @@ export class ImportService {
     this.createId = options.createId ?? randomUUID;
     this.copySource = options.copySource ?? copyFile;
     this.renameDirectory = options.renameDirectory ?? rename;
+    this.syncDirectory = options.syncDirectory ?? syncDirectory;
+    this.syncFile = options.syncFile ?? syncFile;
     this.removeDirectory = options.removeDirectory ?? rm;
     this.removeFile = options.removeFile ?? unlink;
     this.writeJson = options.writeJson ?? writeJsonAtomic;
@@ -235,18 +272,35 @@ export class ImportService {
   private async importSelected(selectedPath: string): Promise<ImportResult> {
     await this.recoverUnlocked();
     const source = await this.validateSource(selectedPath);
-    const library = await this.library.read();
-    const duplicate = library.entries.find((entry) =>
-      sameFingerprint(entry.fingerprint, source.fingerprint),
-    );
+    let library = await this.library.read();
 
-    if (duplicate !== undefined) {
+    while (true) {
+      const duplicate = library.entries.find((entry) =>
+        sameFingerprint(entry.fingerprint, source.fingerprint),
+      );
+
+      if (duplicate === undefined) {
+        break;
+      }
+
+      if (await this.isUsableDuplicate(duplicate)) {
+        const workspace = await this.workspace.read();
+        await this.catalog.commit(
+          library,
+          activateProject(workspace, duplicate.id),
+        );
+        return { outcome: 'reopened', projectId: duplicate.id };
+      }
+
       const workspace = await this.workspace.read();
+      library = {
+        schemaVersion: 1,
+        entries: library.entries.filter((entry) => entry.id !== duplicate.id),
+      };
       await this.catalog.commit(
         library,
-        activateProject(workspace, duplicate.id),
+        removeProject(workspace, duplicate.id),
       );
-      return { outcome: 'reopened', projectId: duplicate.id };
     }
 
     const sourceFileName = basename(source.path);
@@ -279,6 +333,8 @@ export class ImportService {
         throw new Error('The selected source changed during import');
       }
 
+      await this.syncFile(temporarySource);
+
       await this.writeJson(
         temporarySidecar,
         initialProject(projectId, sourceFileName),
@@ -298,6 +354,7 @@ export class ImportService {
       );
       await this.renameDirectory(temporaryDirectory, paths.directory);
       promoted = true;
+      await this.syncDirectory(this.layout.dataRoot);
 
       const workspace = await this.workspace.read();
       await this.catalog.commit(
@@ -329,6 +386,26 @@ export class ImportService {
       }
 
       throw error;
+    }
+  }
+
+  private async isUsableDuplicate(entry: LibraryEntry): Promise<boolean> {
+    const sourceFileName = basename(entry.managedSourcePath);
+    const paths = this.layout.forProject(entry.id, sourceFileName);
+
+    try {
+      await this.layout.assertNoSymlinkComponents(paths.source);
+      await this.layout.assertNoSymlinkComponents(paths.sidecar);
+      const managedSource = await this.validateSource(paths.source);
+
+      if (managedSource.fingerprint.size !== entry.fingerprint.size) {
+        return false;
+      }
+
+      await this.projects.readRequired(entry.id, entry.managedSourcePath);
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -472,7 +549,10 @@ export class ImportService {
       throw new Error('Recovered import source does not match its marker');
     }
 
-    await this.projects.read(marker.entry.id, marker.entry.managedSourcePath);
+    await this.projects.readRequired(
+      marker.entry.id,
+      marker.entry.managedSourcePath,
+    );
     const job = await readJsonValidated(
       this.layout.jobFile(marker.entry.managedSourcePath, marker.jobId),
       (value) => jobRecordSchema.parse(value),

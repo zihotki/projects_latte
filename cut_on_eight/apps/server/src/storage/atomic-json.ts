@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import type { FileHandle } from 'node:fs/promises';
 
 export class CorruptPersistedDataError extends Error {
@@ -11,6 +11,40 @@ export class CorruptPersistedDataError extends Error {
     super(`Persisted data is invalid: ${filePath}`, { cause });
     this.name = 'CorruptPersistedDataError';
     this.filePath = filePath;
+  }
+}
+
+interface DirectoryHandle {
+  close(): Promise<void>;
+  sync(): Promise<void>;
+}
+
+type OpenDirectory = (directory: string) => Promise<DirectoryHandle>;
+type SyncDirectory = (directory: string) => Promise<void>;
+
+function isUnsupportedDirectorySync(error: unknown): boolean {
+  if (!(error instanceof Error) || !('code' in error)) {
+    return false;
+  }
+
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'EINVAL' || code === 'ENOTSUP' || code === 'EOPNOTSUPP';
+}
+
+export async function syncDirectory(
+  directory: string,
+  openDirectory: OpenDirectory = (path) => open(path, 'r'),
+): Promise<void> {
+  const handle = await openDirectory(directory);
+
+  try {
+    await handle.sync();
+  } catch (error) {
+    if (!isUnsupportedDirectorySync(error)) {
+      throw error;
+    }
+  } finally {
+    await handle.close();
   }
 }
 
@@ -52,6 +86,7 @@ export async function readJsonValidated<T>(
 export async function writeJsonAtomic(
   target: string,
   value: unknown,
+  syncContainingDirectory: SyncDirectory = syncDirectory,
 ): Promise<void> {
   const serialized = JSON.stringify(value, null, 2);
 
@@ -67,7 +102,21 @@ export async function writeJsonAtomic(
   let temporaryCreated = false;
   let handle: FileHandle | undefined;
 
-  await mkdir(directory, { recursive: true });
+  const firstCreatedDirectory = await mkdir(directory, { recursive: true });
+
+  if (firstCreatedDirectory !== undefined) {
+    const newComponents = relative(firstCreatedDirectory, directory)
+      .split(sep)
+      .filter((component) => component.length > 0);
+    let createdDirectory = resolve(firstCreatedDirectory);
+
+    await syncContainingDirectory(dirname(createdDirectory));
+
+    for (const component of newComponents) {
+      createdDirectory = join(createdDirectory, component);
+      await syncContainingDirectory(dirname(createdDirectory));
+    }
+  }
 
   try {
     handle = await open(temporaryPath, 'wx', 0o600);
@@ -78,6 +127,7 @@ export async function writeJsonAtomic(
     handle = undefined;
     await rename(temporaryPath, target);
     temporaryCreated = false;
+    await syncContainingDirectory(directory);
   } catch (error) {
     await handle?.close().catch(() => undefined);
 

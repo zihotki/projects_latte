@@ -7,6 +7,8 @@ import {
   readdir,
   rename,
   rm,
+  symlink,
+  unlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -27,6 +29,7 @@ import { ProjectRepository } from '../src/storage/project-repository.js';
 import { WorkspaceRepository } from '../src/storage/workspace-repository.js';
 
 const projectId = '10000000-0000-4000-8000-000000000001';
+const secondProjectId = '30000000-0000-4000-8000-000000000002';
 const jobId = '20000000-0000-4000-8000-000000000001';
 const now = new Date('2026-07-21T12:00:00.000Z');
 const roots: string[] = [];
@@ -247,6 +250,59 @@ describe('transactional managed import', () => {
   });
 
   it.each([
+    'managed MP4',
+    'missing sidecar',
+    'corrupt sidecar',
+    'symlinked source',
+  ] as const)(
+    'removes a stale duplicate %s from the catalog and imports a fresh project',
+    async (stalePart) => {
+      const source = await createMp4();
+      const dataRoot = await createRoot('cut-on-eight-stale-duplicate-');
+      const layout = new StorageLayout(dataRoot);
+      const ids = [projectId, secondProjectId];
+      const service = createService(layout, source, {
+        createId: () => ids.shift() ?? secondProjectId,
+      });
+
+      await service.selectAndImport();
+      const stalePaths = layout.forProject(projectId, 'Cross Body Lead.mp4');
+
+      switch (stalePart) {
+        case 'managed MP4':
+          await writeFile(stalePaths.source, Buffer.from('not an MP4'));
+          break;
+        case 'missing sidecar':
+          await unlink(stalePaths.sidecar);
+          break;
+        case 'corrupt sidecar':
+          await writeFile(stalePaths.sidecar, '{"schemaVersion":1,"broken":');
+          break;
+        case 'symlinked source':
+          await unlink(stalePaths.source);
+          await symlink(source, stalePaths.source, 'file');
+          break;
+      }
+
+      await expect(service.selectAndImport()).resolves.toEqual({
+        outcome: 'imported',
+        projectId: secondProjectId,
+      });
+      await expect(new LibraryRepository(layout).read()).resolves.toMatchObject(
+        {
+          entries: [{ id: secondProjectId }],
+        },
+      );
+      await expect(new WorkspaceRepository(layout).read()).resolves.toEqual({
+        schemaVersion: 1,
+        openProjectIds: [secondProjectId],
+        activeProjectId: secondProjectId,
+      });
+      await expect(access(stalePaths.directory)).resolves.toBeUndefined();
+    },
+  );
+
+  it.each([
     [
       'copy',
       { copySource: async () => Promise.reject(new Error('copy failed')) },
@@ -332,6 +388,87 @@ describe('transactional managed import', () => {
     expect(await readdir(paths.directory)).not.toContain(
       '.cut-on-eight-import.json',
     );
+  });
+
+  it('does not publish a promoted marker whose sidecar is missing', async () => {
+    const source = await createMp4();
+    const dataRoot = await createRoot('cut-on-eight-missing-sidecar-marker-');
+    const layout = new StorageLayout(dataRoot);
+    const realCatalog = new CatalogRepository(layout);
+    let renames = 0;
+    const interrupted = createService(layout, source, {
+      catalog: {
+        recover: () => realCatalog.recover(),
+        commit: async () => {
+          throw new Error('simulated process interruption');
+        },
+      },
+      renameDirectory: async (from, to) => {
+        renames += 1;
+
+        if (renames === 2) {
+          throw new Error('process stopped before rollback');
+        }
+
+        await rename(from, to);
+      },
+    });
+
+    await expect(interrupted.selectAndImport()).rejects.toBeDefined();
+    const paths = layout.forProject(projectId, 'Cross Body Lead.mp4');
+    await unlink(paths.sidecar);
+
+    await expect(createService(layout, null).recover()).rejects.toMatchObject({
+      code: 'missing_project_sidecar',
+    });
+    await expect(new LibraryRepository(layout).read()).resolves.toEqual({
+      schemaVersion: 1,
+      entries: [],
+    });
+    await expect(access(paths.directory)).resolves.toBeUndefined();
+  });
+
+  it('syncs copied media and the data root before catalog visibility', async () => {
+    const source = await createMp4();
+    const dataRoot = await createRoot('cut-on-eight-durability-order-');
+    const layout = new StorageLayout(dataRoot);
+    const realCatalog = new CatalogRepository(layout);
+    const events: string[] = [];
+    const service = createService(layout, source, {
+      copySource: async (...arguments_) => {
+        events.push('copy');
+        const { copyFile } = await import('node:fs/promises');
+        await copyFile(...arguments_);
+      },
+      syncFile: async () => {
+        events.push('sync-file');
+      },
+      renameDirectory: async (from, to) => {
+        events.push('rename');
+        await rename(from, to);
+      },
+      syncDirectory: async (directory) => {
+        expect(directory).toBe(dataRoot);
+        events.push('sync-directory');
+      },
+      catalog: {
+        recover: () => realCatalog.recover(),
+        commit: async (library, workspace) => {
+          events.push('catalog');
+          await realCatalog.commit(library, workspace);
+        },
+      },
+    });
+
+    await service.selectAndImport();
+
+    expect(events).toEqual([
+      'copy',
+      'sync-file',
+      'rename',
+      'sync-directory',
+      'catalog',
+    ]);
   });
 
   it('removes a leftover marker without deleting an indexed project', async () => {

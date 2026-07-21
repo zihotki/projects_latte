@@ -15,6 +15,7 @@ import { rm } from 'node:fs/promises';
 import type { ProjectDocument } from '@cut-on-eight/contracts';
 import {
   CorruptPersistedDataError,
+  syncDirectory,
   writeJsonAtomic,
 } from '../src/storage/atomic-json.js';
 import { CatalogRepository } from '../src/storage/catalog-repository.js';
@@ -118,6 +119,46 @@ describe('atomic managed storage', () => {
     expect(await readdir(join(root, '_system'))).toEqual(['workspace.json']);
   });
 
+  it('syncs the containing directory after the atomic rename', async () => {
+    const root = await createRoot();
+    const target = join(root, '_system', 'workspace.json');
+    const syncedDirectories: string[] = [];
+
+    await writeJsonAtomic(target, { value: 'durable' }, async (directory) => {
+      if (directory === join(root, '_system')) {
+        expect(JSON.parse(await readFile(target, 'utf8'))).toEqual({
+          value: 'durable',
+        });
+      }
+
+      syncedDirectories.push(directory);
+    });
+
+    expect(syncedDirectories).toEqual([root, join(root, '_system')]);
+  });
+
+  it('ignores only explicitly unsupported directory fsync errors', async () => {
+    const unsupportedHandle = {
+      sync: async () => {
+        throw Object.assign(new Error('unsupported'), { code: 'EINVAL' });
+      },
+      close: async () => undefined,
+    };
+    const failedHandle = {
+      sync: async () => {
+        throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      },
+      close: async () => undefined,
+    };
+
+    await expect(
+      syncDirectory('/tmp/example', async () => unsupportedHandle),
+    ).resolves.toBeUndefined();
+    await expect(
+      syncDirectory('/tmp/example', async () => failedHandle),
+    ).rejects.toMatchObject({ code: 'EACCES' });
+  });
+
   it('cleans up its exclusive temporary file after a failed replacement', async () => {
     const root = await createRoot();
     const systemDirectory = join(root, '_system');
@@ -201,6 +242,12 @@ describe('atomic managed storage', () => {
       source: { fileName: sourceFileName },
       segments: [],
     });
+    await expect(
+      new ProjectRepository(layout).readRequired(
+        projectId,
+        paths.relativeSource,
+      ),
+    ).rejects.toMatchObject({ code: 'missing_project_sidecar' });
   });
 
   it('allows missing managed path components for first-use storage', async () => {
