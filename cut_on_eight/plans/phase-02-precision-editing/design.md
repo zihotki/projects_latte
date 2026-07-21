@@ -1,6 +1,6 @@
 # Phase 2: Precision Editing
 
-**Status:** Approved design, pending review of this written version
+**Status:** Approved design, revised editor UX pending written review
 
 **Date:** 2026-07-21
 
@@ -8,7 +8,7 @@
 
 ## Purpose
 
-Phase 2 turns the rough timestamp ranges created in Phase 1 into precisely reviewable and adjustable dance clips. It adds asynchronous thumbnail generation, an efficient zoomable timeline, drag and keyboard boundary editing, contextual preview, exact-range looping, chronological navigation, and duration guidance.
+Phase 2 turns the rough timestamp ranges created in Phase 1 into precisely reviewable and adjustable dance clips. It adds an editor-first workspace, a standalone Library view, asynchronous thumbnail generation, an efficient zoomable timeline, click-and-keyboard boundary editing, contextual preview, selection-scoped looping, chronological navigation, and duration guidance.
 
 At the end of this phase, a user should be able to refine every marked movement without opening another video editor. Export, metadata entry, and catalogue search remain later work.
 
@@ -33,14 +33,17 @@ Phase 2 extends these boundaries rather than replacing them.
 ### Included
 
 - Backend-generated adaptive overview thumbnails.
+- Editor-first application layout with standalone Editor and Library views.
+- Collapsible segment panel and minimized operational status.
+- One central, context-sensitive shortcut help popover.
 - Versioned thumbnail manifests and bounded sprite pages.
 - Hybrid Canvas and DOM/SVG timeline rendering.
 - Timeline zoom anchored at the pointer or playhead.
 - Horizontal scrolling and fit-source reset.
 - Two visual segment rows.
 - Maximum overlap depth of two segments.
-- Draggable start and end handles.
-- Keyboard playhead and boundary nudging.
+- Click-selectable start and end controls with keyboard and button nudging.
+- Normal and fast keyboard seeking outside boundary-edit mode.
 - Reliable-frame-rate and approximate-frame-rate behavior.
 - One-shot contextual preview.
 - Exact selected-range looping.
@@ -52,12 +55,26 @@ Phase 2 extends these boundaries rather than replacing them.
 ### Deferred
 
 - Zoom-specific or frame-by-frame thumbnail generation.
+- Pointer-dragging segment boundaries.
 - Moving a complete segment as one block.
 - Manual segment reordering.
 - Title, tags, and notes editing.
 - Export and output progress.
 - Exact variable-frame-rate frame indexing.
 - Waveforms, audio editing, transitions, filters, and overlays.
+
+## Application Layout
+
+The application has two top-level views:
+
+- **Editor** contains the open-project strip, active video, timeline, and segment panel.
+- **Library** is a standalone view for importing, reopening, and inspecting managed projects.
+
+The Editor is the initial view when a project is active and becomes active after an import or library reopen. Explicitly opening Library keeps Library active until the user returns to Editor. Video receives the largest share of the Editor viewport, followed by the timeline and then the segment panel. The segment panel can be collapsed without affecting selection or playback, and the preference is stored locally in the browser.
+
+The top navigation contains only Editor, Library, one compact operational-status indicator, and a `?` help button. Detailed backend, FFprobe, and job state appears inside a small status popover or only when action is required. Operational chrome must not compete visually with the video or segments.
+
+The `?` button is the single help location. Its unobtrusive popover shows the controls relevant to the current mode: full-video playback, selected-segment looping, or focused-boundary editing. The interface still labels the current playback scope and focused boundary near the timeline so state is never hidden exclusively inside help.
 
 ## Timeline Architecture
 
@@ -74,16 +91,16 @@ All timeline behavior depends on one framework-independent `TimeScale` model. It
 - Bounds clamping.
 - Zoom anchoring.
 
-Canvas drawing, DOM/SVG positioning, pointer hit-testing, dragging, seeking, and tests must use this model. No rendering layer may maintain an independent conversion formula.
+Canvas drawing, DOM/SVG positioning, pointer hit-testing, clicking, seeking, and tests must use this model. No rendering layer may maintain an independent conversion formula.
 
 ### Hybrid rendering
 
 The timeline is one semantic range-selection component with two rendering layers:
 
 - Canvas draws thumbnail sprite cells efficiently.
-- DOM/SVG draws the playhead, pending in-point, segment ranges, two visual rows, handles, selection, warnings, and live drag feedback.
+- DOM/SVG draws the playhead, pending in-point, segment ranges, two visual rows, selection, boundary controls, and warnings.
 
-The interactive layer remains keyboard-focusable and exposes appropriate accessible names and values. Canvas is decorative and does not own interaction state.
+The interactive layer remains keyboard-focusable and exposes appropriate accessible names and values. Canvas is decorative and does not own interaction state. Clicking empty timeline space selects the main video playback scope; clicking a segment selects that segment without starting playback.
 
 High-frequency playhead painting uses `requestAnimationFrame` and focused DOM or Canvas updates. It must not cause broad Svelte component invalidation.
 
@@ -161,36 +178,24 @@ Segments may overlap, but the maximum overlap depth is two: at no timestamp may 
 
 A segment may overlap both its preceding and following chronological neighbours when those overlaps occur at different times. The renderer assigns valid overlapping ranges to two visual rows. Non-overlapping segments use the primary row.
 
-The selected segment receives the strongest visual treatment and its handles render above neighbouring ranges without changing the semantic ordering.
+The selected segment receives the strongest visual treatment and its boundary controls render above neighbouring ranges without changing the semantic ordering.
 
 The overlap constraint applies equally to:
 
 - New segment creation.
-- Start-boundary dragging.
-- End-boundary dragging.
-- Keyboard boundary nudging.
+- Start-boundary clicking and keyboard nudging.
+- End-boundary clicking and keyboard nudging.
 - Future programmatic project migrations or imports.
 
 An operation that would create a third simultaneous segment is rejected with an inline explanation. Existing persisted data that violates the constraint loads in a visible validation-error state and is never silently rewritten.
 
-## Boundary Dragging
+## Boundary Editing
 
-Selecting a segment reveals independent start and end handles.
+Selecting a segment reveals independent **Start** and **End** controls with their timestamps. Clicking one focuses that boundary; no text entry or drag handle is required.
 
-During a drag:
+The focused control provides compact click targets for one-frame and 0.1-second movement in both directions. The same operations are available from the arrow keys. Each valid action commits one project mutation and follows the normal autosave path.
 
-1. Pointer capture keeps the interaction stable outside the handle bounds.
-2. Pointer position is converted through `TimeScale`.
-3. A temporary boundary updates continuously.
-4. Range and overlap validation runs against the temporary value.
-5. The video can seek for immediate visual feedback at a throttled rate.
-6. Pointer release commits one project mutation and triggers autosave.
-
-The saved project is not rewritten for every pointer movement. Losing pointer capture or pressing `Esc` cancels the uncommitted drag.
-
-Boundaries must remain within the source and satisfy `start < end`. A handle stops at the nearest valid timestamp when further movement would violate source bounds, segment order, or the overlap-depth rule. The reason is shown inline while constrained.
-
-Dragging the body of a segment to move both boundaries together is deferred.
+Boundaries remain within the source and satisfy `start < end`. An adjustment stops at the nearest valid timestamp when further movement would violate source bounds, segment order, or the overlap-depth rule. A short inline reason appears beside the focused control. `Escape` clears boundary focus first; a second `Escape` clears the selected segment and returns to main-video playback scope.
 
 ## Frame and Time Nudging
 
@@ -210,20 +215,19 @@ nudge interval = 1 / 30 second
 
 The UI displays **Approximate frame stepping** whenever the fallback is active. Browser preview may not stop on the same decoded frame that a later FFmpeg export uses; timestamps remain authoritative.
 
-Keyboard commands are:
+Keyboard commands depend on focus:
 
-| Key | Action |
-| --- | --- |
-| `,` | Move playhead backward one frame interval |
-| `.` | Move playhead forward one frame interval |
-| `[` | Move selected segment start earlier |
-| `]` | Move selected segment start later |
-| `{` | Move selected segment end earlier |
-| `}` | Move selected segment end later |
-| `↑` | Select previous chronological segment |
-| `↓` | Select next chronological segment |
+| Context | Key | Action |
+| --- | --- | --- |
+| No boundary focused | `←` / `→` | Seek the current playback scope by one second |
+| No boundary focused | `Shift + ←` / `Shift + →` | Seek by ten seconds |
+| Start or End focused | `←` / `→` | Move the focused boundary by one frame interval |
+| Start or End focused | `Shift + ←` / `Shift + →` | Move the focused boundary by 0.1 seconds |
+| Segment selected | `↑` / `↓` | Select the previous or next chronological segment |
+| Any editor mode | `Space` | Play or pause the current playback scope |
+| Boundary or segment selected | `Escape` | Clear boundary focus, then segment selection |
 
-Playhead movement clamps to the source. Boundary nudges use the same range and overlap validation as dragging and commit immediately to project state.
+Seeking clamps to the main video or selected segment range as appropriate. Boundary nudges use the shared range and overlap validation and commit immediately to project state.
 
 Editor shortcuts remain inactive while text-entry controls have focus, preserving compatibility with later metadata fields.
 
@@ -240,11 +244,13 @@ preview end   = min(source duration, segment end + 1 second)
 
 Playback stops at the preview end. The segment itself stays visibly emphasized so the user can judge both transitions.
 
-### Exact loop
+### Playback scope and exact loop
 
-`L` toggles looping of the exact selected range without context. The playback controller seeks to the segment start whenever current time reaches or passes the end. Changing selection while loop mode is active moves the loop to the newly selected segment. Explicit pause stops playback without disabling the loop preference.
+Selecting a segment sets the playback scope to that segment and seeks to its start, but does not start playback. `Space` or the native Play control then loops the exact selected range. When playback reaches or passes the segment end, the controller seeks to its start and continues.
 
-Context preview and loop playback are mutually exclusive active playback modes. Starting one replaces the other cleanly.
+Clicking the video, empty timeline space, or clearing selection returns to main-video playback scope. Playback does not start automatically; `Space` or Play resumes normal source playback. Changing segment selection while playing stops playback and moves the scope to the newly selected segment so no unexpected clip begins automatically.
+
+Context preview and loop playback are mutually exclusive active playback modes. Starting the contextual preview temporarily replaces looping; finishing or cancelling it returns to the selected-segment scope in a paused state.
 
 ### Segment navigation
 
@@ -267,8 +273,9 @@ Phase 2 introduces focused units with stable public contracts:
 - `timeline-viewport`: zoom and scrolling commands.
 - `segment-constraints`: range and overlap-depth validation.
 - `two-row-layout`: deterministic visual-row allocation.
-- `trim-controller`: drag and keyboard boundary mutations.
-- `playback-controller`: normal, context-preview, and loop modes.
+- `trim-controller`: focused-boundary and click/keyboard mutations.
+- `playback-controller`: main-video, selected-segment loop, and context-preview modes.
+- `editor-shell`: Editor/Library navigation, collapsible panels, and compact status/help popovers.
 - `thumbnail-manifest`: schema and compatibility checks.
 - `thumbnail-renderer`: Canvas sprite drawing only.
 - `thumbnail-worker`: backend generation orchestration.
@@ -288,6 +295,8 @@ Per-project editor view state gains:
 - Timeline zoom.
 - Horizontal offset.
 
+The active top-level view, collapsed segment-panel preference, and help-popover state are browser UI preferences, not project content. Only the active view and collapsed-panel preference persist locally; popovers always reopen closed.
+
 Thumbnail manifests are not embedded in the sidecar. Their compatibility is determined independently from the source fingerprint and generator version.
 
 Existing Phase 1 projects migrate forward without changing segment timestamps.
@@ -300,8 +309,7 @@ Required Phase 2 behavior includes:
 - A corrupt or incompatible manifest is quarantined or removed and regenerated.
 - Partial sprite generation is never presented as complete.
 - One project's thumbnail failure does not affect other projects.
-- Losing pointer capture cancels the unfinished drag.
-- Invalid drag or nudge values never mutate saved state.
+- Invalid click or keyboard nudge values never mutate saved state.
 - Triple-overlap attempts provide a stable validation code and inline explanation.
 - Event-stream disconnection falls back to a job snapshot and reconnects.
 - Failed seeking exits preview or loop mode with a visible playback error.
@@ -315,7 +323,7 @@ Phase 2 must remain responsive for at least a one-hour source and 100 segments.
 - Sprite count and dimensions remain bounded.
 - Only visible thumbnail cells are drawn.
 - Playhead painting is scheduled with `requestAnimationFrame`.
-- Drag feedback does not write sidecars until commit.
+- Boundary editing writes one mutation per click or key command.
 - Segment layout is recalculated from source data without manual ordering state.
 - Switching open projects does not regenerate valid thumbnail data.
 
@@ -326,18 +334,20 @@ Automated verification remains focused:
 - `TimeScale` timestamp/pixel round-trip tests.
 - Zoom-anchor and viewport-clamping tests.
 - Deterministic two-row allocation tests.
-- Triple-overlap rejection for create, drag, and nudge.
-- Drag commit and cancellation tests.
+- Triple-overlap rejection for create and boundary nudge.
+- Playback-scope selection and clearing tests.
+- Normal and fast seek-clamping tests.
+- Focused Start/End click and keyboard nudge tests.
 - Reliable and fallback nudge-interval tests.
 - Context-preview clamping tests at both source ends.
-- Exact-loop boundary and selection-change tests.
+- Exact-loop boundary, pause, and selection-change tests.
 - Thumbnail-manifest compatibility tests.
 - Thumbnail-worker tests using a fake FFmpeg process adapter.
 - Optional real-FFmpeg integration test using a tiny generated fixture.
-- Browser smoke test for zoom, scrolling, drag, nudge, preview, loop, and project switching.
+- Browser smoke test for Editor/Library navigation, collapsing panels, zoom, scrolling, nudge, preview, loop, and project switching.
 - Svelte check and official Svelte autofixer for changed components.
 
-Manual macOS verification covers trackpad behavior, handle usability, video seeking, contextual preview, looping, and asynchronous thumbnail appearance.
+Manual macOS verification covers trackpad behavior, compact layout usability, normal and fast video seeking, click/keyboard boundary editing, contextual preview, looping, and asynchronous thumbnail appearance.
 
 ## Acceptance Criteria
 
@@ -352,16 +362,18 @@ Phase 2 is complete when:
 7. Timeline view state remains independent for every open project.
 8. Valid overlapping segments occupy at most two visual rows.
 9. Creating or editing a triple overlap is rejected with a clear explanation.
-10. Start and end handles adjust boundaries and commit one saved mutation per drag.
-11. Cancelled or interrupted drags do not alter saved state.
-12. Keyboard commands move the playhead and both boundaries by the configured nudge interval.
+10. Start and End controls adjust boundaries by click or keyboard without requiring text entry or dragging.
+11. Invalid boundary adjustments do not alter saved state and explain the active constraint.
+12. Arrow commands perform normal and fast seeking or adjust the focused boundary by the configured interval.
 13. Approximate stepping is shown for unreliable frame rates.
 14. `Enter` plays one second of context around the selected segment, clamped to the source.
-15. `L` loops the exact selected range and follows selection changes.
+15. Selecting a segment changes playback scope without starting it; Space or Play loops the exact range.
 16. Previous and next navigation follows chronological segment order.
 17. Duration warnings appear below three seconds and above eight seconds without blocking edits.
 18. A user can refine all rough segments without another editor.
-19. Automated checks pass and the precision workflow is manually verified on macOS.
+19. Library is a standalone top-level view and the Editor keeps video, timeline, and segments visually dominant.
+20. One central context-sensitive help popover explains the active controls without persistent instructional clutter.
+21. Automated checks pass and the precision workflow is manually verified on macOS.
 
 ## References
 
