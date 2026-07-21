@@ -44,16 +44,21 @@ async function createRoot(): Promise<string> {
 
 function projectDocument(): ProjectDocument {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: projectId,
     source: {
       fileName: sourceFileName,
       durationSeconds: null,
       width: null,
       height: null,
-      frameRate: null,
+      frameRateNumerator: null,
+      frameRateDenominator: null,
+      frameRateReliability: 'approximate',
       hasAudio: null,
+      inspectedAt: null,
+      inspectorVersion: null,
     },
+    editor: { timelineZoom: 1, timelineOffsetSeconds: 0 },
     settings: { pauseAfterCreation: false },
     playbackPositionSeconds: 12.5,
     selectedSegmentId: null,
@@ -220,7 +225,7 @@ describe('atomic managed storage', () => {
     expect(paths.sidecar).toBe(`${paths.source}.danceclips.json`);
   });
 
-  it('returns empty version-1 documents for missing files', async () => {
+  it('returns empty version-2 projects for missing files', async () => {
     const root = await createRoot();
     const layout = new StorageLayout(root);
     const paths = layout.forProject(projectId, sourceFileName);
@@ -237,7 +242,7 @@ describe('atomic managed storage', () => {
     await expect(
       new ProjectRepository(layout).read(projectId, paths.relativeSource),
     ).resolves.toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: projectId,
       source: { fileName: sourceFileName },
       segments: [],
@@ -248,6 +253,56 @@ describe('atomic managed storage', () => {
         paths.relativeSource,
       ),
     ).rejects.toMatchObject({ code: 'missing_project_sidecar' });
+  });
+
+  it('reads version 1 and persists its migration on the next save', async () => {
+    const root = await createRoot();
+    const layout = new StorageLayout(root);
+    const paths = layout.forProject(projectId, sourceFileName);
+    const legacy = {
+      schemaVersion: 1,
+      id: projectId,
+      source: {
+        fileName: sourceFileName,
+        durationSeconds: 12,
+        width: 1920,
+        height: 1080,
+        frameRate: '30000/1001',
+        hasAudio: true,
+      },
+      settings: { pauseAfterCreation: false },
+      playbackPositionSeconds: 4,
+      selectedSegmentId: null,
+      segments: [
+        {
+          id: '20000000-0000-4000-8000-000000000001',
+          startSeconds: 3,
+          endSeconds: 7,
+          exportSelected: true,
+        },
+      ],
+      metadata: { title: null, tags: [], notes: null },
+    } as const;
+    await writeJsonAtomic(paths.sidecar, legacy);
+
+    const projects = new ProjectRepository(layout);
+    const migrated = await projects.read(projectId, paths.relativeSource);
+
+    expect(migrated).toMatchObject({
+      schemaVersion: 2,
+      source: {
+        frameRateNumerator: 30_000,
+        frameRateDenominator: 1_001,
+        frameRateReliability: 'approximate',
+      },
+      editor: { timelineZoom: 1, timelineOffsetSeconds: 0 },
+      segments: [{ startSeconds: 3, endSeconds: 7 }],
+    });
+    expect(JSON.parse(await readFile(paths.sidecar, 'utf8'))).toEqual(legacy);
+
+    await projects.save(projectId, paths.relativeSource, migrated);
+
+    expect(JSON.parse(await readFile(paths.sidecar, 'utf8'))).toEqual(migrated);
   });
 
   it('allows missing managed path components for first-use storage', async () => {

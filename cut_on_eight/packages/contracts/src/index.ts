@@ -18,7 +18,18 @@ export type {
   JobState,
   JobType,
 } from './jobs.js';
-export { projectDocumentSchema, segmentSchema } from './project.js';
-export type { ProjectDocument, Segment } from './project.js';
+export {
+  frameRateReliabilitySchema,
+  frameStepSeconds,
+  migrateProjectDocument,
+  projectDocumentSchema,
+  segmentSchema,
+} from './project.js';
+export type {
+  FrameRateReliability,
+  FrameStep,
+  ProjectDocument,
+  Segment,
+} from './project.js';
 export { projectSummarySchema, workspaceSnapshotSchema } from './workspace.js';
 export type { ProjectSummary, WorkspaceSnapshot } from './workspace.js';

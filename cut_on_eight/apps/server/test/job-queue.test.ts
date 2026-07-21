@@ -26,22 +26,29 @@ const metadata: ProbeResult = {
   durationSeconds: 18.5,
   width: 1280,
   height: 720,
-  frameRate: '24000/1001',
+  frameRateNumerator: 24_000,
+  frameRateDenominator: 1_001,
+  frameRateReliability: 'reliable',
   hasAudio: true,
 };
 
 function project(id: string, fileName: string): ProjectDocument {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id,
     source: {
       fileName,
       durationSeconds: null,
       width: null,
       height: null,
-      frameRate: null,
+      frameRateNumerator: null,
+      frameRateDenominator: null,
+      frameRateReliability: 'approximate',
       hasAudio: null,
+      inspectedAt: null,
+      inspectorVersion: null,
     },
+    editor: { timelineZoom: 1, timelineOffsetSeconds: 0 },
     settings: { pauseAfterCreation: false },
     playbackPositionSeconds: 0,
     selectedSegmentId: null,

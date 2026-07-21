@@ -23,16 +23,21 @@ async function fixture(): Promise<{ config: ServerConfig }> {
   const layout = new StorageLayout(dataRoot);
   const paths = layout.forProject(projectId, 'Managed Source.mp4');
   const project: ProjectDocument = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: projectId,
     source: {
       fileName: 'Managed Source.mp4',
       durationSeconds: null,
       width: null,
       height: null,
-      frameRate: null,
+      frameRateNumerator: null,
+      frameRateDenominator: null,
+      frameRateReliability: 'approximate',
       hasAudio: null,
+      inspectedAt: null,
+      inspectorVersion: null,
     },
+    editor: { timelineZoom: 1, timelineOffsetSeconds: 0 },
     settings: { pauseAfterCreation: false },
     playbackPositionSeconds: 0,
     selectedSegmentId: null,

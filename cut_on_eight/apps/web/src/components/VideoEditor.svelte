@@ -36,6 +36,7 @@
   let pendingStartSeconds = $state<number | null>(null);
   let playing = $state(false);
   let interactionLocked = $state(false);
+  let segmentError = $state<string | null>(null);
   let animationFrame: number | null = null;
   let lastPublishedSeconds = untrack(() => project.playbackPositionSeconds);
 
@@ -228,6 +229,7 @@
     if (event.key.toLowerCase() === 'i') {
       event.preventDefault();
       pendingStartSeconds = currentSeconds;
+      segmentError = null;
       return;
     }
 
@@ -242,10 +244,19 @@
       event.preventDefault();
       const segmentStart = pendingStartSeconds;
       pendingStartSeconds = null;
-      updateProject((current) =>
-        createSegment(current, segmentStart, currentSeconds),
-      );
-      if (project.settings.pauseAfterCreation) video?.pause();
+      let created = false;
+      updateProject((current) => {
+        const result = createSegment(
+          current,
+          segmentStart,
+          currentSeconds,
+          displayDuration,
+        );
+        segmentError = result.ok ? null : result.message;
+        created = result.ok;
+        return result.state;
+      });
+      if (created && project.settings.pauseAfterCreation) video?.pause();
       return;
     }
 
@@ -298,6 +309,9 @@
       <span>{playing ? 'Playing' : 'Paused'}</span>
       {#if pendingStartSeconds !== null}
         <span class="pending-label">In: {pendingStartSeconds.toFixed(2)}s</span>
+      {/if}
+      {#if segmentError !== null}
+        <span class="error-text" aria-live="polite">{segmentError}</span>
       {/if}
     </div>
 

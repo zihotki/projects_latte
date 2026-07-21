@@ -185,16 +185,21 @@ function initialProject(
   sourceFileName: string,
 ): ProjectDocument {
   return projectDocumentSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: projectId,
     source: {
       fileName: sourceFileName,
       durationSeconds: null,
       width: null,
       height: null,
-      frameRate: null,
+      frameRateNumerator: null,
+      frameRateDenominator: null,
+      frameRateReliability: 'approximate',
       hasAudio: null,
+      inspectedAt: null,
+      inspectorVersion: null,
     },
+    editor: { timelineZoom: 1, timelineOffsetSeconds: 0 },
     settings: { pauseAfterCreation: false },
     playbackPositionSeconds: 0,
     selectedSegmentId: null,

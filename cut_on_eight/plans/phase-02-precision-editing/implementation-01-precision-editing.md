@@ -56,8 +56,10 @@
 - Modify: `packages/contracts/src/index.ts`
 - Modify: `packages/contracts/test/project.test.ts`
 - Modify: `apps/server/src/imports/import-service.ts`
+- Modify: `apps/server/src/jobs/ffprobe-runner.ts`
 - Modify: `apps/server/src/services.ts`
 - Modify: `apps/server/src/storage/project-repository.ts`
+- Modify: `apps/server/test/ffprobe-runner.test.ts`
 - Modify: `apps/server/test/storage.test.ts`
 - Create: `apps/web/src/lib/segment-constraints.ts`
 - Create: `apps/web/src/lib/segment-constraints.test.ts`
@@ -65,6 +67,7 @@
 - Create: `apps/web/src/lib/two-row-layout.test.ts`
 - Modify: `apps/web/src/lib/segments.ts`
 - Modify: `apps/web/src/lib/segments.test.ts`
+- Modify: `apps/web/src/components/VideoEditor.svelte`
 
 **Interfaces:**
 
@@ -75,17 +78,17 @@
 - Produces `frameStepSeconds(source)`, returning the reliable fraction or `1 / 30` with `approximate: true`.
 - Produces `createSegment<T extends SegmentState>(state: T, startSeconds: number | null, endSeconds: number, durationSeconds: number, createId?: () => string): { ok: true; state: UpdatedSegmentState<T> } | { ok: false; state: T; code: SegmentConstraintCode; message: string }` so failed rough marking can explain a constraint without changing state.
 
-- [ ] **Step 1: Add failing contract and migration cases**
+- [x] **Step 1: Add failing contract and migration cases**
 
   Cover version-1-to-version-2 migration, unchanged segment timestamps, rational FPS parsing, absent/unreliable FPS fallback, and per-project viewport defaults `{ timelineZoom: 1, timelineOffsetSeconds: 0 }`. Assert that the persisted schema accepts only version 2 after migration.
 
-- [ ] **Step 2: Run the contract test and confirm the schema is missing**
+- [x] **Step 2: Run the contract test and confirm the schema is missing**
 
   Run: `node_modules/.bin/vitest run packages/contracts/test/project.test.ts`
 
   Expected: failure on `schemaVersion: 2`, `editor`, or `migrateProjectDocument`.
 
-- [ ] **Step 3: Implement the versioned migration boundary**
+- [x] **Step 3: Implement the versioned migration boundary**
 
   Use these public shapes:
 
@@ -103,13 +106,13 @@
   ): FrameStep;
   ```
 
-  Project repositories must parse reads through `migrateProjectDocument` and atomically write migrated version 2 data during the next ordinary save. Inspection updates all new inspection fields together so client saves cannot replace fresher backend metadata.
+  Project repositories must parse reads through `migrateProjectDocument` and atomically write migrated version 2 data during the next ordinary save. Inspection compares normalized `avg_frame_rate` and `r_frame_rate`: equal valid fractions are reliable; a missing or differing signal is approximate. Inspection updates all new inspection fields together so client saves cannot replace fresher backend metadata. Legacy `frameRate` migrates conservatively as approximate.
 
-- [ ] **Step 4: Add failing constraint and row-allocation cases**
+- [x] **Step 4: Add failing constraint and row-allocation cases**
 
   Cover source bounds, `start < end`, two simultaneous overlaps accepted, three rejected, a segment overlapping its previous and next neighbours at different times accepted, deterministic rows independent of input order, and duration status `short | expected | long` at the 3/8-second boundaries.
 
-- [ ] **Step 5: Implement shared segment constraints and use them for creation**
+- [x] **Step 5: Implement shared segment constraints and use them for creation**
 
   ```ts
   export type SegmentConstraintCode =
@@ -135,16 +138,18 @@
 
   Calculate overlap depth from sorted start/end events with end events processed before start events at equal timestamps. `createSegment` returns a discriminated result containing the original state and stable error when validation fails; `VideoEditor` surfaces that error without saving.
 
-- [ ] **Step 6: Run the focused domain tests**
+- [x] **Step 6: Run the focused domain tests**
 
-  Run: `node_modules/.bin/vitest run packages/contracts/test/project.test.ts apps/web/src/lib/segments.test.ts apps/web/src/lib/segment-constraints.test.ts apps/web/src/lib/two-row-layout.test.ts apps/server/test/storage.test.ts`
+  Run: `node_modules/.bin/vitest run packages/contracts/test/project.test.ts apps/web/src/lib/segments.test.ts apps/web/src/lib/segment-constraints.test.ts apps/web/src/lib/two-row-layout.test.ts apps/server/test/ffprobe-runner.test.ts apps/server/test/storage.test.ts`
 
-  Expected: all listed tests pass.
+  Then run: `apps/web/node_modules/.bin/svelte-check --tsconfig apps/web/tsconfig.json --fail-on-warnings`
 
-- [ ] **Step 7: Commit**
+  Expected: all listed tests and the local Svelte check pass.
+
+- [x] **Step 7: Commit**
 
   ```bash
-  git add packages/contracts apps/server/src/imports/import-service.ts apps/server/src/services.ts apps/server/src/storage/project-repository.ts apps/server/test/storage.test.ts apps/web/src/lib
+  git add packages/contracts apps/server/src/imports/import-service.ts apps/server/src/jobs/ffprobe-runner.ts apps/server/src/services.ts apps/server/src/storage/project-repository.ts apps/server/test/ffprobe-runner.test.ts apps/server/test/storage.test.ts apps/web/src/lib apps/web/src/components/VideoEditor.svelte
   git commit -m "feat: add precision editing domain rules"
   ```
 

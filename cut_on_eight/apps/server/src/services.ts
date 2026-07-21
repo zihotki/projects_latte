@@ -115,12 +115,15 @@ function preserveInspectedSource(
     ...incoming,
     source: {
       ...incoming.source,
-      durationSeconds:
-        existing.source.durationSeconds ?? incoming.source.durationSeconds,
-      width: existing.source.width ?? incoming.source.width,
-      height: existing.source.height ?? incoming.source.height,
-      frameRate: existing.source.frameRate ?? incoming.source.frameRate,
-      hasAudio: existing.source.hasAudio ?? incoming.source.hasAudio,
+      durationSeconds: existing.source.durationSeconds,
+      width: existing.source.width,
+      height: existing.source.height,
+      frameRateNumerator: existing.source.frameRateNumerator,
+      frameRateDenominator: existing.source.frameRateDenominator,
+      frameRateReliability: existing.source.frameRateReliability,
+      hasAudio: existing.source.hasAudio,
+      inspectedAt: existing.source.inspectedAt,
+      inspectorVersion: existing.source.inspectorVersion,
     },
   };
 }
@@ -416,7 +419,18 @@ class ManagedWorkspaceServices implements AppServices {
       );
       await this.projects.save(projectId, entry.managedSourcePath, {
         ...project,
-        source: { ...project.source, ...metadata },
+        source: {
+          ...project.source,
+          durationSeconds: metadata.durationSeconds,
+          width: metadata.width,
+          height: metadata.height,
+          frameRateNumerator: metadata.frameRateNumerator,
+          frameRateDenominator: metadata.frameRateDenominator,
+          frameRateReliability: metadata.frameRateReliability,
+          hasAudio: metadata.hasAudio,
+          inspectedAt: new Date().toISOString(),
+          inspectorVersion: 'ffprobe-v1',
+        },
       });
     });
   }

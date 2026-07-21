@@ -1,4 +1,5 @@
 import {
+  migrateProjectDocument,
   projectDocumentSchema,
   type ProjectDocument,
 } from '@cut-on-eight/contracts';
@@ -21,16 +22,21 @@ function emptyProject(
   managedSourceRelativePath: string,
 ): ProjectDocument {
   return projectDocumentSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: projectId,
     source: {
       fileName: posix.basename(managedSourceRelativePath),
       durationSeconds: null,
       width: null,
       height: null,
-      frameRate: null,
+      frameRateNumerator: null,
+      frameRateDenominator: null,
+      frameRateReliability: 'approximate',
       hasAudio: null,
+      inspectedAt: null,
+      inspectorVersion: null,
     },
+    editor: { timelineZoom: 1, timelineOffsetSeconds: 0 },
     settings: { pauseAfterCreation: false },
     playbackPositionSeconds: 0,
     selectedSegmentId: null,
@@ -44,7 +50,7 @@ function parseProject(
   projectId: string,
   managedSourceRelativePath: string,
 ): ProjectDocument {
-  const project = projectDocumentSchema.parse(value);
+  const project = migrateProjectDocument(value);
 
   if (
     project.id !== projectId ||

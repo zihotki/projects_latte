@@ -1,4 +1,8 @@
 import type { Segment } from '@cut-on-eight/contracts';
+import {
+  validateSegmentMutation,
+  type SegmentConstraintCode,
+} from './segment-constraints.js';
 
 export type SegmentState = {
   segments: Segment[];
@@ -6,17 +10,35 @@ export type SegmentState = {
 };
 
 type SegmentIdFactory = () => string;
-type UpdatedSegmentState<T extends SegmentState> = Omit<T, keyof SegmentState> &
+export type UpdatedSegmentState<T extends SegmentState> = Omit<
+  T,
+  keyof SegmentState
+> &
   SegmentState;
+
+export type CreateSegmentResult<T extends SegmentState> =
+  | { readonly ok: true; readonly state: UpdatedSegmentState<T> }
+  | {
+      readonly ok: false;
+      readonly state: T;
+      readonly code: SegmentConstraintCode;
+      readonly message: string;
+    };
 
 export function createSegment<T extends SegmentState>(
   state: T,
   startSeconds: number | null,
   endSeconds: number,
+  durationSeconds: number,
   createId: SegmentIdFactory = () => crypto.randomUUID(),
-): UpdatedSegmentState<T> {
+): CreateSegmentResult<T> {
   if (startSeconds === null || endSeconds <= startSeconds) {
-    return state;
+    return {
+      ok: false,
+      state,
+      code: 'invalid_range',
+      message: 'Segment end must be after its start.',
+    };
   }
 
   const segment: Segment = {
@@ -26,10 +48,20 @@ export function createSegment<T extends SegmentState>(
     exportSelected: true,
   };
 
+  const validated = validateSegmentMutation(
+    state.segments,
+    segment,
+    durationSeconds,
+  );
+  if (!validated.ok) return { ...validated, state };
+
   return {
-    ...state,
-    segments: [...state.segments, segment],
-    selectedSegmentId: segment.id,
+    ok: true,
+    state: {
+      ...state,
+      segments: [...state.segments, validated.segment],
+      selectedSegmentId: validated.segment.id,
+    },
   };
 }
 

@@ -20,15 +20,25 @@ function emptyState(): SegmentState {
 }
 
 describe('segment operations', () => {
-  it('creates and selects five overlapping segments in creation order', () => {
+  it('creates and selects segments in creation order', () => {
     let state = emptyState();
 
-    for (const [index, id] of segmentIds.entries()) {
-      state = createSegment(state, index, index + 4, () => id);
+    for (const [index, id] of segmentIds.slice(0, 3).entries()) {
+      const result = createSegment(
+        state,
+        index * 4,
+        index * 4 + 4,
+        12,
+        () => id,
+      );
+      expect(result.ok).toBe(true);
+      state = result.state;
     }
 
-    expect(state.segments.map((segment) => segment.id)).toEqual(segmentIds);
-    expect(state.selectedSegmentId).toBe(segmentIds.at(-1));
+    expect(state.segments.map((segment) => segment.id)).toEqual(
+      segmentIds.slice(0, 3),
+    );
+    expect(state.selectedSegmentId).toBe(segmentIds[2]);
     expect(state.segments.every((segment) => segment.exportSelected)).toBe(
       true,
     );
@@ -130,17 +140,45 @@ describe('segment operations', () => {
   });
 
   it.each([
-    { startSeconds: null, endSeconds: 2 },
-    { startSeconds: 2, endSeconds: 2 },
-    { startSeconds: 3, endSeconds: 2 },
-  ])(
-    'keeps the same state for invalid O behavior: %o',
-    ({ startSeconds, endSeconds }) => {
+    { startSeconds: null, endSeconds: 2, code: 'invalid_range' },
+    { startSeconds: 2, endSeconds: 2, code: 'invalid_range' },
+    { startSeconds: 3, endSeconds: 2, code: 'invalid_range' },
+    { startSeconds: 8, endSeconds: 11, code: 'outside_source' },
+  ] as const)(
+    'keeps the same state and explains invalid O behavior: %o',
+    ({ startSeconds, endSeconds, code }) => {
       const input = emptyState();
+      const result = createSegment(input, startSeconds, endSeconds, 10);
 
-      expect(createSegment(input, startSeconds, endSeconds)).toBe(input);
+      expect(result).toMatchObject({ ok: false, code });
+      expect(result.state).toBe(input);
     },
   );
+
+  it('rejects a third overlap without mutating state', () => {
+    const input = {
+      segments: [
+        {
+          id: segmentIds[0],
+          startSeconds: 1,
+          endSeconds: 5,
+          exportSelected: true,
+        },
+        {
+          id: segmentIds[1],
+          startSeconds: 2,
+          endSeconds: 6,
+          exportSelected: true,
+        },
+      ],
+      selectedSegmentId: segmentIds[1],
+    };
+
+    const result = createSegment(input, 3, 4, 10, () => segmentIds[2]);
+
+    expect(result).toMatchObject({ ok: false, code: 'triple_overlap' });
+    expect(result.state).toBe(input);
+  });
 
   it('clears selection when deleting the most recent selected segment', () => {
     const input = {

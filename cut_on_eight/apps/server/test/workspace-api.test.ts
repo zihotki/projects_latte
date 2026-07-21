@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import type { ServerConfig } from '../src/config.js';
 import type { SourcePicker } from '../src/imports/source-picker.js';
+import type { ProbeResult } from '../src/jobs/ffprobe-runner.js';
 import {
   LibraryRepository,
   type LibraryDocument,
@@ -20,16 +21,21 @@ const roots: string[] = [];
 
 function project(id: string, fileName: string): ProjectDocument {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id,
     source: {
       fileName,
       durationSeconds: null,
       width: null,
       height: null,
-      frameRate: null,
+      frameRateNumerator: null,
+      frameRateDenominator: null,
+      frameRateReliability: 'approximate',
       hasAudio: null,
+      inspectedAt: null,
+      inspectorVersion: null,
     },
+    editor: { timelineZoom: 1, timelineOffsetSeconds: 0 },
     settings: { pauseAfterCreation: false },
     playbackPositionSeconds: 0,
     selectedSegmentId: null,
@@ -199,6 +205,58 @@ describe('managed workspace API', () => {
     await app.close();
   });
 
+  it('does not let a client save replace backend inspection metadata', async () => {
+    const { config, first, layout } = await fixture();
+    const projects = new ProjectRepository(layout);
+    const managedSource = layout.forProject(
+      first.id,
+      first.source.fileName,
+    ).relativeSource;
+    const inspected: ProjectDocument = {
+      ...first,
+      source: {
+        ...first.source,
+        durationSeconds: 42,
+        width: 1920,
+        height: 1080,
+        frameRateNumerator: 30_000,
+        frameRateDenominator: 1_001,
+        frameRateReliability: 'reliable',
+        hasAudio: true,
+        inspectedAt: '2026-07-21T12:00:00.000Z',
+        inspectorVersion: 'ffprobe-v1',
+      },
+    };
+    await projects.save(first.id, managedSource, inspected);
+    const app = createApp({ config, picker: cancelledPicker });
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/projects/${first.id}`,
+      payload: {
+        ...inspected,
+        source: {
+          ...inspected.source,
+          durationSeconds: 1,
+          width: 1,
+          frameRateNumerator: 1,
+          frameRateDenominator: 1,
+          inspectedAt: '2027-01-01T00:00:00.000Z',
+          inspectorVersion: 'client',
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().source).toEqual(inspected.source);
+    await expect(projects.read(first.id, managedSource)).resolves.toMatchObject(
+      {
+        source: inspected.source,
+      },
+    );
+    await app.close();
+  });
+
   it('keeps a project open when its save fails and returns a safe error', async () => {
     const { config, first, layout } = await fixture();
     const app = createApp({ config, picker: cancelledPicker });
@@ -305,24 +363,12 @@ describe('managed workspace API', () => {
     const selectedPath = new Promise<string>((resolve) => {
       releasePicker = resolve;
     });
-    let releaseInspection: (result: {
-      durationSeconds: number;
-      frameRate: string;
-      hasAudio: boolean;
-      height: number;
-      width: number;
-    }) => void = () => undefined;
+    let releaseInspection: (result: ProbeResult) => void = () => undefined;
     let markInspectionStarted: () => void = () => undefined;
     const inspectionStarted = new Promise<void>((resolve) => {
       markInspectionStarted = resolve;
     });
-    const inspection = new Promise<{
-      durationSeconds: number;
-      frameRate: string;
-      hasAudio: boolean;
-      height: number;
-      width: number;
-    }>((resolve) => {
+    const inspection = new Promise<ProbeResult>((resolve) => {
       releaseInspection = resolve;
     });
     const app = createApp({
@@ -395,7 +441,9 @@ describe('managed workspace API', () => {
     expect(appClosed).toBe(false);
     releaseInspection({
       durationSeconds: 60,
-      frameRate: '30/1',
+      frameRateNumerator: 30,
+      frameRateDenominator: 1,
+      frameRateReliability: 'reliable',
       hasAudio: true,
       height: 1080,
       width: 1920,

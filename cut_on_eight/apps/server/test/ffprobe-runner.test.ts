@@ -12,6 +12,7 @@ const validOutput = JSON.stringify({
       width: 1920,
       height: 1080,
       avg_frame_rate: '30000/1001',
+      r_frame_rate: '60000/2002',
     },
     { codec_type: 'audio' },
   ],
@@ -34,7 +35,9 @@ describe('FFprobe runner', () => {
       durationSeconds: 12.625,
       width: 1920,
       height: 1080,
-      frameRate: '30000/1001',
+      frameRateNumerator: 30_000,
+      frameRateDenominator: 1_001,
+      frameRateReliability: 'reliable',
       hasAudio: true,
     });
     expect(calls).toEqual([
@@ -61,6 +64,46 @@ describe('FFprobe runner', () => {
       parseProbeOutput(JSON.stringify({ streams: [], format: {} })),
     ).toThrowError(expect.objectContaining({ code: 'ffprobe_invalid_output' }));
   });
+
+  it('marks mismatched or absent reported frame rates as approximate', () => {
+    const output = JSON.parse(validOutput) as {
+      streams: Array<Record<string, unknown>>;
+    };
+    output.streams[0]!.r_frame_rate = '30/1';
+    expect(parseProbeOutput(JSON.stringify(output))).toMatchObject({
+      frameRateNumerator: 30_000,
+      frameRateDenominator: 1_001,
+      frameRateReliability: 'approximate',
+    });
+
+    delete output.streams[0]!.r_frame_rate;
+    expect(parseProbeOutput(JSON.stringify(output))).toMatchObject({
+      frameRateReliability: 'approximate',
+    });
+  });
+
+  it.each([undefined, '0/0', 'unknown'])(
+    'keeps usable metadata with missing or invalid average frame rate %s',
+    (averageFrameRate) => {
+      const output = JSON.parse(validOutput) as {
+        streams: Array<Record<string, unknown>>;
+      };
+      if (averageFrameRate === undefined) {
+        delete output.streams[0]!.avg_frame_rate;
+      } else {
+        output.streams[0]!.avg_frame_rate = averageFrameRate;
+      }
+
+      expect(parseProbeOutput(JSON.stringify(output))).toMatchObject({
+        durationSeconds: 12.625,
+        width: 1920,
+        height: 1080,
+        frameRateNumerator: null,
+        frameRateDenominator: null,
+        frameRateReliability: 'approximate',
+      });
+    },
+  );
 
   it('preserves the typed missing-executable failure', async () => {
     const runner = new FfprobeRunner('missing-ffprobe', async () => {

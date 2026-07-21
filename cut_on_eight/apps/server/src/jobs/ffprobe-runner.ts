@@ -13,7 +13,9 @@ const DEFAULT_TIMEOUT_MILLISECONDS = 30_000;
 
 export interface ProbeResult {
   readonly durationSeconds: number;
-  readonly frameRate: string;
+  readonly frameRateDenominator: number | null;
+  readonly frameRateNumerator: number | null;
+  readonly frameRateReliability: 'reliable' | 'approximate';
   readonly hasAudio: boolean;
   readonly height: number;
   readonly width: number;
@@ -158,6 +160,43 @@ function positiveInteger(value: unknown): number | undefined {
   return parsed !== undefined && Number.isInteger(parsed) ? parsed : undefined;
 }
 
+interface Rational {
+  readonly denominator: number;
+  readonly numerator: number;
+}
+
+function greatestCommonDivisor(left: number, right: number): number {
+  let currentLeft = left;
+  let currentRight = right;
+  while (currentRight !== 0) {
+    [currentLeft, currentRight] = [currentRight, currentLeft % currentRight];
+  }
+  return currentLeft;
+}
+
+function rational(value: unknown): Rational | undefined {
+  if (typeof value !== 'string') return undefined;
+  const match = /^(\d+)\/(\d+)$/.exec(value);
+  if (match === null) return undefined;
+
+  const numerator = Number(match[1]);
+  const denominator = Number(match[2]);
+  if (
+    !Number.isSafeInteger(numerator) ||
+    numerator <= 0 ||
+    !Number.isSafeInteger(denominator) ||
+    denominator <= 0
+  ) {
+    return undefined;
+  }
+
+  const divisor = greatestCommonDivisor(numerator, denominator);
+  return {
+    numerator: numerator / divisor,
+    denominator: denominator / divisor,
+  };
+}
+
 export function parseProbeOutput(output: string): ProbeResult {
   let root: Record<string, unknown> | undefined;
   try {
@@ -175,15 +214,13 @@ export function parseProbeOutput(output: string): ProbeResult {
     positiveNumber(video?.duration) ?? positiveNumber(format?.duration);
   const width = positiveInteger(video?.width);
   const height = positiveInteger(video?.height);
-  const frameRate = video?.avg_frame_rate;
+  const averageFrameRate = rational(video?.avg_frame_rate);
+  const reportedFrameRate = rational(video?.r_frame_rate);
 
   if (
     durationSeconds === undefined ||
     width === undefined ||
-    height === undefined ||
-    typeof frameRate !== 'string' ||
-    !/^\d+\/\d+$/.test(frameRate) ||
-    frameRate.endsWith('/0')
+    height === undefined
   ) {
     throw new ProbeError(
       'ffprobe_invalid_output',
@@ -196,7 +233,15 @@ export function parseProbeOutput(output: string): ProbeResult {
     durationSeconds,
     width,
     height,
-    frameRate,
+    frameRateNumerator: averageFrameRate?.numerator ?? null,
+    frameRateDenominator: averageFrameRate?.denominator ?? null,
+    frameRateReliability:
+      averageFrameRate !== undefined &&
+      reportedFrameRate !== undefined &&
+      reportedFrameRate.numerator === averageFrameRate.numerator &&
+      reportedFrameRate.denominator === averageFrameRate.denominator
+        ? 'reliable'
+        : 'approximate',
     hasAudio: streams.some((stream) => record(stream)?.codec_type === 'audio'),
   };
 }

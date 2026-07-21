@@ -186,7 +186,7 @@ describe('transactional managed import', () => {
     await expect(
       new ProjectRepository(layout).read(projectId, paths.relativeSource),
     ).resolves.toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: projectId,
       source: { fileName: 'Cross Body Lead.mp4' },
     });
