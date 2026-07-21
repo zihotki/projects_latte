@@ -26,7 +26,21 @@ interface CatalogDocuments {
 export interface CatalogTransactionDocument {
   readonly after: CatalogDocuments;
   readonly before: CatalogDocuments;
+  readonly phase: 'prepared' | 'committed';
   readonly schemaVersion: 1;
+}
+
+type RemoveJournal = (path: string) => Promise<void>;
+
+let catalogOperationQueue: Promise<void> = Promise.resolve();
+
+function enqueueCatalogOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const result = catalogOperationQueue.then(operation);
+  catalogOperationQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -61,14 +75,16 @@ function validateCatalogTransaction(
 ): CatalogTransactionDocument {
   if (
     !isRecord(value) ||
-    !hasOnlyKeys(value, ['schemaVersion', 'before', 'after']) ||
-    value.schemaVersion !== 1
+    !hasOnlyKeys(value, ['schemaVersion', 'phase', 'before', 'after']) ||
+    value.schemaVersion !== 1 ||
+    (value.phase !== 'prepared' && value.phase !== 'committed')
   ) {
     throw new Error('Catalog transaction is invalid');
   }
 
   return {
     schemaVersion: 1,
+    phase: value.phase,
     before: validateCatalogDocuments(value.before, layout),
     after: validateCatalogDocuments(value.after, layout),
   };
@@ -82,12 +98,26 @@ export class CatalogRepository {
     private readonly layout: StorageLayout,
     library: Repository<LibraryDocument> = new LibraryRepository(layout),
     workspace: Repository<WorkspaceDocument> = new WorkspaceRepository(layout),
+    private readonly removeJournalFile: RemoveJournal = unlink,
   ) {
     this.library = library;
     this.workspace = workspace;
   }
 
   async commit(
+    libraryAfter: LibraryDocument,
+    workspaceAfter: WorkspaceDocument,
+  ): Promise<void> {
+    return enqueueCatalogOperation(() =>
+      this.commitUnlocked(libraryAfter, workspaceAfter),
+    );
+  }
+
+  async recover(): Promise<boolean> {
+    return enqueueCatalogOperation(() => this.recoverUnlocked());
+  }
+
+  private async commitUnlocked(
     libraryAfter: LibraryDocument,
     workspaceAfter: WorkspaceDocument,
   ): Promise<void> {
@@ -102,24 +132,22 @@ export class CatalogRepository {
       throw new InvalidRepositoryDocumentError('catalog', error);
     }
 
-    await this.recover();
+    await this.recoverUnlocked();
     const before = {
       library: await this.library.read(),
       workspace: await this.workspace.read(),
     };
     const transaction = validateCatalogTransaction(
-      { schemaVersion: 1, before, after },
+      { schemaVersion: 1, phase: 'prepared', before, after },
       this.layout,
     );
 
-    await this.layout.assertNoSymlinkComponents(
-      this.layout.catalogTransactionFile,
-    );
-    await writeJsonAtomic(this.layout.catalogTransactionFile, transaction);
+    await this.writeJournal(transaction);
 
     try {
       await this.library.save(after.library);
       await this.workspace.save(after.workspace);
+      await this.writeJournal({ ...transaction, phase: 'committed' });
     } catch (error) {
       try {
         await this.restore(before);
@@ -135,10 +163,15 @@ export class CatalogRepository {
       throw error;
     }
 
-    await this.removeJournal();
+    try {
+      await this.removeJournal();
+    } catch {
+      // The committed journal is deterministic recovery metadata. Cleanup is
+      // best-effort after the catalog update has durably succeeded.
+    }
   }
 
-  async recover(): Promise<boolean> {
+  private async recoverUnlocked(): Promise<boolean> {
     await this.layout.assertNoSymlinkComponents(
       this.layout.catalogTransactionFile,
     );
@@ -151,7 +184,9 @@ export class CatalogRepository {
       return false;
     }
 
-    await this.restore(transaction.before);
+    await this.restore(
+      transaction.phase === 'prepared' ? transaction.before : transaction.after,
+    );
     await this.removeJournal();
     return true;
   }
@@ -160,11 +195,20 @@ export class CatalogRepository {
     await this.layout.assertNoSymlinkComponents(
       this.layout.catalogTransactionFile,
     );
-    await unlink(this.layout.catalogTransactionFile);
+    await this.removeJournalFile(this.layout.catalogTransactionFile);
   }
 
-  private async restore(before: CatalogDocuments): Promise<void> {
-    await this.library.save(before.library);
-    await this.workspace.save(before.workspace);
+  private async writeJournal(
+    transaction: CatalogTransactionDocument,
+  ): Promise<void> {
+    await this.layout.assertNoSymlinkComponents(
+      this.layout.catalogTransactionFile,
+    );
+    await writeJsonAtomic(this.layout.catalogTransactionFile, transaction);
+  }
+
+  private async restore(documents: CatalogDocuments): Promise<void> {
+    await this.library.save(documents.library);
+    await this.workspace.save(documents.workspace);
   }
 }

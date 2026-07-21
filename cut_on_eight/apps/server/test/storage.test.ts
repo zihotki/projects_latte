@@ -5,6 +5,7 @@ import {
   readFile,
   readdir,
   symlink,
+  unlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -30,6 +31,8 @@ import {
 
 const projectId = '10000000-0000-4000-8000-000000000001';
 const sourceFileName = 'Cross Body Lead.mp4';
+const secondProjectId = '10000000-0000-4000-8000-000000000002';
+const secondSourceFileName = 'Inside Turn.mp4';
 const roots: string[] = [];
 
 async function createRoot(): Promise<string> {
@@ -58,14 +61,17 @@ function projectDocument(): ProjectDocument {
   };
 }
 
-function libraryDocument(layout: StorageLayout): LibraryDocument {
+function libraryDocument(
+  layout: StorageLayout,
+  id = projectId,
+  fileName = sourceFileName,
+): LibraryDocument {
   return {
     schemaVersion: 1,
     entries: [
       {
-        id: projectId,
-        managedSourcePath: layout.forProject(projectId, sourceFileName)
-          .relativeSource,
+        id,
+        managedSourcePath: layout.forProject(id, fileName).relativeSource,
         fingerprint: {
           realPath: '/Users/example/Videos/Cross Body Lead.mp4',
           size: 123_456,
@@ -77,11 +83,11 @@ function libraryDocument(layout: StorageLayout): LibraryDocument {
   };
 }
 
-function workspaceDocument(): WorkspaceDocument {
+function workspaceDocument(id = projectId): WorkspaceDocument {
   return {
     schemaVersion: 1,
-    openProjectIds: [projectId],
-    activeProjectId: projectId,
+    openProjectIds: [id],
+    activeProjectId: id,
   };
 }
 
@@ -387,6 +393,113 @@ describe('atomic managed storage', () => {
     });
   });
 
+  it('serializes concurrent catalog commits across the full protocol', async () => {
+    const root = await createRoot();
+    const layout = new StorageLayout(root);
+    const library = new LibraryRepository(layout);
+    const workspace = new WorkspaceRepository(layout);
+    let releaseFirstSave = (): void => undefined;
+    let markFirstSaveStarted = (): void => undefined;
+    const firstSaveStarted = new Promise<void>((resolve) => {
+      markFirstSaveStarted = resolve;
+    });
+    const firstSaveGate = new Promise<void>((resolve) => {
+      releaseFirstSave = resolve;
+    });
+    let activeSaves = 0;
+    let maximumActiveSaves = 0;
+    let saveCalls = 0;
+    const observedLibrary = {
+      read: () => library.read(),
+      save: async (document: LibraryDocument): Promise<void> => {
+        saveCalls += 1;
+        activeSaves += 1;
+        maximumActiveSaves = Math.max(maximumActiveSaves, activeSaves);
+
+        try {
+          if (saveCalls === 1) {
+            markFirstSaveStarted();
+            await firstSaveGate;
+          }
+
+          await library.save(document);
+        } finally {
+          activeSaves -= 1;
+        }
+      },
+    };
+    const catalog = new CatalogRepository(layout, observedLibrary, workspace);
+    const firstCommit = catalog.commit(
+      libraryDocument(layout),
+      workspaceDocument(),
+    );
+
+    await firstSaveStarted;
+    const secondLibrary = libraryDocument(
+      layout,
+      secondProjectId,
+      secondSourceFileName,
+    );
+    const secondWorkspace = workspaceDocument(secondProjectId);
+    const secondCommit = catalog.commit(secondLibrary, secondWorkspace);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const savesBeforeRelease = saveCalls;
+    releaseFirstSave();
+    await Promise.all([firstCommit, secondCommit]);
+
+    expect(savesBeforeRelease).toBe(1);
+    expect(maximumActiveSaves).toBe(1);
+    await expect(library.read()).resolves.toEqual(secondLibrary);
+    await expect(workspace.read()).resolves.toEqual(secondWorkspace);
+  });
+
+  it('keeps a committed journal when cleanup fails and reapplies it on recovery', async () => {
+    const root = await createRoot();
+    const layout = new StorageLayout(root);
+    const libraryAfter = libraryDocument(layout);
+    const workspaceAfter = workspaceDocument();
+    let cleanupAttempts = 0;
+    const removeJournal = async (path: string): Promise<void> => {
+      cleanupAttempts += 1;
+
+      if (cleanupAttempts === 1) {
+        throw new Error('Injected journal cleanup failure');
+      }
+
+      await unlink(path);
+    };
+    const catalog = new CatalogRepository(
+      layout,
+      undefined,
+      undefined,
+      removeJournal,
+    );
+
+    await expect(
+      catalog.commit(libraryAfter, workspaceAfter),
+    ).resolves.toBeUndefined();
+    await expect(
+      readFile(layout.catalogTransactionFile, 'utf8').then((contents) =>
+        JSON.parse(contents),
+      ),
+    ).resolves.toMatchObject({ phase: 'committed' });
+
+    await new LibraryRepository(layout).save(emptyLibrary);
+    await new WorkspaceRepository(layout).save(emptyWorkspace);
+
+    await expect(catalog.recover()).resolves.toBe(true);
+    await expect(new LibraryRepository(layout).read()).resolves.toEqual(
+      libraryAfter,
+    );
+    await expect(new WorkspaceRepository(layout).read()).resolves.toEqual(
+      workspaceAfter,
+    );
+    await expect(access(layout.catalogTransactionFile)).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
+
   it('recovers both before-documents from an interrupted catalog journal', async () => {
     const root = await createRoot();
     const layout = new StorageLayout(root);
@@ -397,6 +510,7 @@ describe('atomic managed storage', () => {
 
     await writeJsonAtomic(layout.catalogTransactionFile, {
       schemaVersion: 1,
+      phase: 'prepared',
       before: { library: emptyLibrary, workspace: emptyWorkspace },
       after: { library: libraryAfter, workspace: workspaceAfter },
     });
