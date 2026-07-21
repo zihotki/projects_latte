@@ -454,7 +454,7 @@ describe('atomic managed storage', () => {
     await expect(workspace.read()).resolves.toEqual(secondWorkspace);
   });
 
-  it('keeps a committed journal when cleanup fails and reapplies it on recovery', async () => {
+  it('preserves later workspace saves when cleaning up a committed journal', async () => {
     const root = await createRoot();
     const layout = new StorageLayout(root);
     const libraryAfter = libraryDocument(layout);
@@ -485,15 +485,14 @@ describe('atomic managed storage', () => {
       ),
     ).resolves.toMatchObject({ phase: 'committed' });
 
-    await new LibraryRepository(layout).save(emptyLibrary);
     await new WorkspaceRepository(layout).save(emptyWorkspace);
 
-    await expect(catalog.recover()).resolves.toBe(true);
+    await expect(new CatalogRepository(layout).recover()).resolves.toBe(true);
     await expect(new LibraryRepository(layout).read()).resolves.toEqual(
       libraryAfter,
     );
     await expect(new WorkspaceRepository(layout).read()).resolves.toEqual(
-      workspaceAfter,
+      emptyWorkspace,
     );
     await expect(access(layout.catalogTransactionFile)).rejects.toMatchObject({
       code: 'ENOENT',

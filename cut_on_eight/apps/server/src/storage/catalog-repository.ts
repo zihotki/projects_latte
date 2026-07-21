@@ -184,9 +184,10 @@ export class CatalogRepository {
       return false;
     }
 
-    await this.restore(
-      transaction.phase === 'prepared' ? transaction.before : transaction.after,
-    );
+    if (transaction.phase === 'prepared') {
+      await this.restore(transaction.before);
+    }
+
     await this.removeJournal();
     return true;
   }
