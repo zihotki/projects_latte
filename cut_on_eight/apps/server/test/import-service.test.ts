@@ -31,6 +31,7 @@ import { WorkspaceRepository } from '../src/storage/workspace-repository.js';
 const projectId = '10000000-0000-4000-8000-000000000001';
 const secondProjectId = '30000000-0000-4000-8000-000000000002';
 const jobId = '20000000-0000-4000-8000-000000000001';
+const replacementJobId = '20000000-0000-4000-8000-000000000002';
 const now = new Date('2026-07-21T12:00:00.000Z');
 const roots: string[] = [];
 
@@ -247,6 +248,74 @@ describe('transactional managed import', () => {
       openProjectIds: [projectId],
       activeProjectId: projectId,
     });
+  });
+
+  it('creates a durable replacement inspection job before reopening a duplicate', async () => {
+    const source = await createMp4();
+    const dataRoot = await createRoot('cut-on-eight-missing-job-');
+    const layout = new StorageLayout(dataRoot);
+    const jobIds = [jobId, replacementJobId];
+    const service = createService(layout, source, {
+      jobs: new JobRepository(
+        layout,
+        () => jobIds.shift() ?? replacementJobId,
+        () => now,
+      ),
+    });
+
+    await service.selectAndImport();
+    const paths = layout.forProject(projectId, 'Cross Body Lead.mp4');
+    await rm(paths.jobsDirectory, { recursive: true, force: true });
+
+    await expect(service.selectAndImport()).resolves.toEqual({
+      outcome: 'reopened',
+      projectId,
+    });
+    expect(await readdir(paths.jobsDirectory)).toEqual([
+      `${replacementJobId}.json`,
+    ]);
+    expect(
+      JSON.parse(
+        await readFile(
+          join(paths.jobsDirectory, `${replacementJobId}.json`),
+          'utf8',
+        ),
+      ),
+    ).toMatchObject({
+      id: replacementJobId,
+      projectId,
+      type: 'inspect-source',
+      state: 'queued',
+    });
+  });
+
+  it('preserves a corrupt job while creating a valid replacement before reopen', async () => {
+    const source = await createMp4();
+    const dataRoot = await createRoot('cut-on-eight-corrupt-job-');
+    const layout = new StorageLayout(dataRoot);
+    const jobIds = [jobId, replacementJobId];
+    const service = createService(layout, source, {
+      jobs: new JobRepository(
+        layout,
+        () => jobIds.shift() ?? replacementJobId,
+        () => now,
+      ),
+    });
+
+    await service.selectAndImport();
+    const paths = layout.forProject(projectId, 'Cross Body Lead.mp4');
+    const corruptJob = join(paths.jobsDirectory, `${jobId}.json`);
+    const corruptBytes = Buffer.from('{"schemaVersion":1,"broken":');
+    await writeFile(corruptJob, corruptBytes);
+
+    await expect(service.selectAndImport()).resolves.toEqual({
+      outcome: 'reopened',
+      projectId,
+    });
+    expect(await readFile(corruptJob)).toEqual(corruptBytes);
+    expect((await readdir(paths.jobsDirectory)).sort()).toEqual(
+      [`${jobId}.json`, `${replacementJobId}.json`].sort(),
+    );
   });
 
   it.each([

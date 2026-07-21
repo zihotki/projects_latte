@@ -69,6 +69,10 @@ interface QueuedInspectionWriter {
     projectId: string,
     projectDirectory: string,
   ): Promise<{ readonly id: string }>;
+  ensureInspectionJob(
+    projectId: string,
+    projectDirectory: string,
+  ): Promise<{ readonly id: string }>;
 }
 
 type CopySource = (
@@ -284,6 +288,11 @@ export class ImportService {
       }
 
       if (await this.isUsableDuplicate(duplicate)) {
+        const paths = this.layout.forProject(
+          duplicate.id,
+          basename(duplicate.managedSourcePath),
+        );
+        await this.jobs.ensureInspectionJob(duplicate.id, paths.directory);
         const workspace = await this.workspace.read();
         await this.catalog.commit(
           library,
