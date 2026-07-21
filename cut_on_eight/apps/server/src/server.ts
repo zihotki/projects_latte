@@ -1,8 +1,8 @@
-import { createApp } from './app.js';
 import { getServerConfig } from './config.js';
+import { createApp } from './app.js';
 
-const app = createApp();
 const config = getServerConfig();
+const app = createApp({ config });
 
 const shutdown = async (): Promise<void> => {
   await app.close();
@@ -13,7 +13,8 @@ process.once('SIGINT', () => void shutdown());
 process.once('SIGTERM', () => void shutdown());
 
 try {
-  await app.listen(config);
+  await app.recover();
+  await app.listen({ host: config.host, port: config.port });
 } catch (error) {
   app.log.error(error);
   process.exitCode = 1;
