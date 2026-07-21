@@ -218,4 +218,35 @@ describe('managed workspace API', () => {
 
     await app.close();
   });
+
+  it('does not close a project when an unrelated sidecar prevents a safe response', async () => {
+    const { config, first, layout, second } = await fixture();
+    const app = createApp({ config, picker: cancelledPicker });
+    const unrelatedSidecar = layout.forProject(
+      second.id,
+      second.source.fileName,
+    ).sidecar;
+    await writeFile(unrelatedSidecar, '{ not-json', 'utf8');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${first.id}/close`,
+      payload: { ...first, playbackPositionSeconds: 33 },
+    });
+
+    expect(response.statusCode).toBe(500);
+    await expect(new WorkspaceRepository(layout).read()).resolves.toMatchObject(
+      {
+        openProjectIds: [second.id, first.id],
+        activeProjectId: first.id,
+      },
+    );
+    await expect(
+      new ProjectRepository(layout).read(
+        first.id,
+        layout.forProject(first.id, first.source.fileName).relativeSource,
+      ),
+    ).resolves.toMatchObject({ playbackPositionSeconds: 0 });
+    await app.close();
+  });
 });

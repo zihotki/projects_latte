@@ -188,7 +188,8 @@ class ManagedWorkspaceServices implements AppServices {
   ): Promise<WorkspaceSnapshot> {
     return this.enqueue(async () => {
       const validated = projectDocumentSchema.parse(document);
-      const entry = await this.requireLibraryEntry(projectId);
+      const library = await this.library.read();
+      const entry = this.findLibraryEntry(library, projectId);
       const current = await this.workspace.read();
 
       if (!current.openProjectIds.includes(projectId)) {
@@ -201,9 +202,14 @@ class ManagedWorkspaceServices implements AppServices {
         );
       }
 
+      const nextWorkspace = closedWorkspace(current, projectId);
+      const response = await this.snapshot(
+        { library, workspace: nextWorkspace },
+        new Map([[projectId, validated]]),
+      );
       await this.projects.save(projectId, entry.managedSourcePath, validated);
-      await this.workspace.save(closedWorkspace(current, projectId));
-      return this.snapshot();
+      await this.workspace.save(nextWorkspace);
+      return response;
     });
   }
 
@@ -263,6 +269,13 @@ class ManagedWorkspaceServices implements AppServices {
 
   private async requireLibraryEntry(projectId: string): Promise<LibraryEntry> {
     const library = await this.library.read();
+    return this.findLibraryEntry(library, projectId);
+  }
+
+  private findLibraryEntry(
+    library: LibraryDocument,
+    projectId: string,
+  ): LibraryEntry {
     const entry = library.entries.find(
       (candidate) => candidate.id === projectId,
     );
@@ -280,12 +293,28 @@ class ManagedWorkspaceServices implements AppServices {
     return entry;
   }
 
-  private async snapshot(): Promise<WorkspaceSnapshot> {
-    const [library, workspace] = await Promise.all([
-      this.library.read(),
-      this.workspace.read(),
-    ]);
-    const projectsById = await this.readLibraryProjects(library);
+  private async snapshot(
+    state?: {
+      readonly library: LibraryDocument;
+      readonly workspace: WorkspaceDocument;
+    },
+    projectOverrides: ReadonlyMap<string, ProjectDocument> = new Map(),
+  ): Promise<WorkspaceSnapshot> {
+    let resolvedState = state;
+
+    if (resolvedState === undefined) {
+      const [library, workspace] = await Promise.all([
+        this.library.read(),
+        this.workspace.read(),
+      ]);
+      resolvedState = { library, workspace };
+    }
+
+    const { library, workspace } = resolvedState;
+    const projectsById = await this.readLibraryProjects(
+      library,
+      projectOverrides,
+    );
     const openProjects = workspace.openProjectIds.map((projectId) => {
       const project = projectsById.get(projectId);
 
@@ -330,13 +359,13 @@ class ManagedWorkspaceServices implements AppServices {
 
   private async readLibraryProjects(
     library: LibraryDocument,
+    projectOverrides: ReadonlyMap<string, ProjectDocument>,
   ): Promise<Map<string, ProjectDocument>> {
     const entries = await Promise.all(
       library.entries.map(async (entry) => {
-        const project = await this.projects.readRequired(
-          entry.id,
-          entry.managedSourcePath,
-        );
+        const project =
+          projectOverrides.get(entry.id) ??
+          (await this.projects.readRequired(entry.id, entry.managedSourcePath));
         return [entry.id, project] as const;
       }),
     );

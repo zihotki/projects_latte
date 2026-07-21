@@ -76,41 +76,50 @@ export function registerSourceRoutes(
   app: FastifyInstance,
   services: AppServices,
 ): void {
-  app.get('/api/sources/:projectId/content', async (request, reply) => {
-    const projectId = parseProjectId(request.params, 'projectId');
-    const source = await services.openSource(projectId);
-    const rangeHeader = request.headers.range;
+  app.get(
+    '/api/sources/:projectId/content',
+    { exposeHeadRoute: false },
+    async (request, reply) => {
+      const projectId = parseProjectId(request.params, 'projectId');
+      const source = await services.openSource(projectId);
 
-    reply.header('Accept-Ranges', 'bytes');
+      try {
+        const rangeHeader = request.headers.range;
+        reply.header('Accept-Ranges', 'bytes');
 
-    if (rangeHeader === undefined) {
-      return reply
-        .code(200)
-        .header('Content-Type', 'video/mp4')
-        .header('Content-Length', source.size)
-        .send(source.file.createReadStream({ autoClose: true }));
-    }
+        if (rangeHeader === undefined) {
+          return reply
+            .code(200)
+            .header('Content-Type', 'video/mp4')
+            .header('Content-Length', source.size)
+            .send(source.file.createReadStream({ autoClose: true }));
+        }
 
-    const range = parseByteRange(rangeHeader, source.size);
+        const range = parseByteRange(rangeHeader, source.size);
 
-    if (range === null) {
-      return sendInvalidRange(reply, source);
-    }
+        if (range === null) {
+          return sendInvalidRange(reply, source);
+        }
 
-    return reply
-      .code(206)
-      .header('Content-Type', 'video/mp4')
-      .header(
-        'Content-Range',
-        `bytes ${range.start}-${range.end}/${source.size}`,
-      )
-      .header('Content-Length', range.end - range.start + 1)
-      .send(
-        source.file.createReadStream({
-          autoClose: true,
-          start: range.start,
-          end: range.end,
-        }),
-      );
-  });
+        return reply
+          .code(206)
+          .header('Content-Type', 'video/mp4')
+          .header(
+            'Content-Range',
+            `bytes ${range.start}-${range.end}/${source.size}`,
+          )
+          .header('Content-Length', range.end - range.start + 1)
+          .send(
+            source.file.createReadStream({
+              autoClose: true,
+              start: range.start,
+              end: range.end,
+            }),
+          );
+      } catch (error) {
+        await source.file.close().catch(() => undefined);
+        throw error;
+      }
+    },
+  );
 }

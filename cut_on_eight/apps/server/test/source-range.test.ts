@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import type { ServerConfig } from '../src/config.js';
+import type { AppServices } from '../src/services.js';
 import {
   LibraryRepository,
   type LibraryDocument,
@@ -71,6 +72,36 @@ afterEach(async () => {
 });
 
 describe('managed MP4 byte-range API', () => {
+  it('does not open a managed source for HEAD requests', async () => {
+    let sourceOpenCount = 0;
+    const unused = async (): Promise<never> => {
+      throw new Error('Unexpected service call');
+    };
+    const services: AppServices = {
+      activateProject: unused,
+      closeProject: unused,
+      getWorkspace: unused,
+      openProject: unused,
+      openSource: async () => {
+        sourceOpenCount += 1;
+        throw new Error('HEAD must not open a source');
+      },
+      recover: async () => undefined,
+      saveProject: unused,
+      selectImport: unused,
+    };
+    const app = createApp({ services });
+
+    const response = await app.inject({
+      method: 'HEAD',
+      url: `/api/sources/${projectId}/content`,
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(sourceOpenCount).toBe(0);
+    await app.close();
+  });
+
   it('streams the complete source with a 200 response', async () => {
     const { config } = await fixture();
     const app = createApp({ config });
