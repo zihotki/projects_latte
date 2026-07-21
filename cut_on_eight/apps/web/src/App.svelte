@@ -9,6 +9,7 @@
   import AppBar from './components/AppBar.svelte';
   import LibraryPanel from './components/LibraryPanel.svelte';
   import ProjectStrip from './components/ProjectStrip.svelte';
+  import VideoEditor from './components/VideoEditor.svelte';
   import {
     activateProject,
     closeProject,
@@ -23,6 +24,10 @@
     type SaveState,
     type SaveStatus,
   } from './lib/save-controller.js';
+  import type {
+    RegisterVideoEditorControl,
+    VideoEditorControl,
+  } from './lib/editor-control.js';
 
   type BackendState = 'checking' | 'ready' | 'unavailable';
 
@@ -40,6 +45,8 @@
   let retryingProjectId = $state<string | null>(null);
 
   const controllers = new Map<string, SaveController>();
+  const sampledPlaybackPositions = new Map<string, number>();
+  let activeEditorControl: VideoEditorControl | null = null;
   let disposed = false;
 
   onDestroy(() => {
@@ -69,7 +76,10 @@
     if (project === undefined) {
       throw new Error('The project is no longer open.');
     }
-    return project;
+    const sampledPosition = sampledPlaybackPositions.get(projectId);
+    return sampledPosition === undefined
+      ? project
+      : { ...project, playbackPositionSeconds: sampledPosition };
   }
 
   function projectName(projectId: string): string {
@@ -101,6 +111,7 @@
       if (!liveIds.has(projectId)) {
         controller.cancel();
         controllers.delete(projectId);
+        sampledPlaybackPositions.delete(projectId);
       }
     }
 
@@ -128,7 +139,10 @@
 
     const currentProjects = new Map(
       preserveEdits
-        ? workspace?.openProjects.map((project) => [project.id, project])
+        ? workspace?.openProjects.map((project) => [
+            project.id,
+            documentFor(project.id),
+          ])
         : [],
     );
     workspace = {
@@ -142,6 +156,85 @@
 
   function saveStateFor(projectId: string): SaveState {
     return saveStates[projectId] ?? 'saved';
+  }
+
+  function updateProject(
+    projectId: string,
+    mutate: (project: ProjectDocument) => ProjectDocument,
+  ): void {
+    if (workspace === null) return;
+    const index = workspace.openProjects.findIndex(
+      (candidate) => candidate.id === projectId,
+    );
+    if (index < 0) return;
+
+    const current = workspace.openProjects[index];
+    if (current === undefined) return;
+
+    let project = mutate(current);
+    if (project === current) return;
+
+    const sampledPosition = sampledPlaybackPositions.get(projectId);
+    if (
+      sampledPosition !== undefined &&
+      project.playbackPositionSeconds === current.playbackPositionSeconds
+    ) {
+      project = { ...project, playbackPositionSeconds: sampledPosition };
+    }
+
+    sampledPlaybackPositions.set(projectId, project.playbackPositionSeconds);
+    workspace = {
+      ...workspace,
+      openProjects: workspace.openProjects.map((candidate) =>
+        candidate.id === projectId ? project : candidate,
+      ),
+    };
+    controllers.get(projectId)?.markDirty();
+  }
+
+  function samplePlaybackPosition(projectId: string, seconds: number): void {
+    if (workspace?.openProjects.some((project) => project.id === projectId)) {
+      sampledPlaybackPositions.set(projectId, seconds);
+    }
+  }
+
+  const registerEditorControl: RegisterVideoEditorControl = (control) => {
+    activeEditorControl = control;
+    return () => {
+      if (activeEditorControl === control) activeEditorControl = null;
+    };
+  };
+
+  function prepareProjectForSave(projectId: string): VideoEditorControl | null {
+    if (activeEditorControl?.projectId === projectId) {
+      activeEditorControl.prepareForSave();
+      return activeEditorControl;
+    }
+    return null;
+  }
+
+  function prepareActiveProject(): {
+    projectId: string;
+    control: VideoEditorControl | null;
+  } | null {
+    const projectId = workspace?.activeProjectId;
+    if (projectId === null || projectId === undefined) return null;
+
+    return { projectId, control: prepareProjectForSave(projectId) };
+  }
+
+  async function saveActiveProject(): Promise<void> {
+    const projectId = workspace?.activeProjectId;
+    if (projectId !== null && projectId !== undefined) {
+      const control = prepareProjectForSave(projectId);
+      try {
+        await controllers.get(projectId)?.flush();
+      } catch {
+        // SaveController exposes the safe failure through its status callback.
+      } finally {
+        control?.releaseAfterSave();
+      }
+    }
   }
 
   function jobStateFor(projectId: string): JobState | null {
@@ -179,11 +272,19 @@
   async function importMp4(): Promise<void> {
     importing = true;
     errorMessage = null;
+    const prepared = prepareActiveProject();
     try {
+      if (prepared !== null) {
+        await controllers.get(prepared.projectId)?.flush();
+      }
       const result = await selectImport();
       applyWorkspace(result.workspace);
+      if (result.workspace.activeProjectId === prepared?.projectId) {
+        prepared.control?.releaseAfterSave();
+      }
       void refreshJobs();
     } catch (error) {
+      prepared?.control?.releaseAfterSave();
       errorMessage = describeError(error, 'Import failed');
     } finally {
       importing = false;
@@ -193,9 +294,15 @@
   async function reopenProject(projectId: string): Promise<void> {
     openingProjectId = projectId;
     errorMessage = null;
+    const prepared =
+      projectId === workspace?.activeProjectId ? null : prepareActiveProject();
     try {
+      if (prepared !== null) {
+        await controllers.get(prepared.projectId)?.flush();
+      }
       applyWorkspace(await openProject(projectId));
     } catch (error) {
+      prepared?.control?.releaseAfterSave();
       errorMessage = describeError(error, 'Could not reopen the video');
     } finally {
       openingProjectId = null;
@@ -208,13 +315,14 @@
 
     busyProjectId = projectId;
     errorMessage = null;
+    const prepared = prepareActiveProject();
     try {
-      const currentId = workspace?.activeProjectId;
-      if (currentId !== null && currentId !== undefined) {
-        await controllers.get(currentId)?.flush();
+      if (prepared !== null) {
+        await controllers.get(prepared.projectId)?.flush();
       }
       applyWorkspace(await activateProject(projectId));
     } catch (error) {
+      prepared?.control?.releaseAfterSave();
       errorMessage = describeError(error, 'Could not switch videos');
     } finally {
       busyProjectId = null;
@@ -226,11 +334,13 @@
 
     busyProjectId = projectId;
     errorMessage = null;
+    const control = prepareProjectForSave(projectId);
     try {
       await controllers.get(projectId)?.flush();
       const snapshot = await closeProject(documentFor(projectId));
       applyWorkspace(snapshot);
     } catch (error) {
+      control?.releaseAfterSave();
       errorMessage = describeError(error, 'Could not save and close the video');
     } finally {
       busyProjectId = null;
@@ -320,10 +430,15 @@
             <p class="eyebrow">Active video</p>
             <h2 id="workspace-title">{activeProject.source.fileName}</h2>
           </div>
-          <div class="editor-placeholder">
-            <span aria-hidden="true">▶</span>
-            <p>The managed video is ready for rough marking.</p>
-          </div>
+          {#key activeProject.id}
+            <VideoEditor
+              project={activeProject}
+              onChange={updateProject}
+              onPlaybackSample={samplePlaybackPosition}
+              registerControl={registerEditorControl}
+              onSave={saveActiveProject}
+            />
+          {/key}
         {:else}
           <div class="empty-workspace">
             <p class="eyebrow">Nothing open</p>
