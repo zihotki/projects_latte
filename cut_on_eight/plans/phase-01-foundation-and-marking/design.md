@@ -1,6 +1,6 @@
 # Phase 1: Foundation and Marking
 
-**Status:** Approved design, pending review of this written version
+**Status:** Approved
 
 **Date:** 2026-07-21
 
