@@ -8,7 +8,27 @@
     deleteMostRecentSegment,
     deleteSelectedSegment,
   } from '../lib/segments.js';
+  import {
+    beginContextPreview,
+    clearSelection,
+    createPlaybackState,
+    onPlaybackTime,
+    playbackFailure,
+    seekBy,
+    selectSegment as selectPlaybackSegment,
+    type PlaybackDecision,
+    type PlaybackState,
+  } from '../lib/playback-controller.js';
+  import {
+    adjacentSegment,
+    boundaryStep,
+    escapeEditing,
+    focusBoundary,
+    nudgeBoundary,
+    type BoundaryFocus,
+  } from '../lib/trim-controller.js';
   import BasicTimeline from './BasicTimeline.svelte';
+  import BoundaryEditor from './BoundaryEditor.svelte';
   import SegmentList from './SegmentList.svelte';
 
   let {
@@ -19,6 +39,7 @@
     onSave,
     segmentsCollapsed,
     onSegmentsCollapsedChange,
+    onBoundaryModeChange,
   }: {
     project: ProjectDocument;
     onChange: (
@@ -30,6 +51,7 @@
     onSave: () => void;
     segmentsCollapsed: boolean;
     onSegmentsCollapsedChange: (collapsed: boolean) => void;
+    onBoundaryModeChange: (projectId: string, focused: boolean) => void;
   } = $props();
 
   let video = $state<HTMLVideoElement>();
@@ -41,12 +63,24 @@
   let playing = $state(false);
   let interactionLocked = $state(false);
   let segmentError = $state<string | null>(null);
+  let playbackError = $state<string | null>(null);
+  let boundaryFocus = $state.raw<BoundaryFocus>(null);
+  let playbackState = $state.raw<PlaybackState>(
+    untrack(() => initialPlaybackState(project)),
+  );
   let animationFrame: number | null = null;
+  let playbackCommandSequence = 0;
   let lastPublishedSeconds = untrack(() => project.playbackPositionSeconds);
 
   const displayDuration = $derived(
     mediaDuration > 0 ? mediaDuration : (project.source.durationSeconds ?? 0),
   );
+  const selectedSegment = $derived(
+    project.segments.find(
+      (segment) => segment.id === project.selectedSegmentId,
+    ) ?? null,
+  );
+  const frameStep = $derived(boundaryStep(project, false));
 
   onMount(() =>
     registerControl({
@@ -56,7 +90,20 @@
     }),
   );
 
-  onDestroy(stopSampling);
+  onDestroy(() => {
+    stopSampling();
+    onBoundaryModeChange(project.id, false);
+  });
+
+  function initialPlaybackState(document: ProjectDocument): PlaybackState {
+    const state = createPlaybackState(document.source.durationSeconds ?? 0);
+    const selected = document.segments.find(
+      (segment) => segment.id === document.selectedSegmentId,
+    );
+    return selected === undefined
+      ? state
+      : selectPlaybackSegment(state, selected).state;
+  }
 
   function updateProject(
     mutate: (project: ProjectDocument) => ProjectDocument,
@@ -100,6 +147,7 @@
   }
 
   function samplePlayback(): void {
+    animationFrame = null;
     if (video === undefined || video.paused || video.ended) {
       stopSampling();
       return;
@@ -108,6 +156,11 @@
     currentSeconds = video.currentTime;
     onPlaybackSample(project.id, currentSeconds);
     publishPosition();
+    const decision = onPlaybackTime(playbackState, currentSeconds, true);
+    if (decision.command.kind !== 'none') {
+      void applyPlaybackDecision(decision);
+      return;
+    }
     animationFrame = requestAnimationFrame(samplePlayback);
   }
 
@@ -117,10 +170,20 @@
       return;
     }
 
-    playing = true;
-    if (animationFrame === null) {
-      animationFrame = requestAnimationFrame(samplePlayback);
+    scheduleSampling();
+  }
+
+  function scheduleSampling(): void {
+    if (
+      video === undefined ||
+      video.paused ||
+      video.ended ||
+      animationFrame !== null
+    ) {
+      return;
     }
+    playing = true;
+    animationFrame = requestAnimationFrame(samplePlayback);
   }
 
   function stopSampling(): void {
@@ -133,6 +196,9 @@
 
   function handlePause(): void {
     if (video !== undefined) currentSeconds = video.currentTime;
+    if (video?.ended !== true) {
+      playbackState = { ...playbackState, preview: null };
+    }
     onPlaybackSample(project.id, currentSeconds);
     stopSampling();
     publishPosition(true);
@@ -143,16 +209,22 @@
 
     if (Number.isFinite(video.duration) && video.duration > 0) {
       mediaDuration = video.duration;
+      if (playbackState.scope.kind === 'source') {
+        playbackState = createPlaybackState(video.duration);
+      }
     }
-    const upperBound = mediaDuration > 0 ? mediaDuration : Infinity;
-    const restored = Math.min(project.playbackPositionSeconds, upperBound);
+    const upperBound = playbackState.scope.end || mediaDuration || Infinity;
+    const restored = Math.min(
+      Math.max(playbackState.scope.start, project.playbackPositionSeconds),
+      upperBound,
+    );
     video.currentTime = restored;
     currentSeconds = restored;
     onPlaybackSample(project.id, currentSeconds);
   }
 
-  function seek(seconds: number): void {
-    if (video === undefined) return;
+  function setMediaPosition(seconds: number): void {
+    if (video === undefined) throw new Error('Video is not ready.');
     const upperBound = displayDuration > 0 ? displayDuration : seconds;
     const position = Math.min(Math.max(0, seconds), upperBound);
     video.currentTime = position;
@@ -161,12 +233,97 @@
     publishPosition(true);
   }
 
+  async function applyPlaybackDecision(
+    decision: PlaybackDecision,
+  ): Promise<void> {
+    const commandSequence = ++playbackCommandSequence;
+    playbackState = decision.state;
+    const command = decision.command;
+    if (command.kind === 'none') return;
+
+    try {
+      if (command.kind === 'pause') {
+        video?.pause();
+        playbackError = command.error ?? null;
+        return;
+      }
+
+      playbackError = null;
+      if (command.kind === 'pause-and-seek') video?.pause();
+      setMediaPosition(command.seconds);
+      if (command.kind === 'seek-and-play') {
+        await video?.play();
+        if (commandSequence !== playbackCommandSequence) return;
+        scheduleSampling();
+      }
+    } catch {
+      if (commandSequence !== playbackCommandSequence) return;
+      const failed = playbackFailure(
+        playbackState,
+        command.kind === 'seek-and-play'
+          ? 'Playback could not start at the requested time.'
+          : 'The video could not seek to the requested time.',
+      );
+      playbackState = failed.state;
+      video?.pause();
+      playbackError =
+        failed.command.kind === 'pause' ? (failed.command.error ?? null) : null;
+    }
+  }
+
+  function setBoundaryFocus(focus: BoundaryFocus): void {
+    boundaryFocus = focus;
+    segmentError = null;
+    onBoundaryModeChange(project.id, focus !== null);
+  }
+
   function selectSegment(segment: Segment): void {
+    setBoundaryFocus(null);
     updateProject((current) => ({
       ...current,
       selectedSegmentId: segment.id,
     }));
-    seek(segment.startSeconds);
+    void applyPlaybackDecision(selectPlaybackSegment(playbackState, segment));
+    queueMicrotask(() =>
+      document
+        .querySelector(`[data-segment-id="${segment.id}"]`)
+        ?.scrollIntoView({ block: 'nearest' }),
+    );
+  }
+
+  function clearSegmentSelection(seconds = currentSeconds): void {
+    setBoundaryFocus(null);
+    updateProject((current) =>
+      current.selectedSegmentId === null
+        ? current
+        : { ...current, selectedSegmentId: null },
+    );
+    void applyPlaybackDecision(
+      clearSelection(playbackState, displayDuration, seconds),
+    );
+  }
+
+  function seek(seconds: number): void {
+    void applyPlaybackDecision(
+      seekBy(playbackState, currentSeconds, seconds - currentSeconds, playing),
+    );
+  }
+
+  function nudgeFocusedBoundary(deltaSeconds: number): void {
+    const result = nudgeBoundary(project, boundaryFocus, deltaSeconds);
+    if (!result.ok) {
+      segmentError = result.message;
+      return;
+    }
+
+    segmentError = null;
+    updateProject(() => result.project);
+    const adjusted = result.project.segments.find(
+      (segment) => segment.id === result.focus.segmentId,
+    );
+    if (adjusted !== undefined) {
+      playbackState = selectPlaybackSegment(playbackState, adjusted).state;
+    }
   }
 
   function toggleExport(segmentId: string, selected: boolean): void {
@@ -190,12 +347,23 @@
   async function togglePlayback(): Promise<void> {
     if (video === undefined) return;
     if (video.paused) {
+      const commandSequence = ++playbackCommandSequence;
       try {
         await video.play();
       } catch {
-        // The native player remains authoritative when playback is unavailable.
+        if (commandSequence !== playbackCommandSequence) return;
+        const failed = playbackFailure(
+          playbackState,
+          'Playback could not start at the requested time.',
+        );
+        playbackState = failed.state;
+        playbackError =
+          failed.command.kind === 'pause'
+            ? (failed.command.error ?? null)
+            : null;
       }
     } else {
+      playbackCommandSequence += 1;
       video.pause();
     }
   }
@@ -210,7 +378,12 @@
   }
 
   function handleKeyboard(event: KeyboardEvent): void {
-    if (interactionLocked || isTextEntryTarget(event.target)) return;
+    if (
+      interactionLocked ||
+      event.defaultPrevented ||
+      isTextEntryTarget(event.target)
+    )
+      return;
 
     const saveShortcut =
       (event.metaKey || event.ctrlKey) &&
@@ -227,6 +400,69 @@
     if (event.code === 'Space') {
       event.preventDefault();
       void togglePlayback();
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      const escaped = escapeEditing(project, boundaryFocus);
+      if (escaped.focus !== boundaryFocus) {
+        event.preventDefault();
+        setBoundaryFocus(escaped.focus);
+        return;
+      }
+      if (escaped.project !== project) {
+        event.preventDefault();
+        clearSegmentSelection();
+        return;
+      }
+      if (pendingStartSeconds !== null) {
+        event.preventDefault();
+        pendingStartSeconds = null;
+      }
+      return;
+    }
+
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      const direction = event.key === 'ArrowLeft' ? -1 : 1;
+      if (boundaryFocus !== null) {
+        nudgeFocusedBoundary(
+          direction * boundaryStep(project, event.shiftKey).seconds,
+        );
+      } else {
+        const seconds = event.shiftKey ? 10 : 1;
+        void applyPlaybackDecision(
+          seekBy(playbackState, currentSeconds, direction * seconds, playing),
+        );
+      }
+      return;
+    }
+
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      const target = adjacentSegment(
+        project,
+        event.key === 'ArrowUp' ? 'previous' : 'next',
+      );
+      if (target !== null) {
+        event.preventDefault();
+        selectSegment(target);
+      }
+      return;
+    }
+
+    if (
+      event.key === 'Enter' &&
+      event.target instanceof Element &&
+      event.target.closest('button') !== null
+    ) {
+      return;
+    }
+
+    if (event.key === 'Enter' && project.selectedSegmentId !== null) {
+      event.preventDefault();
+      void applyPlaybackDecision(
+        beginContextPreview(playbackState, displayDuration),
+      );
       return;
     }
 
@@ -249,6 +485,7 @@
       const segmentStart = pendingStartSeconds;
       pendingStartSeconds = null;
       let created = false;
+      let createdSegment: Segment | null = null;
       updateProject((current) => {
         const result = createSegment(
           current,
@@ -258,28 +495,83 @@
         );
         segmentError = result.ok ? null : result.message;
         created = result.ok;
+        if (result.ok) createdSegment = result.state.segments.at(-1) ?? null;
         return result.state;
       });
+      if (createdSegment !== null) {
+        setBoundaryFocus(null);
+        void applyPlaybackDecision(
+          selectPlaybackSegment(playbackState, createdSegment),
+        );
+      }
       if (created && project.settings.pauseAfterCreation) video?.pause();
-      return;
-    }
-
-    if (event.key === 'Escape' && pendingStartSeconds !== null) {
-      event.preventDefault();
-      pendingStartSeconds = null;
       return;
     }
 
     if (event.key === 'Delete' && project.selectedSegmentId !== null) {
       event.preventDefault();
+      const decision = clearSelection(
+        playbackState,
+        displayDuration,
+        currentSeconds,
+      );
+      setBoundaryFocus(null);
       updateProject(deleteSelectedSegment);
+      void applyPlaybackDecision(decision);
       return;
     }
 
     if (event.key === 'Backspace' && project.segments.length > 0) {
       event.preventDefault();
+      const mostRecent = project.segments.at(-1);
+      if (mostRecent?.id === project.selectedSegmentId) {
+        setBoundaryFocus(null);
+        void applyPlaybackDecision(
+          clearSelection(playbackState, displayDuration, currentSeconds),
+        );
+      }
       updateProject(deleteMostRecentSegment);
     }
+  }
+
+  function handleVideoClick(event: MouseEvent): void {
+    if (
+      video === undefined ||
+      project.selectedSegmentId === null ||
+      event.offsetY >= Math.max(0, video.clientHeight - 48)
+    ) {
+      return;
+    }
+    clearSegmentSelection();
+  }
+
+  function handleSeeked(): void {
+    publishPosition(true);
+    const decision = onPlaybackTime(
+      playbackState,
+      currentSeconds,
+      video?.paused === false,
+    );
+    if (
+      decision.command.kind !== 'none' &&
+      !(
+        'seconds' in decision.command &&
+        Math.abs(decision.command.seconds - currentSeconds) < 0.001
+      )
+    ) {
+      void applyPlaybackDecision(decision);
+    }
+  }
+
+  function handleEnded(): void {
+    stopSampling();
+    if (video !== undefined) currentSeconds = video.currentTime;
+    const decision = onPlaybackTime(playbackState, currentSeconds, true);
+    if (decision.command.kind !== 'none') {
+      void applyPlaybackDecision(decision);
+      return;
+    }
+    handlePause();
   }
 </script>
 
@@ -301,11 +593,12 @@
       onloadedmetadata={restorePosition}
       onplay={handlePlay}
       onpause={handlePause}
-      onended={handlePause}
+      onended={handleEnded}
+      onclick={handleVideoClick}
       onseeking={() => {
         if (video !== undefined) currentSeconds = video.currentTime;
       }}
-      onseeked={() => publishPosition(true)}
+      onseeked={handleSeeked}
     ></video>
 
     <div class="transport-summary" aria-live="off">
@@ -320,6 +613,9 @@
       {#if segmentError !== null}
         <span class="error-text" aria-live="polite">{segmentError}</span>
       {/if}
+      {#if playbackError !== null}
+        <span class="error-text" aria-live="polite">{playbackError}</span>
+      {/if}
     </div>
 
     <BasicTimeline
@@ -330,7 +626,20 @@
       selectedSegmentId={project.selectedSegmentId}
       onSelect={selectSegment}
       onSeek={seek}
+      onClearSelectionAndSeek={clearSegmentSelection}
     />
+
+    {#if selectedSegment !== null}
+      <BoundaryEditor
+        segment={selectedSegment}
+        focus={boundaryFocus}
+        frameSeconds={frameStep.seconds}
+        approximate={frameStep.approximate}
+        error={segmentError}
+        onFocus={(edge) => setBoundaryFocus(focusBoundary(project, edge))}
+        onNudge={nudgeFocusedBoundary}
+      />
+    {/if}
 
     <div class="editor-controls">
       <label>

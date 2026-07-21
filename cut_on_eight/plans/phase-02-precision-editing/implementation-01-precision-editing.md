@@ -224,11 +224,11 @@
 - Produces pure commands `selectSegment`, `clearSelection`, `seekBy`, `beginContextPreview`, and `onPlaybackTime` returning seek/play/pause decisions without owning the media element.
 - Produces `BoundaryFocus = { segmentId: string; edge: 'start' | 'end' } | null` and `nudgeBoundary(project, focus, deltaSeconds)` returning either an updated project or a stable constraint error.
 
-- [ ] **Step 1: Write failing playback-controller tests**
+- [x] **Step 1: Write failing playback-controller tests**
 
   Cover selection seeking without autoplay, one/ten-second scope-clamped seeks, exact end-to-start loop, selection change while playing pausing, clearing selection, context preview clamped at both source ends, preview completion returning to paused segment scope, and failed seek producing a visible error decision.
 
-- [ ] **Step 2: Implement pure playback decisions**
+- [x] **Step 2: Implement pure playback decisions**
 
   ```ts
   export type PlaybackCommand =
@@ -240,19 +240,19 @@
 
   `VideoEditor.svelte` remains the media adapter: it applies commands to the `<video>`, samples time with `requestAnimationFrame`, and updates only the playhead element/state needed for current time.
 
-- [ ] **Step 3: Write failing trim-controller tests**
+- [x] **Step 3: Write failing trim-controller tests**
 
   Cover Start and End focus, reliable frame step, approximate `1 / 30`, Shift 0.1-second step, source/range clamp, triple-overlap rejection with no project mutation, Escape focus-then-selection order, and previous/next chronological selection.
 
-- [ ] **Step 4: Implement trim commands and BoundaryEditor**
+- [x] **Step 4: Implement trim commands and BoundaryEditor**
 
   Show Start/End timestamps and compact `−frame`, `+frame`, `−0.1`, `+0.1` controls for the focused boundary. Arrow behavior is frame-sized while Shift+Arrow is 0.1 seconds. Outside boundary focus Arrow is 1 second and Shift+Arrow is 10 seconds. Disable global shortcuts for text-entry targets.
 
-- [ ] **Step 5: Integrate selection-scoped media behavior**
+- [x] **Step 5: Integrate selection-scoped media behavior**
 
   Segment click pauses, selects, and seeks to start. Space/native Play loops only after user activation. Clicking video or an empty timeline clears segment scope without autoplay. Enter runs one-shot context preview. Up/Down navigate chronological segments, seek, and ensure the selection is visible. Display `Approximate frame stepping` when applicable.
 
-- [ ] **Step 6: Run focused tests and Svelte validation**
+- [x] **Step 6: Run focused tests and Svelte validation**
 
   Run: `node_modules/.bin/vitest run apps/web/src/lib/playback-controller.test.ts apps/web/src/lib/trim-controller.test.ts apps/web/src/lib/segment-constraints.test.ts`
 
@@ -260,7 +260,7 @@
 
   Expected: focused tests and local Svelte checks pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
   ```bash
   git add apps/web/src

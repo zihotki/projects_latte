@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Segment } from '@cut-on-eight/contracts';
+  import { segmentDurationStatus } from '../lib/segment-constraints.js';
   import { sortSegmentsByStart } from '../lib/segments.js';
 
   let {
@@ -34,7 +35,12 @@
   {:else}
     <ol class="segment-list">
       {#each chronologicalSegments as segment, index (segment.id)}
-        <li class:selected={segment.id === selectedSegmentId}>
+        {@const duration = segment.endSeconds - segment.startSeconds}
+        {@const durationStatus = segmentDurationStatus(duration)}
+        <li
+          class:selected={segment.id === selectedSegmentId}
+          data-segment-id={segment.id}
+        >
           <button
             class="segment-list-select"
             type="button"
@@ -46,6 +52,13 @@
               >{formatTime(segment.startSeconds)}–{formatTime(
                 segment.endSeconds,
               )}</strong
+            >
+            <small data-duration-status={durationStatus}
+              >{duration.toFixed(2)}s{durationStatus === 'short'
+                ? ' · short'
+                : durationStatus === 'long'
+                  ? ' · long'
+                  : ''}</small
             >
           </button>
           <label class="export-choice">

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Segment } from '@cut-on-eight/contracts';
+  import { segmentDurationStatus } from '../lib/segment-constraints.js';
 
   let {
     durationSeconds,
@@ -9,6 +10,7 @@
     selectedSegmentId,
     onSelect,
     onSeek,
+    onClearSelectionAndSeek,
   }: {
     durationSeconds: number;
     currentSeconds: number;
@@ -17,6 +19,7 @@
     selectedSegmentId: string | null;
     onSelect: (segment: Segment) => void;
     onSeek: (seconds: number) => void;
+    onClearSelectionAndSeek: (seconds: number) => void;
   } = $props();
 
   const safeDuration = $derived(Math.max(durationSeconds, 0));
@@ -36,7 +39,7 @@
       1,
       Math.max(0, (event.clientX - bounds.left) / bounds.width),
     );
-    onSeek(ratio * safeDuration);
+    onClearSelectionAndSeek(ratio * safeDuration);
   }
 
   function seekFromKeyboard(event: KeyboardEvent): void {
@@ -76,11 +79,14 @@
     {/if}
 
     {#each segments as segment (segment.id)}
+      {@const duration = segment.endSeconds - segment.startSeconds}
+      {@const durationStatus = segmentDurationStatus(duration)}
       <button
         class="segment-range"
         class:selected={segment.id === selectedSegmentId}
         type="button"
-        aria-label={`Select segment from ${segment.startSeconds.toFixed(2)} to ${segment.endSeconds.toFixed(2)} seconds`}
+        aria-label={`Select ${durationStatus === 'expected' ? '' : `${durationStatus} `}segment from ${segment.startSeconds.toFixed(2)} to ${segment.endSeconds.toFixed(2)} seconds`}
+        data-duration-status={durationStatus}
         style:left={`${percentage(segment.startSeconds)}%`}
         style:width={`${Math.max(0.35, percentage(segment.endSeconds) - percentage(segment.startSeconds))}%`}
         onclick={(event) => {

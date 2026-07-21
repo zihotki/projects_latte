@@ -62,6 +62,7 @@
   let retryingJobId = $state<string | null>(null);
   let activeView = $state<ActiveView>('library');
   let segmentPanelCollapsed = $state(false);
+  let boundaryEditingProjectId = $state<string | null>(null);
 
   const controllers = new Map<string, SaveController>();
   const sampledPlaybackPositions = new Map<string, number>();
@@ -117,10 +118,16 @@
         : 'Ready',
   );
   const editorMode = $derived<EditorMode>(
-    activeProject?.selectedSegmentId === null || activeProject === null
-      ? 'video'
-      : 'segment',
+    activeProject !== null && boundaryEditingProjectId === activeProject.id
+      ? 'boundary'
+      : activeProject?.selectedSegmentId === null || activeProject === null
+        ? 'video'
+        : 'segment',
   );
+
+  function setBoundaryMode(projectId: string, focused: boolean): void {
+    boundaryEditingProjectId = focused ? projectId : null;
+  }
 
   function readActiveView(): ActiveView | null {
     try {
@@ -602,6 +609,7 @@
                 onSave={saveActiveProject}
                 segmentsCollapsed={segmentPanelCollapsed}
                 onSegmentsCollapsedChange={setSegmentPanelCollapsed}
+                onBoundaryModeChange={setBoundaryMode}
               />
             {/key}
           {:else}

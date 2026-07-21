@@ -65,7 +65,19 @@
         {:else if mode === 'segment'}
           <div>
             <dt><kbd>Space</kbd></dt>
-            <dd>Play or pause</dd>
+            <dd>Play, pause, or loop the segment</dd>
+          </div>
+          <div>
+            <dt><kbd>Enter</kbd></dt>
+            <dd>Preview with one second of context</dd>
+          </div>
+          <div>
+            <dt><kbd>↑</kbd> <kbd>↓</kbd></dt>
+            <dd>Select the previous or next segment</dd>
+          </div>
+          <div>
+            <dt><kbd>←</kbd> <kbd>→</kbd></dt>
+            <dd>Seek 1 second; hold Shift for 10</dd>
           </div>
           <div>
             <dt><kbd>Delete</kbd></dt>
@@ -75,10 +87,18 @@
             <dt><kbd>I</kbd> / <kbd>O</kbd></dt>
             <dd>Mark another segment</dd>
           </div>
+          <div>
+            <dt><kbd>Escape</kbd></dt>
+            <dd>Return to the full video</dd>
+          </div>
         {:else}
           <div>
             <dt><kbd>Space</kbd></dt>
             <dd>Play or pause</dd>
+          </div>
+          <div>
+            <dt><kbd>←</kbd> <kbd>→</kbd></dt>
+            <dd>Seek 1 second; hold Shift for 10</dd>
           </div>
           <div>
             <dt><kbd>I</kbd> / <kbd>O</kbd></dt>
