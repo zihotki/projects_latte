@@ -1,0 +1,6 @@
+**/dist
+**/coverage
+**/node_modules
+.agents
+plans
+pnpm-lock.yaml

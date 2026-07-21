@@ -1,0 +1,21 @@
+{
+  "name": "@cut-on-eight/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@cut-on-eight/contracts": "workspace:*",
+    "svelte": "^5.56.6"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "svelte-check": "^4.7.3",
+    "vite": "^8.1.5"
+  }
+}

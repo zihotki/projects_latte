@@ -1,0 +1,3 @@
+[mcp_servers.svelte]
+command = "pnpm"
+args = ["exec", "svelte-mcp"]

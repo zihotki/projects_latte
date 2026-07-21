@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.vite/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+*.mp4
+*.mov
+*.m4v
+*.tmp
+*.swp

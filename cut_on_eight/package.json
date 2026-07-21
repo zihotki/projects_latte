@@ -1,0 +1,36 @@
+{
+  "name": "cut-on-eight",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "predev": "pnpm --filter @cut-on-eight/contracts build",
+    "dev": "concurrently --kill-others-on-fail --names contracts,server,web --prefix-colors yellow,cyan,magenta \"pnpm --filter @cut-on-eight/contracts dev\" \"pnpm --filter @cut-on-eight/server dev\" \"wait-on http-get://127.0.0.1:${CUT_ON_EIGHT_PORT:-4318}/api/health && pnpm --filter @cut-on-eight/web dev\"",
+    "build": "pnpm -r build",
+    "precheck": "pnpm --filter @cut-on-eight/contracts build",
+    "check": "pnpm -r check && pnpm lint && pnpm format:check",
+    "pretest": "pnpm --filter @cut-on-eight/contracts build",
+    "test": "pnpm -r --if-present test",
+    "lint": "eslint \"apps/**/*.ts\" \"packages/**/*.ts\"",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@sveltejs/mcp": "^0.1.25",
+    "@types/node": "^26.1.1",
+    "concurrently": "^10.0.3",
+    "eslint": "^10.7.0",
+    "globals": "^17.7.0",
+    "prettier": "^3.9.5",
+    "prettier-plugin-svelte": "^4.1.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.64.0",
+    "vitest": "^4.1.10",
+    "wait-on": "^9.0.10"
+  }
+}
