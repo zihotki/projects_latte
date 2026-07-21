@@ -3,12 +3,9 @@ import {
   type ProjectDocument,
 } from '@cut-on-eight/contracts';
 import { posix } from 'node:path';
-import {
-  CorruptPersistedDataError,
-  readJsonValidated,
-  writeJsonAtomic,
-} from './atomic-json.js';
+import { readJsonValidated, writeJsonAtomic } from './atomic-json.js';
 import type { StorageLayout } from './layout.js';
+import { InvalidRepositoryDocumentError } from './repository-errors.js';
 
 function emptyProject(
   projectId: string,
@@ -58,6 +55,7 @@ export class ProjectRepository {
     managedSourceRelativePath: string,
   ): Promise<ProjectDocument> {
     const sidecar = this.layout.sidecarFile(managedSourceRelativePath);
+    await this.layout.assertNoSymlinkComponents(sidecar);
     return (
       (await readJsonValidated(sidecar, (value) =>
         parseProject(value, projectId, managedSourceRelativePath),
@@ -76,10 +74,12 @@ export class ProjectRepository {
     try {
       validated = parseProject(document, projectId, managedSourceRelativePath);
     } catch (error) {
-      throw new CorruptPersistedDataError(sidecar, error);
+      throw new InvalidRepositoryDocumentError('project', error);
     }
 
+    await this.layout.assertNoSymlinkComponents(sidecar);
     await this.readExisting(sidecar, projectId, managedSourceRelativePath);
+    await this.layout.assertNoSymlinkComponents(sidecar);
     await writeJsonAtomic(sidecar, validated);
   }
 

@@ -1,9 +1,6 @@
-import {
-  CorruptPersistedDataError,
-  readJsonValidated,
-  writeJsonAtomic,
-} from './atomic-json.js';
+import { readJsonValidated, writeJsonAtomic } from './atomic-json.js';
 import type { StorageLayout } from './layout.js';
+import { InvalidRepositoryDocumentError } from './repository-errors.js';
 
 export interface WorkspaceDocument {
   readonly activeProjectId: string | null;
@@ -24,7 +21,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseWorkspace(value: unknown): WorkspaceDocument {
+export function validateWorkspaceDocument(value: unknown): WorkspaceDocument {
   if (
     !isRecord(value) ||
     Object.keys(value).length !== 3 ||
@@ -71,9 +68,12 @@ export class WorkspaceRepository {
   constructor(private readonly layout: StorageLayout) {}
 
   async read(): Promise<WorkspaceDocument> {
+    await this.layout.assertNoSymlinkComponents(this.layout.workspaceFile);
     return (
-      (await readJsonValidated(this.layout.workspaceFile, parseWorkspace)) ??
-      emptyWorkspace()
+      (await readJsonValidated(
+        this.layout.workspaceFile,
+        validateWorkspaceDocument,
+      )) ?? emptyWorkspace()
     );
   }
 
@@ -81,12 +81,13 @@ export class WorkspaceRepository {
     let validated: WorkspaceDocument;
 
     try {
-      validated = parseWorkspace(document);
+      validated = validateWorkspaceDocument(document);
     } catch (error) {
-      throw new CorruptPersistedDataError(this.layout.workspaceFile, error);
+      throw new InvalidRepositoryDocumentError('workspace', error);
     }
 
     await this.read();
+    await this.layout.assertNoSymlinkComponents(this.layout.workspaceFile);
     await writeJsonAtomic(this.layout.workspaceFile, validated);
   }
 }

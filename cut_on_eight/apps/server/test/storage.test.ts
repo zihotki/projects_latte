@@ -1,4 +1,12 @@
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,6 +16,7 @@ import {
   CorruptPersistedDataError,
   writeJsonAtomic,
 } from '../src/storage/atomic-json.js';
+import { CatalogRepository } from '../src/storage/catalog-repository.js';
 import {
   LibraryRepository,
   type LibraryDocument,
@@ -49,6 +58,40 @@ function projectDocument(): ProjectDocument {
   };
 }
 
+function libraryDocument(layout: StorageLayout): LibraryDocument {
+  return {
+    schemaVersion: 1,
+    entries: [
+      {
+        id: projectId,
+        managedSourcePath: layout.forProject(projectId, sourceFileName)
+          .relativeSource,
+        fingerprint: {
+          realPath: '/Users/example/Videos/Cross Body Lead.mp4',
+          size: 123_456,
+          modifiedMilliseconds: 1_753_092_000_000,
+        },
+        importedAt: '2026-07-21T10:00:00.000Z',
+      },
+    ],
+  };
+}
+
+function workspaceDocument(): WorkspaceDocument {
+  return {
+    schemaVersion: 1,
+    openProjectIds: [projectId],
+    activeProjectId: projectId,
+  };
+}
+
+const emptyLibrary: LibraryDocument = { schemaVersion: 1, entries: [] };
+const emptyWorkspace: WorkspaceDocument = {
+  schemaVersion: 1,
+  openProjectIds: [],
+  activeProjectId: null,
+};
+
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true })),
@@ -86,26 +129,8 @@ describe('atomic managed storage', () => {
     const root = await createRoot();
     const layout = new StorageLayout(root);
     const paths = layout.forProject(projectId, sourceFileName);
-    const library: LibraryDocument = {
-      schemaVersion: 1,
-      entries: [
-        {
-          id: projectId,
-          managedSourcePath: paths.relativeSource,
-          fingerprint: {
-            realPath: '/Users/example/Videos/Cross Body Lead.mp4',
-            size: 123_456,
-            modifiedMilliseconds: 1_753_092_000_000,
-          },
-          importedAt: '2026-07-21T10:00:00.000Z',
-        },
-      ],
-    };
-    const workspace: WorkspaceDocument = {
-      schemaVersion: 1,
-      openProjectIds: [projectId],
-      activeProjectId: projectId,
-    };
+    const library = libraryDocument(layout);
+    const workspace = workspaceDocument();
 
     await new LibraryRepository(layout).save(library);
     await new ProjectRepository(layout).save(
@@ -170,6 +195,62 @@ describe('atomic managed storage', () => {
       source: { fileName: sourceFileName },
       segments: [],
     });
+  });
+
+  it('allows missing managed path components for first-use storage', async () => {
+    const root = await createRoot();
+    const layout = new StorageLayout(join(root, 'not-created-yet'));
+
+    await expect(
+      layout.assertNoSymlinkComponents(layout.libraryFile),
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects symlinked project path components before reads and writes', async () => {
+    const root = await createRoot();
+    const outside = await createRoot();
+    const layout = new StorageLayout(root);
+    const paths = layout.forProject(projectId, sourceFileName);
+    const projects = new ProjectRepository(layout);
+
+    await symlink(outside, paths.directory, 'dir');
+
+    await expect(
+      projects.read(projectId, paths.relativeSource),
+    ).rejects.toMatchObject({ code: 'unsafe_storage_path' });
+    await expect(
+      projects.save(projectId, paths.relativeSource, projectDocument()),
+    ).rejects.toMatchObject({ code: 'unsafe_storage_path' });
+    await expect(
+      access(join(outside, `${sourceFileName}.danceclips.json`)),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('rejects a symlinked system directory before repository access', async () => {
+    const root = await createRoot();
+    const outside = await createRoot();
+    const layout = new StorageLayout(root);
+
+    await symlink(outside, layout.systemDirectory, 'dir');
+
+    await expect(new LibraryRepository(layout).read()).rejects.toMatchObject({
+      code: 'unsafe_storage_path',
+    });
+    await expect(
+      new WorkspaceRepository(layout).save(emptyWorkspace),
+    ).rejects.toMatchObject({ code: 'unsafe_storage_path' });
+  });
+
+  it('rejects the data root itself when it is a symbolic link', async () => {
+    const actualRoot = await createRoot();
+    const parent = await createRoot();
+    const linkedRoot = join(parent, 'managed');
+
+    await symlink(actualRoot, linkedRoot, 'dir');
+
+    await expect(
+      new LibraryRepository(new StorageLayout(linkedRoot)).read(),
+    ).rejects.toMatchObject({ code: 'unsafe_storage_path' });
   });
 
   it('preserves malformed sidecar bytes when save is attempted', async () => {
@@ -240,6 +321,93 @@ describe('atomic managed storage', () => {
 
     await expect(new LibraryRepository(layout).read()).rejects.toMatchObject({
       code: 'corrupt_persisted_data',
+    });
+  });
+
+  it('reports invalid caller documents separately from corrupt bytes', async () => {
+    const root = await createRoot();
+    const workspace = new WorkspaceRepository(new StorageLayout(root));
+
+    await expect(
+      workspace.save({
+        schemaVersion: 1,
+        openProjectIds: [],
+        activeProjectId: projectId,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_repository_document' });
+  });
+
+  it('rolls back both catalog documents when the second write fails', async () => {
+    const root = await createRoot();
+    const layout = new StorageLayout(root);
+    const library = new LibraryRepository(layout);
+    const workspace = new WorkspaceRepository(layout);
+    let workspaceSaveAttempts = 0;
+    const failingWorkspace = {
+      read: () => workspace.read(),
+      save: async (document: WorkspaceDocument): Promise<void> => {
+        workspaceSaveAttempts += 1;
+
+        if (workspaceSaveAttempts === 1) {
+          throw new Error('Injected workspace write failure');
+        }
+
+        await workspace.save(document);
+      },
+    };
+    const catalog = new CatalogRepository(layout, library, failingWorkspace);
+
+    await expect(
+      catalog.commit(libraryDocument(layout), workspaceDocument()),
+    ).rejects.toThrow('Injected workspace write failure');
+    await expect(library.read()).resolves.toEqual(emptyLibrary);
+    await expect(workspace.read()).resolves.toEqual(emptyWorkspace);
+    expect(workspaceSaveAttempts).toBe(2);
+    await expect(access(layout.catalogTransactionFile)).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
+
+  it('commits both catalog documents and removes the journal', async () => {
+    const root = await createRoot();
+    const layout = new StorageLayout(root);
+    const libraryAfter = libraryDocument(layout);
+    const workspaceAfter = workspaceDocument();
+
+    await new CatalogRepository(layout).commit(libraryAfter, workspaceAfter);
+
+    await expect(new LibraryRepository(layout).read()).resolves.toEqual(
+      libraryAfter,
+    );
+    await expect(new WorkspaceRepository(layout).read()).resolves.toEqual(
+      workspaceAfter,
+    );
+    await expect(access(layout.catalogTransactionFile)).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
+
+  it('recovers both before-documents from an interrupted catalog journal', async () => {
+    const root = await createRoot();
+    const layout = new StorageLayout(root);
+    const library = new LibraryRepository(layout);
+    const workspace = new WorkspaceRepository(layout);
+    const libraryAfter = libraryDocument(layout);
+    const workspaceAfter = workspaceDocument();
+
+    await writeJsonAtomic(layout.catalogTransactionFile, {
+      schemaVersion: 1,
+      before: { library: emptyLibrary, workspace: emptyWorkspace },
+      after: { library: libraryAfter, workspace: workspaceAfter },
+    });
+    await library.save(libraryAfter);
+    await workspace.save(workspaceAfter);
+
+    await expect(new CatalogRepository(layout).recover()).resolves.toBe(true);
+    await expect(library.read()).resolves.toEqual(emptyLibrary);
+    await expect(workspace.read()).resolves.toEqual(emptyWorkspace);
+    await expect(access(layout.catalogTransactionFile)).rejects.toMatchObject({
+      code: 'ENOENT',
     });
   });
 });

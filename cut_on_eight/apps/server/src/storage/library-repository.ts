@@ -1,10 +1,7 @@
 import { isAbsolute } from 'node:path';
-import {
-  CorruptPersistedDataError,
-  readJsonValidated,
-  writeJsonAtomic,
-} from './atomic-json.js';
+import { readJsonValidated, writeJsonAtomic } from './atomic-json.js';
 import type { StorageLayout } from './layout.js';
+import { InvalidRepositoryDocumentError } from './repository-errors.js';
 
 export interface ImportFingerprint {
   readonly modifiedMilliseconds: number;
@@ -109,7 +106,10 @@ function parseEntry(value: unknown, layout: StorageLayout): LibraryEntry {
   };
 }
 
-function parseLibrary(value: unknown, layout: StorageLayout): LibraryDocument {
+export function validateLibraryDocument(
+  value: unknown,
+  layout: StorageLayout,
+): LibraryDocument {
   if (
     !isRecord(value) ||
     !hasOnlyKeys(value, ['schemaVersion', 'entries']) ||
@@ -134,9 +134,10 @@ export class LibraryRepository {
   constructor(private readonly layout: StorageLayout) {}
 
   async read(): Promise<LibraryDocument> {
+    await this.layout.assertNoSymlinkComponents(this.layout.libraryFile);
     return (
       (await readJsonValidated(this.layout.libraryFile, (value) =>
-        parseLibrary(value, this.layout),
+        validateLibraryDocument(value, this.layout),
       )) ?? emptyLibrary()
     );
   }
@@ -145,12 +146,13 @@ export class LibraryRepository {
     let validated: LibraryDocument;
 
     try {
-      validated = parseLibrary(document, this.layout);
+      validated = validateLibraryDocument(document, this.layout);
     } catch (error) {
-      throw new CorruptPersistedDataError(this.layout.libraryFile, error);
+      throw new InvalidRepositoryDocumentError('library', error);
     }
 
     await this.read();
+    await this.layout.assertNoSymlinkComponents(this.layout.libraryFile);
     await writeJsonAtomic(this.layout.libraryFile, validated);
   }
 }
