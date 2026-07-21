@@ -80,6 +80,8 @@ describe('managed MP4 byte-range API', () => {
     const services: AppServices = {
       activateProject: unused,
       closeProject: unused,
+      getCapabilities: unused,
+      getJobs: unused,
       getWorkspace: unused,
       openProject: unused,
       openSource: async () => {
@@ -87,8 +89,10 @@ describe('managed MP4 byte-range API', () => {
         throw new Error('HEAD must not open a source');
       },
       recover: async () => undefined,
+      retryJob: unused,
       saveProject: unused,
       selectImport: unused,
+      subscribeToJobs: () => () => undefined,
     };
     const app = createApp({ services });
 

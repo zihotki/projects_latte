@@ -50,9 +50,24 @@ export const jobRecordSchema = z.discriminatedUnion('state', [
 
 export const jobSnapshotSchema = z.strictObject({
   jobs: z.array(jobRecordSchema),
+  errors: z
+    .array(
+      z.strictObject({
+        code: z.string().min(1),
+        message: z.string().min(1),
+        projectId: z.string().uuid().nullable(),
+      }),
+    )
+    .default([]),
+});
+
+export const capabilitiesSchema = z.strictObject({
+  backendAvailable: z.literal(true),
+  ffprobeAvailable: z.boolean(),
 });
 
 export type JobState = z.infer<typeof jobStateSchema>;
 export type JobType = z.infer<typeof jobTypeSchema>;
 export type JobRecord = z.infer<typeof jobRecordSchema>;
 export type JobSnapshot = z.infer<typeof jobSnapshotSchema>;
+export type Capabilities = z.infer<typeof capabilitiesSchema>;

@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { getServerConfig, type ServerConfig } from './config.js';
 import { installApiErrorHandling } from './http/api-error.js';
 import { registerProjectRoutes } from './http/project-routes.js';
+import { registerJobRoutes } from './http/job-routes.js';
 import { registerSourceRoutes } from './http/source-routes.js';
 import { registerWorkspaceRoutes } from './http/workspace-routes.js';
 import {
@@ -14,7 +15,7 @@ import { createServices, type AppServices } from './services.js';
 export interface CreateAppOptions {
   readonly config?: ServerConfig;
   readonly picker?: SourcePicker;
-  readonly probeRunner?: unknown;
+  readonly probeRunner?: import('./jobs/ffprobe-runner.js').ProbeRunner;
   readonly services?: AppServices;
 }
 
@@ -44,6 +45,7 @@ export function createApp(options: CreateAppOptions = {}): CutOnEightApp {
   registerWorkspaceRoutes(app, services);
   registerProjectRoutes(app, services);
   registerSourceRoutes(app, services);
+  registerJobRoutes(app, services);
 
   return Object.assign(app, {
     recover: () => services.recover(),

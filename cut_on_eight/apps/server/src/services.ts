@@ -1,9 +1,14 @@
 import {
   importSelectionResponseSchema,
+  capabilitiesSchema,
+  jobSnapshotSchema,
   projectDocumentSchema,
   projectSummarySchema,
   workspaceSnapshotSchema,
+  type Capabilities,
   type ImportSelectionResponse,
+  type JobRecord,
+  type JobSnapshot,
   type ProjectDocument,
   type WorkspaceSnapshot,
 } from '@cut-on-eight/contracts';
@@ -13,6 +18,13 @@ import type { ServerConfig } from './config.js';
 import { ApiRouteError } from './http/api-error.js';
 import { ImportService } from './imports/import-service.js';
 import type { SourcePicker } from './imports/source-picker.js';
+import {
+  FfprobeRunner,
+  type ProbeResult,
+  type ProbeRunner,
+} from './jobs/ffprobe-runner.js';
+import { JobQueue } from './jobs/job-queue.js';
+import { JobRepository } from './jobs/job-repository.js';
 import { CatalogRepository } from './storage/catalog-repository.js';
 import {
   LibraryRepository,
@@ -37,21 +49,25 @@ export interface AppServices {
     projectId: string,
     document: ProjectDocument,
   ): Promise<WorkspaceSnapshot>;
+  getCapabilities(): Promise<Capabilities>;
+  getJobs(): Promise<JobSnapshot>;
   getWorkspace(): Promise<WorkspaceSnapshot>;
   openProject(projectId: string): Promise<WorkspaceSnapshot>;
   openSource(projectId: string): Promise<ManagedSource>;
   recover(): Promise<void>;
+  retryJob(jobId: string): Promise<JobRecord>;
   saveProject(
     projectId: string,
     document: ProjectDocument,
   ): Promise<ProjectDocument>;
   selectImport(): Promise<ImportSelectionResponse>;
+  subscribeToJobs(listener: (snapshot: JobSnapshot) => void): () => void;
 }
 
 export interface CreateServicesOptions {
   readonly config: ServerConfig;
   readonly picker: SourcePicker;
-  readonly probeRunner?: unknown;
+  readonly probeRunner?: ProbeRunner;
 }
 
 function activeWorkspace(
@@ -85,15 +101,34 @@ function closedWorkspace(
   };
 }
 
+function preserveInspectedSource(
+  existing: ProjectDocument,
+  incoming: ProjectDocument,
+): ProjectDocument {
+  return {
+    ...incoming,
+    source: {
+      ...incoming.source,
+      durationSeconds:
+        existing.source.durationSeconds ?? incoming.source.durationSeconds,
+      width: existing.source.width ?? incoming.source.width,
+      height: existing.source.height ?? incoming.source.height,
+      frameRate: existing.source.frameRate ?? incoming.source.frameRate,
+      hasAudio: existing.source.hasAudio ?? incoming.source.hasAudio,
+    },
+  };
+}
+
 export function createServices(options: CreateServicesOptions): AppServices {
-  void options.probeRunner;
   const layout = new StorageLayout(options.config.dataRoot);
   const library = new LibraryRepository(layout);
   const projects = new ProjectRepository(layout);
   const workspace = new WorkspaceRepository(layout);
   const catalog = new CatalogRepository(layout, library, workspace);
+  const jobs = new JobRepository(layout);
   const imports = new ImportService(layout, {
     catalog,
+    jobs,
     library,
     picker: options.picker,
     projects,
@@ -106,11 +141,14 @@ export function createServices(options: CreateServicesOptions): AppServices {
     projects,
     workspace,
     imports,
+    jobs,
+    options.probeRunner ?? new FfprobeRunner(),
   );
 }
 
 class ManagedWorkspaceServices implements AppServices {
   private operationQueue: Promise<void> = Promise.resolve();
+  private readonly jobQueue: JobQueue;
 
   constructor(
     private readonly layout: StorageLayout,
@@ -118,10 +156,61 @@ class ManagedWorkspaceServices implements AppServices {
     private readonly projects: ProjectRepository,
     private readonly workspace: WorkspaceRepository,
     private readonly imports: ImportService,
-  ) {}
+    jobs: JobRepository,
+    probe: ProbeRunner,
+  ) {
+    this.jobQueue = new JobQueue(
+      layout,
+      library,
+      jobs,
+      probe,
+      (projectId, metadata) => this.updateSourceMetadata(projectId, metadata),
+    );
+  }
 
-  recover(): Promise<void> {
-    return this.enqueue(() => this.imports.recover());
+  async recover(): Promise<void> {
+    await this.enqueue(() => this.imports.recover());
+    await this.jobQueue.recover();
+  }
+
+  async getCapabilities(): Promise<Capabilities> {
+    return capabilitiesSchema.parse({
+      backendAvailable: true,
+      ffprobeAvailable: await this.jobQueue.isProbeAvailable(),
+    });
+  }
+
+  async getJobs(): Promise<JobSnapshot> {
+    return jobSnapshotSchema.parse(await this.jobQueue.refresh());
+  }
+
+  async retryJob(jobId: string): Promise<JobRecord> {
+    try {
+      return await this.jobQueue.retry(jobId);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      if (code === 'job_not_found') {
+        throw new ApiRouteError(
+          404,
+          code,
+          'The inspection job was not found.',
+          false,
+        );
+      }
+      if (code === 'job_not_retryable' || code === 'job_attempts_exhausted') {
+        throw new ApiRouteError(
+          409,
+          code,
+          'The inspection job cannot be retried.',
+          false,
+        );
+      }
+      throw error;
+    }
+  }
+
+  subscribeToJobs(listener: (snapshot: JobSnapshot) => void): () => void {
+    return this.jobQueue.subscribe(listener);
   }
 
   getWorkspace(): Promise<WorkspaceSnapshot> {
@@ -132,6 +221,10 @@ class ManagedWorkspaceServices implements AppServices {
     return this.enqueue(async () => {
       const result = await this.imports.selectAndImport();
       const workspaceSnapshot = await this.snapshot();
+
+      if (result.outcome !== 'cancelled') {
+        await this.jobQueue.refresh();
+      }
 
       return importSelectionResponseSchema.parse({
         ...result,
@@ -177,8 +270,13 @@ class ManagedWorkspaceServices implements AppServices {
     return this.enqueue(async () => {
       const validated = projectDocumentSchema.parse(document);
       const entry = await this.requireLibraryEntry(projectId);
-      await this.projects.save(projectId, entry.managedSourcePath, validated);
-      return validated;
+      const existing = await this.projects.readRequired(
+        projectId,
+        entry.managedSourcePath,
+      );
+      const persisted = preserveInspectedSource(existing, validated);
+      await this.projects.save(projectId, entry.managedSourcePath, persisted);
+      return persisted;
     });
   }
 
@@ -202,12 +300,17 @@ class ManagedWorkspaceServices implements AppServices {
         );
       }
 
+      const existing = await this.projects.readRequired(
+        projectId,
+        entry.managedSourcePath,
+      );
+      const persisted = preserveInspectedSource(existing, validated);
       const nextWorkspace = closedWorkspace(current, projectId);
       const response = await this.snapshot(
         { library, workspace: nextWorkspace },
-        new Map([[projectId, validated]]),
+        new Map([[projectId, persisted]]),
       );
-      await this.projects.save(projectId, entry.managedSourcePath, validated);
+      await this.projects.save(projectId, entry.managedSourcePath, persisted);
       await this.workspace.save(nextWorkspace);
       return response;
     });
@@ -265,6 +368,23 @@ class ManagedWorkspaceServices implements AppServices {
       () => undefined,
     );
     return result;
+  }
+
+  private updateSourceMetadata(
+    projectId: string,
+    metadata: ProbeResult,
+  ): Promise<void> {
+    return this.enqueue(async () => {
+      const entry = await this.requireLibraryEntry(projectId);
+      const project = await this.projects.readRequired(
+        projectId,
+        entry.managedSourcePath,
+      );
+      await this.projects.save(projectId, entry.managedSourcePath, {
+        ...project,
+        source: { ...project.source, ...metadata },
+      });
+    });
   }
 
   private async requireLibraryEntry(projectId: string): Promise<LibraryEntry> {
