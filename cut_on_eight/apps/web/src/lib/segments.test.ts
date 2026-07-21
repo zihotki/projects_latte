@@ -1,0 +1,163 @@
+import { describe, expect, it } from 'vitest';
+import {
+  createSegment,
+  deleteMostRecentSegment,
+  deleteSelectedSegment,
+  sortSegmentsByStart,
+  type SegmentState,
+} from './segments.js';
+
+const segmentIds = [
+  '10000000-0000-4000-8000-000000000001',
+  '10000000-0000-4000-8000-000000000002',
+  '10000000-0000-4000-8000-000000000003',
+  '10000000-0000-4000-8000-000000000004',
+  '10000000-0000-4000-8000-000000000005',
+] as const;
+
+function emptyState(): SegmentState {
+  return { segments: [], selectedSegmentId: null };
+}
+
+describe('segment operations', () => {
+  it('creates and selects five overlapping segments in creation order', () => {
+    let state = emptyState();
+
+    for (const [index, id] of segmentIds.entries()) {
+      state = createSegment(state, index, index + 4, () => id);
+    }
+
+    expect(state.segments.map((segment) => segment.id)).toEqual(segmentIds);
+    expect(state.selectedSegmentId).toBe(segmentIds.at(-1));
+    expect(state.segments.every((segment) => segment.exportSelected)).toBe(
+      true,
+    );
+  });
+
+  it('sorts a copy chronologically by start, end, and ID', () => {
+    const state = [
+      {
+        id: segmentIds[3],
+        startSeconds: 8,
+        endSeconds: 12,
+        exportSelected: true,
+      },
+      {
+        id: segmentIds[2],
+        startSeconds: 2,
+        endSeconds: 7,
+        exportSelected: true,
+      },
+      {
+        id: segmentIds[1],
+        startSeconds: 2,
+        endSeconds: 6,
+        exportSelected: true,
+      },
+      {
+        id: segmentIds[0],
+        startSeconds: 2,
+        endSeconds: 6,
+        exportSelected: true,
+      },
+    ];
+
+    const sorted = sortSegmentsByStart(state);
+
+    expect(sorted.map((segment) => segment.id)).toEqual([
+      segmentIds[0],
+      segmentIds[1],
+      segmentIds[2],
+      segmentIds[3],
+    ]);
+    expect(sorted).not.toBe(state);
+    expect(state[0]?.id).toBe(segmentIds[3]);
+  });
+
+  it('deletes the selected segment and clears the selection without mutation', () => {
+    const state = [
+      {
+        id: segmentIds[0],
+        startSeconds: 1,
+        endSeconds: 2,
+        exportSelected: true,
+      },
+      {
+        id: segmentIds[1],
+        startSeconds: 3,
+        endSeconds: 4,
+        exportSelected: true,
+      },
+    ];
+    const input = { segments: state, selectedSegmentId: segmentIds[0] };
+
+    const result = deleteSelectedSegment(input);
+
+    expect(result.segments.map((segment) => segment.id)).toEqual([
+      segmentIds[1],
+    ]);
+    expect(result.selectedSegmentId).toBeNull();
+    expect(input.segments).toBe(state);
+    expect(input.segments).toHaveLength(2);
+  });
+
+  it('deletes the most recently created segment rather than the latest by time', () => {
+    const input = {
+      segments: [
+        {
+          id: segmentIds[0],
+          startSeconds: 10,
+          endSeconds: 12,
+          exportSelected: true,
+        },
+        {
+          id: segmentIds[1],
+          startSeconds: 2,
+          endSeconds: 4,
+          exportSelected: true,
+        },
+      ],
+      selectedSegmentId: segmentIds[0],
+    };
+
+    const result = deleteMostRecentSegment(input);
+
+    expect(result.segments.map((segment) => segment.id)).toEqual([
+      segmentIds[0],
+    ]);
+    expect(result.selectedSegmentId).toBe(segmentIds[0]);
+    expect(input.segments).toHaveLength(2);
+  });
+
+  it.each([
+    { startSeconds: null, endSeconds: 2 },
+    { startSeconds: 2, endSeconds: 2 },
+    { startSeconds: 3, endSeconds: 2 },
+  ])(
+    'keeps the same state for invalid O behavior: %o',
+    ({ startSeconds, endSeconds }) => {
+      const input = emptyState();
+
+      expect(createSegment(input, startSeconds, endSeconds)).toBe(input);
+    },
+  );
+
+  it('clears selection when deleting the most recent selected segment', () => {
+    const input = {
+      segments: [
+        {
+          id: segmentIds[0],
+          startSeconds: 1,
+          endSeconds: 2,
+          exportSelected: true,
+        },
+      ],
+      selectedSegmentId: segmentIds[0],
+    };
+
+    expect(deleteMostRecentSegment(input)).toEqual({
+      segments: [],
+      selectedSegmentId: null,
+    });
+  });
+});
