@@ -14,6 +14,7 @@ import {
 } from '@cut-on-eight/contracts';
 import { constants } from 'node:fs';
 import { open, type FileHandle } from 'node:fs/promises';
+import { posix } from 'node:path';
 import type { ServerConfig } from './config.js';
 import { ApiRouteError } from './http/api-error.js';
 import { ImportService } from './imports/import-service.js';
@@ -26,13 +27,17 @@ import {
 import { JobQueue } from './jobs/job-queue.js';
 import { JobRepository } from './jobs/job-repository.js';
 import { CatalogRepository } from './storage/catalog-repository.js';
+import { CorruptPersistedDataError } from './storage/atomic-json.js';
 import {
   LibraryRepository,
   type LibraryDocument,
   type LibraryEntry,
 } from './storage/library-repository.js';
 import { StorageLayout } from './storage/layout.js';
-import { ProjectRepository } from './storage/project-repository.js';
+import {
+  MissingProjectSidecarError,
+  ProjectRepository,
+} from './storage/project-repository.js';
 import {
   WorkspaceRepository,
   type WorkspaceDocument,
@@ -61,6 +66,7 @@ export interface AppServices {
     document: ProjectDocument,
   ): Promise<ProjectDocument>;
   selectImport(): Promise<ImportSelectionResponse>;
+  shutdown?(): Promise<void>;
   subscribeToJobs(listener: (snapshot: JobSnapshot) => void): () => void;
 }
 
@@ -213,18 +219,33 @@ class ManagedWorkspaceServices implements AppServices {
     return this.jobQueue.subscribe(listener);
   }
 
+  async shutdown(): Promise<void> {
+    const stoppingJobs = this.jobQueue.shutdown();
+    await this.enqueue(async () => undefined);
+    await stoppingJobs;
+    await this.enqueue(async () => undefined);
+  }
+
   getWorkspace(): Promise<WorkspaceSnapshot> {
     return this.enqueue(() => this.snapshot());
   }
 
-  selectImport(): Promise<ImportSelectionResponse> {
-    return this.enqueue(async () => {
-      const result = await this.imports.selectAndImport();
-      const workspaceSnapshot = await this.snapshot();
+  async selectImport(): Promise<ImportSelectionResponse> {
+    const selectedPath = await this.imports.selectSource();
 
-      if (result.outcome !== 'cancelled') {
-        await this.jobQueue.refresh();
-      }
+    if (selectedPath === null) {
+      return this.enqueue(async () =>
+        importSelectionResponseSchema.parse({
+          outcome: 'cancelled',
+          workspace: await this.snapshot(),
+        }),
+      );
+    }
+
+    return this.enqueue(async () => {
+      const result = await this.imports.importSelected(selectedPath);
+      const workspaceSnapshot = await this.snapshot();
+      await this.jobQueue.refresh();
 
       return importSelectionResponseSchema.parse({
         ...result,
@@ -236,7 +257,20 @@ class ManagedWorkspaceServices implements AppServices {
   openProject(projectId: string): Promise<WorkspaceSnapshot> {
     return this.enqueue(async () => {
       const entry = await this.requireLibraryEntry(projectId);
-      await this.projects.readRequired(entry.id, entry.managedSourcePath);
+      try {
+        await this.projects.readRequired(entry.id, entry.managedSourcePath);
+      } catch (error) {
+        if (isUnavailableSidecar(error)) {
+          throw new ApiRouteError(
+            500,
+            'project_data_unavailable',
+            'The managed project data is missing or corrupt.',
+            false,
+            { projectId },
+          );
+        }
+        throw error;
+      }
       const current = await this.workspace.read();
       await this.workspace.save(activeWorkspace(current, projectId));
       return this.snapshot();
@@ -433,6 +467,7 @@ class ManagedWorkspaceServices implements AppServices {
     const { library, workspace } = resolvedState;
     const projectsById = await this.readLibraryProjects(
       library,
+      new Set(workspace.openProjectIds),
       projectOverrides,
     );
     const openProjects = workspace.openProjectIds.map((projectId) => {
@@ -453,20 +488,11 @@ class ManagedWorkspaceServices implements AppServices {
     const summaries = library.entries.map((entry) => {
       const project = projectsById.get(entry.id);
 
-      if (project === undefined) {
-        throw new ApiRouteError(
-          500,
-          'library_project_missing',
-          'The managed library refers to a missing project.',
-          false,
-          { projectId: entry.id },
-        );
-      }
-
       return projectSummarySchema.parse({
-        id: project.id,
-        fileName: project.source.fileName,
-        durationSeconds: project.source.durationSeconds,
+        id: entry.id,
+        fileName:
+          project?.source.fileName ?? posix.basename(entry.managedSourcePath),
+        durationSeconds: project?.source.durationSeconds ?? null,
       });
     });
 
@@ -479,17 +505,46 @@ class ManagedWorkspaceServices implements AppServices {
 
   private async readLibraryProjects(
     library: LibraryDocument,
+    openProjectIds: ReadonlySet<string>,
     projectOverrides: ReadonlyMap<string, ProjectDocument>,
   ): Promise<Map<string, ProjectDocument>> {
     const entries = await Promise.all(
       library.entries.map(async (entry) => {
-        const project =
-          projectOverrides.get(entry.id) ??
-          (await this.projects.readRequired(entry.id, entry.managedSourcePath));
+        const projectOverride = projectOverrides.get(entry.id);
+        if (projectOverride !== undefined) {
+          return [entry.id, projectOverride] as const;
+        }
+
+        let project: ProjectDocument;
+        try {
+          project = await this.projects.readRequired(
+            entry.id,
+            entry.managedSourcePath,
+          );
+        } catch (error) {
+          if (!isUnavailableSidecar(error)) throw error;
+          if (!openProjectIds.has(entry.id)) return undefined;
+          throw new ApiRouteError(
+            500,
+            'workspace_project_unavailable',
+            'An open managed project is missing or corrupt.',
+            false,
+            { projectId: entry.id },
+          );
+        }
         return [entry.id, project] as const;
       }),
     );
 
-    return new Map(entries);
+    return new Map(entries.filter((entry) => entry !== undefined));
   }
+}
+
+function isUnavailableSidecar(
+  error: unknown,
+): error is CorruptPersistedDataError | MissingProjectSidecarError {
+  return (
+    error instanceof CorruptPersistedDataError ||
+    error instanceof MissingProjectSidecarError
+  );
 }

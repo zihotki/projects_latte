@@ -102,6 +102,18 @@ const cancelledPicker: SourcePicker = {
   selectMp4: async () => null,
 };
 
+async function createMp4(fileName: string): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), 'cut-on-eight-api-source-'));
+  roots.push(directory);
+  const source = join(directory, fileName);
+  const bytes = Buffer.alloc(24);
+  bytes.writeUInt32BE(bytes.length, 0);
+  bytes.write('ftyp', 4, 'ascii');
+  bytes.write('isom', 8, 'ascii');
+  await writeFile(source, bytes);
+  return source;
+}
+
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true })),
@@ -217,6 +229,178 @@ describe('managed workspace API', () => {
     );
 
     await app.close();
+  });
+
+  it('isolates unavailable closed sidecars and refuses to reopen corrupt data', async () => {
+    const { config, first, layout, second } = await fixture();
+    const workspace = new WorkspaceRepository(layout);
+    await workspace.save({
+      schemaVersion: 1,
+      openProjectIds: [first.id],
+      activeProjectId: first.id,
+    });
+    const sidecar = layout.forProject(
+      second.id,
+      second.source.fileName,
+    ).sidecar;
+    const corruptBytes = '{ not-json';
+    await writeFile(sidecar, corruptBytes, 'utf8');
+    const app = createApp({ config, picker: cancelledPicker });
+
+    const restored = await app.inject({ method: 'GET', url: '/api/workspace' });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json()).toMatchObject({
+      activeProjectId: first.id,
+      openProjects: [{ id: first.id }],
+      library: [
+        { id: first.id, fileName: first.source.fileName },
+        {
+          id: second.id,
+          fileName: second.source.fileName,
+          durationSeconds: null,
+        },
+      ],
+    });
+
+    const reopened = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${second.id}/open`,
+    });
+    expect(reopened.statusCode).toBe(500);
+    expect(reopened.json()).toMatchObject({
+      error: { code: 'project_data_unavailable', retryable: false },
+    });
+    expect(await readFile(sidecar, 'utf8')).toBe(corruptBytes);
+    await expect(workspace.read()).resolves.toMatchObject({
+      openProjectIds: [first.id],
+      activeProjectId: first.id,
+    });
+
+    await rm(sidecar);
+    const missing = await app.inject({ method: 'GET', url: '/api/workspace' });
+    expect(missing.statusCode).toBe(200);
+    expect(missing.json()).toMatchObject({
+      openProjects: [{ id: first.id }],
+      library: [
+        { id: first.id },
+        {
+          id: second.id,
+          fileName: second.source.fileName,
+          durationSeconds: null,
+        },
+      ],
+    });
+
+    await app.close();
+  });
+
+  it('does not hold workspace mutations while the native picker is open', async () => {
+    const { config, first, layout, second } = await fixture();
+    const source = await createMp4('Deferred Choice.mp4');
+    let releasePicker: (path: string) => void = () => undefined;
+    let markPickerStarted: () => void = () => undefined;
+    const pickerStarted = new Promise<void>((resolve) => {
+      markPickerStarted = resolve;
+    });
+    const selectedPath = new Promise<string>((resolve) => {
+      releasePicker = resolve;
+    });
+    let releaseInspection: (result: {
+      durationSeconds: number;
+      frameRate: string;
+      hasAudio: boolean;
+      height: number;
+      width: number;
+    }) => void = () => undefined;
+    let markInspectionStarted: () => void = () => undefined;
+    const inspectionStarted = new Promise<void>((resolve) => {
+      markInspectionStarted = resolve;
+    });
+    const inspection = new Promise<{
+      durationSeconds: number;
+      frameRate: string;
+      hasAudio: boolean;
+      height: number;
+      width: number;
+    }>((resolve) => {
+      releaseInspection = resolve;
+    });
+    const app = createApp({
+      config,
+      picker: {
+        selectMp4: async () => {
+          markPickerStarted();
+          return selectedPath;
+        },
+      },
+      probeRunner: {
+        isAvailable: async () => false,
+        inspect: async () => {
+          markInspectionStarted();
+          return inspection;
+        },
+      },
+    });
+
+    const importing = app.inject({
+      method: 'POST',
+      url: '/api/imports/select',
+    });
+    await pickerStarted;
+
+    const changed = { ...first, playbackPositionSeconds: 27 };
+    const closed = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${first.id}/close`,
+      payload: changed,
+    });
+    expect(closed.statusCode).toBe(200);
+    expect(closed.json()).toMatchObject({
+      activeProjectId: second.id,
+      openProjects: [{ id: second.id }],
+    });
+
+    releasePicker(source);
+    const imported = await importing;
+    expect(imported.statusCode).toBe(200);
+    expect(imported.json()).toMatchObject({
+      outcome: 'imported',
+      workspace: {
+        openProjects: [
+          { id: second.id },
+          { source: { fileName: 'Deferred Choice.mp4' } },
+        ],
+      },
+    });
+    expect(
+      imported
+        .json()
+        .workspace.openProjects.some(
+          (candidate: ProjectDocument) => candidate.id === first.id,
+        ),
+    ).toBe(false);
+    await expect(
+      new ProjectRepository(layout).read(
+        first.id,
+        layout.forProject(first.id, first.source.fileName).relativeSource,
+      ),
+    ).resolves.toMatchObject({ playbackPositionSeconds: 27 });
+
+    await inspectionStarted;
+    let appClosed = false;
+    const closing = app.close().then(() => {
+      appClosed = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(appClosed).toBe(false);
+    releaseInspection({
+      durationSeconds: 60,
+      frameRate: '30/1',
+      hasAudio: true,
+      height: 1080,
+      width: 1920,
+    });
+    await closing;
   });
 
   it('does not close a project when an unrelated sidecar prevents a safe response', async () => {

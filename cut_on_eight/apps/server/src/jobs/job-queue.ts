@@ -21,6 +21,7 @@ type MetadataUpdater = (
 
 export class JobQueue {
   private readonly events = new EventEmitter();
+  private shuttingDown = false;
   private snapshotValue: JobSnapshot = { jobs: [], errors: [] };
   private worker: Promise<void> | undefined;
 
@@ -86,9 +87,15 @@ export class JobQueue {
     while (this.worker !== undefined) await this.worker;
   }
 
+  async shutdown(): Promise<void> {
+    this.shuttingDown = true;
+    await this.waitForIdle();
+  }
+
   private startWorker(): void {
     if (
       this.worker !== undefined ||
+      this.shuttingDown ||
       !this.snapshotValue.jobs.some((job) => job.state === 'queued')
     ) {
       return;
@@ -121,6 +128,8 @@ export class JobQueue {
 
   private async runWorker(): Promise<void> {
     while (true) {
+      if (this.shuttingDown) return;
+
       const library = await this.library.read();
       const current = await this.repository.list(library.entries);
       this.setSnapshot(current);

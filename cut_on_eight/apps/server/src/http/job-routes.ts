@@ -45,13 +45,15 @@ export function registerJobRoutes(
   app.get('/api/events', async (_request, reply) => {
     let ready = false;
     let pending: JobSnapshot | undefined;
-    let keepalive: NodeJS.Timeout | undefined;
+    const connection: { keepalive?: NodeJS.Timeout } = {};
     let unsubscribe = (): void => undefined;
     let cleaned = false;
     const cleanup = (): void => {
       if (cleaned) return;
       cleaned = true;
-      if (keepalive !== undefined) clearInterval(keepalive);
+      if (connection.keepalive !== undefined) {
+        clearInterval(connection.keepalive);
+      }
       unsubscribe();
       activeResponses.delete(reply.raw);
     };
@@ -93,9 +95,9 @@ export function registerJobRoutes(
     writeSnapshot(reply.raw, initial);
     if (pending !== undefined) writeSnapshot(reply.raw, pending);
     ready = true;
-    keepalive = setInterval(() => {
+    connection.keepalive = setInterval(() => {
       if (!reply.raw.destroyed) reply.raw.write(': keepalive\n\n');
     }, 20_000);
-    keepalive.unref();
+    connection.keepalive.unref();
   });
 }

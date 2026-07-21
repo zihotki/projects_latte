@@ -2,6 +2,7 @@ import { healthResponseSchema } from '@cut-on-eight/contracts';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { getServerConfig, type ServerConfig } from './config.js';
 import { installApiErrorHandling } from './http/api-error.js';
+import { installApiRequestProtection } from './http/request-protection.js';
 import { registerProjectRoutes } from './http/project-routes.js';
 import { registerJobRoutes } from './http/job-routes.js';
 import { registerSourceRoutes } from './http/source-routes.js';
@@ -34,6 +35,7 @@ export function createApp(options: CreateAppOptions = {}): CutOnEightApp {
   const app = Fastify({ logger: true });
 
   installApiErrorHandling(app);
+  installApiRequestProtection(app);
 
   app.get('/api/health', async () =>
     healthResponseSchema.parse({
@@ -46,6 +48,8 @@ export function createApp(options: CreateAppOptions = {}): CutOnEightApp {
   registerProjectRoutes(app, services);
   registerSourceRoutes(app, services);
   registerJobRoutes(app, services);
+
+  app.addHook('onClose', async () => services.shutdown?.());
 
   return Object.assign(app, {
     recover: () => services.recover(),

@@ -251,13 +251,21 @@ export class ImportService {
   }
 
   async selectAndImport(): Promise<ImportResult> {
-    const selectedPath = await this.options.picker.selectMp4();
+    const selectedPath = await this.selectSource();
 
     if (selectedPath === null) {
       return { outcome: 'cancelled' };
     }
 
-    return this.enqueue(() => this.importSelected(selectedPath));
+    return this.importSelected(selectedPath);
+  }
+
+  selectSource(): Promise<string | null> {
+    return this.options.picker.selectMp4();
+  }
+
+  importSelected(selectedPath: string): Promise<ImportResult> {
+    return this.enqueue(() => this.importSelectedUnlocked(selectedPath));
   }
 
   async recover(): Promise<void> {
@@ -273,7 +281,9 @@ export class ImportService {
     return result;
   }
 
-  private async importSelected(selectedPath: string): Promise<ImportResult> {
+  private async importSelectedUnlocked(
+    selectedPath: string,
+  ): Promise<ImportResult> {
     await this.recoverUnlocked();
     const source = await this.validateSource(selectedPath);
     let library = await this.library.read();
