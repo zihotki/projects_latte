@@ -287,11 +287,11 @@
 - Produces `TimeScale` with `timeToPixel`, `pixelToTime`, `clampOffset`, and `visibleRange` from `{ durationSeconds, viewportWidth, zoom, offsetSeconds }`.
 - Produces `zoomAt(scale, nextZoom, anchorPixel)`, `panByPixels(scale, deltaPixels)`, `fitSource(duration, width)`, and `ensureRangeVisible(scale, start, end)`.
 
-- [ ] **Step 1: Write failing geometry and viewport tests**
+- [x] **Step 1: Write failing geometry and viewport tests**
 
   Cover timestamp/pixel round trips, zero/one-hour sources, minimum fit, maximum zoom, pointer anchor invariance, playhead-anchor button zoom, horizontal clamping, fit reset, and ensure-selected-range-visible.
 
-- [ ] **Step 2: Implement the shared coordinate model**
+- [x] **Step 2: Implement the shared coordinate model**
 
   ```ts
   export interface TimelineViewport {
@@ -310,15 +310,15 @@
 
   Use this class for rendering, pointer seeking, hit testing, and tests; do not duplicate ratio formulas in Svelte.
 
-- [ ] **Step 3: Replace BasicTimeline with PrecisionTimeline**
+- [x] **Step 3: Replace BasicTimeline with PrecisionTimeline**
 
   Render decorative Canvas below semantic DOM controls. Draw segments in deterministic rows 0/1; put selected controls above neighbours. Empty-lane click clears selection and seeks. `Cmd/Ctrl+wheel` anchors zoom at the pointer, `+/-` anchor at playhead, scroll pans, and Fit restores the source.
 
-- [ ] **Step 4: Persist viewport through normal project autosave**
+- [x] **Step 4: Persist viewport through normal project autosave**
 
   Debounce viewport persistence separately from high-frequency playhead painting. Project switching restores each document's `editor.timelineZoom` and `editor.timelineOffsetSeconds`. Selection calls `ensureRangeVisible` without changing zoom if the range already fits.
 
-- [ ] **Step 5: Run focused tests and Svelte validation**
+- [x] **Step 5: Run focused tests and Svelte validation**
 
   Run: `node_modules/.bin/vitest run apps/web/src/lib/timeline-geometry.test.ts apps/web/src/lib/timeline-viewport.test.ts apps/web/src/lib/two-row-layout.test.ts`
 
@@ -326,7 +326,7 @@
 
   Expected: focused tests and local Svelte checks pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add apps/web/src

@@ -27,8 +27,10 @@
     nudgeBoundary,
     type BoundaryFocus,
   } from '../lib/trim-controller.js';
-  import BasicTimeline from './BasicTimeline.svelte';
   import BoundaryEditor from './BoundaryEditor.svelte';
+  import PrecisionTimeline, {
+    type TimelineViewportChange,
+  } from './PrecisionTimeline.svelte';
   import SegmentList from './SegmentList.svelte';
 
   let {
@@ -68,7 +70,12 @@
   let playbackState = $state.raw<PlaybackState>(
     untrack(() => initialPlaybackState(project)),
   );
+  let timelineZoom = $state(untrack(() => project.editor.timelineZoom));
+  let timelineOffsetSeconds = $state(
+    untrack(() => project.editor.timelineOffsetSeconds),
+  );
   let animationFrame: number | null = null;
+  let viewportPersistenceTimer: ReturnType<typeof setTimeout> | null = null;
   let playbackCommandSequence = 0;
   let lastPublishedSeconds = untrack(() => project.playbackPositionSeconds);
 
@@ -92,6 +99,7 @@
 
   onDestroy(() => {
     stopSampling();
+    materializeTimelineViewport();
     onBoundaryModeChange(project.id, false);
   });
 
@@ -131,6 +139,7 @@
   function prepareForSave(): void {
     interactionLocked = true;
     stopSampling();
+    materializeTimelineViewport();
     video?.pause();
     if (video !== undefined) video.controls = false;
     if (video !== undefined) currentSeconds = video.currentTime;
@@ -144,6 +153,36 @@
   function releaseAfterSave(): void {
     interactionLocked = false;
     if (video !== undefined) video.controls = true;
+  }
+
+  function clearViewportPersistenceTimer(): void {
+    if (viewportPersistenceTimer === null) return;
+    clearTimeout(viewportPersistenceTimer);
+    viewportPersistenceTimer = null;
+  }
+
+  function updateTimelineViewport(viewport: TimelineViewportChange): void {
+    timelineZoom = viewport.zoom;
+    timelineOffsetSeconds = viewport.offsetSeconds;
+    clearViewportPersistenceTimer();
+    viewportPersistenceTimer = setTimeout(materializeTimelineViewport, 300);
+  }
+
+  function materializeTimelineViewport(): void {
+    clearViewportPersistenceTimer();
+    updateProject((current) =>
+      Math.abs(current.editor.timelineZoom - timelineZoom) < 0.000_001 &&
+      Math.abs(current.editor.timelineOffsetSeconds - timelineOffsetSeconds) <
+        0.000_001
+        ? current
+        : {
+            ...current,
+            editor: {
+              timelineZoom,
+              timelineOffsetSeconds,
+            },
+          },
+    );
   }
 
   function samplePlayback(): void {
@@ -618,15 +657,18 @@
       {/if}
     </div>
 
-    <BasicTimeline
+    <PrecisionTimeline
       durationSeconds={displayDuration}
       {currentSeconds}
       {pendingStartSeconds}
       segments={project.segments}
       selectedSegmentId={project.selectedSegmentId}
+      zoom={timelineZoom}
+      offsetSeconds={timelineOffsetSeconds}
       onSelect={selectSegment}
       onSeek={seek}
       onClearSelectionAndSeek={clearSegmentSelection}
+      onViewportInput={updateTimelineViewport}
     />
 
     {#if selectedSegment !== null}
