@@ -8,6 +8,7 @@ import { registerJobRoutes } from './http/job-routes.js';
 import { registerSourceRoutes } from './http/source-routes.js';
 import { registerThumbnailRoutes } from './http/thumbnail-routes.js';
 import { registerWorkspaceRoutes } from './http/workspace-routes.js';
+import { registerFragmentRoutes } from './http/fragment-routes.js';
 import {
   MacOsSourcePicker,
   type SourcePicker,
@@ -49,6 +50,7 @@ export function createApp(options: CreateAppOptions = {}): CutOnEightApp {
 
   registerWorkspaceRoutes(app, services);
   registerProjectRoutes(app, services);
+  registerFragmentRoutes(app, services);
   registerSourceRoutes(app, services);
   registerThumbnailRoutes(app, services);
   registerJobRoutes(app, services);

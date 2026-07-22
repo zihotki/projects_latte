@@ -1,19 +1,28 @@
 import {
   importSelectionResponseSchema,
   capabilitiesSchema,
+  frameStepSeconds,
+  segmentSchema,
+  tagDefinitionSchema,
   jobSnapshotSchema,
   projectDocumentSchema,
   projectSummarySchema,
   workspaceSnapshotSchema,
   type Capabilities,
   type ImportSelectionResponse,
+  type DeletedFragment,
+  type FragmentCatalogue,
+  type FragmentMutation,
   type JobRecord,
   type JobSnapshot,
   type ProjectDocument,
+  type Segment,
+  type TagDefinition,
   type ThumbnailManifestV1,
   type WorkspaceSnapshot,
 } from '@cut-on-eight/contracts';
 import { constants } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { open, type FileHandle } from 'node:fs/promises';
 import { posix, resolve } from 'node:path';
 import type { ServerConfig } from './config.js';
@@ -30,6 +39,8 @@ import { JobRepository } from './jobs/job-repository.js';
 import { FfmpegRunner } from './jobs/ffmpeg-runner.js';
 import { thumbnailJobIdentity } from './jobs/thumbnail-job.js';
 import { CatalogRepository } from './storage/catalog-repository.js';
+import { CatalogueMetadataRepository } from './storage/catalogue-metadata-repository.js';
+import { ProjectDeletion } from './storage/project-deletion.js';
 import { CorruptPersistedDataError } from './storage/atomic-json.js';
 import {
   LibraryRepository,
@@ -50,6 +61,12 @@ import {
   type ThumbnailGenerator,
 } from './thumbnails/thumbnail-worker.js';
 import { readCompatibleThumbnailManifest } from './thumbnails/thumbnail-manifest.js';
+import {
+  catalogueResponse,
+  orderedSegments,
+  selectFragmentPreviews,
+  validateFragmentTiming,
+} from './fragments/fragment-catalogue.js';
 
 export interface ManagedSource {
   readonly file: FileHandle;
@@ -67,8 +84,16 @@ export interface AppServices {
     projectId: string,
     document: ProjectDocument,
   ): Promise<WorkspaceSnapshot>;
+  createTag(name: string): Promise<TagDefinition>;
+  deleteFragment(
+    projectId: string,
+    fragmentId: string,
+  ): Promise<DeletedFragment>;
+  deleteProject(projectId: string): Promise<WorkspaceSnapshot>;
   getCapabilities(): Promise<Capabilities>;
   getJobs(): Promise<JobSnapshot>;
+  getFragments(): Promise<FragmentCatalogue>;
+  getTags(): Promise<TagDefinition[]>;
   getThumbnailManifest(projectId: string): Promise<ThumbnailManifestV1>;
   getWorkspace(): Promise<WorkspaceSnapshot>;
   openProject(projectId: string): Promise<WorkspaceSnapshot>;
@@ -79,6 +104,11 @@ export interface AppServices {
   ): Promise<ManagedThumbnailPage>;
   recover(): Promise<void>;
   retryJob(jobId: string): Promise<JobRecord>;
+  restoreFragment(
+    projectId: string,
+    fragmentId: string,
+    deleted: DeletedFragment,
+  ): Promise<Segment>;
   saveProject(
     projectId: string,
     document: ProjectDocument,
@@ -86,6 +116,11 @@ export interface AppServices {
   selectImport(): Promise<ImportSelectionResponse>;
   shutdown?(): Promise<void>;
   subscribeToJobs(listener: (snapshot: JobSnapshot) => void): () => void;
+  updateFragment(
+    projectId: string,
+    fragmentId: string,
+    mutation: FragmentMutation,
+  ): Promise<Segment>;
 }
 
 export interface CreateServicesOptions {
@@ -153,6 +188,7 @@ export function createServices(options: CreateServicesOptions): AppServices {
   const projects = new ProjectRepository(layout);
   const workspace = new WorkspaceRepository(layout);
   const catalog = new CatalogRepository(layout, library, workspace);
+  const catalogueMetadata = new CatalogueMetadataRepository(layout);
   const jobs = new JobRepository(layout);
   const imports = new ImportService(layout, {
     catalog,
@@ -162,6 +198,12 @@ export function createServices(options: CreateServicesOptions): AppServices {
     projects,
     workspace,
   });
+  const projectDeletion = new ProjectDeletion(
+    layout,
+    library,
+    workspace,
+    catalog,
+  );
 
   return new ManagedWorkspaceServices(
     layout,
@@ -170,6 +212,8 @@ export function createServices(options: CreateServicesOptions): AppServices {
     workspace,
     imports,
     jobs,
+    catalogueMetadata,
+    projectDeletion,
     options.probeRunner ?? new FfprobeRunner(),
     options.thumbnailGenerator ?? new ThumbnailWorker(new FfmpegRunner()),
   );
@@ -186,6 +230,8 @@ class ManagedWorkspaceServices implements AppServices {
     private readonly workspace: WorkspaceRepository,
     private readonly imports: ImportService,
     jobs: JobRepository,
+    private readonly catalogueMetadata: CatalogueMetadataRepository,
+    private readonly projectDeletion: ProjectDeletion,
     probe: ProbeRunner,
     thumbnailGenerator: ThumbnailGenerator,
   ) {
@@ -202,10 +248,28 @@ class ManagedWorkspaceServices implements AppServices {
   }
 
   async recover(): Promise<void> {
+    await this.enqueue(() => this.projectDeletion.recover());
     const importRecoveryIssues = await this.enqueue(() =>
       this.imports.recover(),
     );
     await this.jobQueue.recover([...importRecoveryIssues]);
+  }
+
+  async deleteProject(projectId: string): Promise<WorkspaceSnapshot> {
+    try {
+      await this.jobQueue.stopProject(projectId);
+      return await this.enqueue(async () => {
+        const library = await this.library.read();
+        const entry = library.entries.find(
+          (candidate) => candidate.id === projectId,
+        );
+        if (entry === undefined) return this.snapshot();
+        await this.projectDeletion.delete(entry);
+        return this.snapshot();
+      });
+    } finally {
+      this.jobQueue.resumeProject(projectId);
+    }
   }
 
   async getCapabilities(): Promise<Capabilities> {
@@ -217,6 +281,235 @@ class ManagedWorkspaceServices implements AppServices {
 
   async getJobs(): Promise<JobSnapshot> {
     return jobSnapshotSchema.parse(await this.jobQueue.refresh());
+  }
+
+  getFragments(): Promise<FragmentCatalogue> {
+    return Promise.all([
+      this.library.read(),
+      this.catalogueMetadata.read(),
+    ]).then(async ([library, metadata]) => {
+      const jobs = this.jobQueue.snapshot().jobs;
+      const results = await Promise.all(
+        library.entries.map(async (entry) => {
+          const fragments: FragmentCatalogue['fragments'] = [];
+          const diagnostics: FragmentCatalogue['diagnostics'] = [];
+          let project: ProjectDocument;
+          try {
+            project = await this.projects.readRequired(
+              entry.id,
+              entry.managedSourcePath,
+            );
+          } catch (error) {
+            if (!isUnavailableSidecar(error)) throw error;
+            diagnostics.push({
+              projectId: entry.id,
+              sourceFileName: posix.basename(entry.managedSourcePath),
+              message: 'Managed project data is unavailable.',
+            });
+            return { fragments, diagnostics };
+          }
+
+          const durationSeconds = project.source.durationSeconds;
+          const identity = thumbnailJobIdentity(entry.fingerprint);
+          const manifest =
+            durationSeconds === null
+              ? undefined
+              : await readCompatibleThumbnailManifest(
+                  this.layout.thumbnailsDirectory(entry.managedSourcePath),
+                  { ...identity, durationSeconds },
+                );
+          const thumbnailJob = jobs
+            .filter(
+              (job) =>
+                job.projectId === entry.id &&
+                job.type === 'generate-thumbnails',
+            )
+            .sort((left, right) =>
+              right.updatedAt.localeCompare(left.updatedAt),
+            )[0];
+          const step = frameStepSeconds(project.source);
+          const thumbnailState =
+            manifest !== undefined
+              ? 'ready'
+              : thumbnailJob?.state === 'failed'
+                ? 'failed'
+                : thumbnailJob?.state === 'queued' ||
+                    thumbnailJob?.state === 'running'
+                  ? 'generating'
+                  : 'unavailable';
+          for (const [index, segment] of orderedSegments(project).entries()) {
+            fragments.push({
+              projectId: entry.id,
+              sourceFileName: project.source.fileName,
+              sourceDurationSeconds: durationSeconds,
+              ordinal: index + 1,
+              segment,
+              previews: selectFragmentPreviews(segment, manifest),
+              thumbnailState,
+              thumbnailJobId: thumbnailJob?.id ?? null,
+              frameStepSeconds: step.seconds,
+              frameStepApproximate: step.approximate,
+            });
+          }
+          return { fragments, diagnostics };
+        }),
+      );
+
+      const fragments = results
+        .flatMap((result) => result.fragments)
+        .sort(
+          (left, right) =>
+            left.sourceFileName.localeCompare(right.sourceFileName) ||
+            left.ordinal - right.ordinal,
+        );
+      return catalogueResponse({
+        fragments,
+        tags: metadata.tags,
+        diagnostics: results.flatMap((result) => result.diagnostics),
+      });
+    });
+  }
+
+  async getTags(): Promise<TagDefinition[]> {
+    return (await this.catalogueMetadata.read()).tags;
+  }
+
+  createTag(name: string): Promise<TagDefinition> {
+    return this.enqueue(async () => {
+      const normalized = name.trim().toLowerCase();
+      const metadata = await this.catalogueMetadata.read();
+      const existing = metadata.tags.find((tag) => tag.name === normalized);
+      if (existing !== undefined) return existing;
+      const tag = tagDefinitionSchema.parse({
+        id: randomUUID(),
+        name: normalized,
+      });
+      await this.catalogueMetadata.save({
+        ...metadata,
+        tags: [...metadata.tags, tag].sort((left, right) =>
+          left.name.localeCompare(right.name),
+        ),
+      });
+      return tag;
+    });
+  }
+
+  updateFragment(
+    projectId: string,
+    fragmentId: string,
+    mutation: FragmentMutation,
+  ): Promise<Segment> {
+    return this.enqueue(async () => {
+      const { entry, project } = await this.loadThumbnailProject(projectId);
+      const index = project.segments.findIndex(
+        (segment) => segment.id === fragmentId,
+      );
+      if (index < 0) throw fragmentNotFound(projectId, fragmentId);
+      const metadata = await this.catalogueMetadata.read();
+      const knownTags = new Set(metadata.tags.map((tag) => tag.id));
+      if (mutation.tagIds.some((tagId) => !knownTags.has(tagId))) {
+        throw new ApiRouteError(
+          400,
+          'unknown_tag',
+          'The fragment contains an unknown tag.',
+          false,
+        );
+      }
+      const segment = segmentSchema.parse({ id: fragmentId, ...mutation });
+      const issue = validateFragmentTiming(
+        project.segments,
+        segment,
+        project.source.durationSeconds,
+      );
+      if (issue !== null)
+        throw new ApiRouteError(409, issue.code, issue.message, false);
+      const segments = [...project.segments];
+      segments[index] = segment;
+      await this.projects.save(projectId, entry.managedSourcePath, {
+        ...project,
+        segments,
+      });
+      return segment;
+    });
+  }
+
+  deleteFragment(
+    projectId: string,
+    fragmentId: string,
+  ): Promise<DeletedFragment> {
+    return this.enqueue(async () => {
+      const { entry, project } = await this.loadThumbnailProject(projectId);
+      const index = project.segments.findIndex(
+        (segment) => segment.id === fragmentId,
+      );
+      if (index < 0) throw fragmentNotFound(projectId, fragmentId);
+      const fragment = project.segments[index];
+      if (fragment === undefined) throw fragmentNotFound(projectId, fragmentId);
+      await this.projects.save(projectId, entry.managedSourcePath, {
+        ...project,
+        selectedSegmentId:
+          project.selectedSegmentId === fragmentId
+            ? null
+            : project.selectedSegmentId,
+        segments: project.segments.filter(
+          (segment) => segment.id !== fragmentId,
+        ),
+      });
+      return { projectId, index, fragment };
+    });
+  }
+
+  restoreFragment(
+    projectId: string,
+    fragmentId: string,
+    deleted: DeletedFragment,
+  ): Promise<Segment> {
+    return this.enqueue(async () => {
+      if (
+        deleted.projectId !== projectId ||
+        deleted.fragment.id !== fragmentId
+      ) {
+        throw new ApiRouteError(
+          400,
+          'invalid_restore',
+          'The deleted fragment snapshot does not match.',
+          false,
+        );
+      }
+      const { entry, project } = await this.loadThumbnailProject(projectId);
+      const existing = project.segments.find(
+        (segment) => segment.id === fragmentId,
+      );
+      if (existing !== undefined) return existing;
+      const issue = validateFragmentTiming(
+        project.segments,
+        deleted.fragment,
+        project.source.durationSeconds,
+      );
+      if (issue !== null)
+        throw new ApiRouteError(409, issue.code, issue.message, false);
+      const metadata = await this.catalogueMetadata.read();
+      const knownTags = new Set(metadata.tags.map((tag) => tag.id));
+      if (deleted.fragment.tagIds.some((tagId) => !knownTags.has(tagId))) {
+        throw new ApiRouteError(
+          409,
+          'unknown_tag',
+          'A deleted fragment tag no longer exists.',
+          false,
+        );
+      }
+      const segments = [...project.segments];
+      segments.splice(
+        Math.min(deleted.index, segments.length),
+        0,
+        deleted.fragment,
+      );
+      await this.projects.save(projectId, entry.managedSourcePath, {
+        ...project,
+        segments,
+      });
+      return deleted.fragment;
+    });
   }
 
   async retryJob(jobId: string): Promise<JobRecord> {
@@ -686,5 +979,18 @@ function isUnavailableSidecar(
   return (
     error instanceof CorruptPersistedDataError ||
     error instanceof MissingProjectSidecarError
+  );
+}
+
+function fragmentNotFound(
+  projectId: string,
+  fragmentId: string,
+): ApiRouteError {
+  return new ApiRouteError(
+    404,
+    'fragment_not_found',
+    'The fragment was not found.',
+    false,
+    { projectId, fragmentId },
   );
 }

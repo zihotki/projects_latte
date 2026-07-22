@@ -14,7 +14,7 @@ const projectId = '10000000-0000-4000-8000-000000000001';
 const segmentId = '20000000-0000-4000-8000-000000000001';
 
 const validProject = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   id: projectId,
   source: {
     fileName: 'cross-body-lead.mp4',
@@ -38,6 +38,8 @@ const validProject = {
       startSeconds: 10,
       endSeconds: 13,
       exportSelected: true,
+      title: null,
+      tagIds: [],
     },
   ],
   metadata: { title: null, tags: [], notes: null },
@@ -56,6 +58,12 @@ const validWorkspace = {
 } as const;
 
 function legacyProject(frameRate: string | null) {
+  const segments = validProject.segments.map((segment) => ({
+    id: segment.id,
+    startSeconds: segment.startSeconds,
+    endSeconds: segment.endSeconds,
+    exportSelected: segment.exportSelected,
+  }));
   return {
     schemaVersion: 1,
     id: validProject.id,
@@ -70,7 +78,7 @@ function legacyProject(frameRate: string | null) {
     settings: validProject.settings,
     playbackPositionSeconds: validProject.playbackPositionSeconds,
     selectedSegmentId: validProject.selectedSegmentId,
-    segments: validProject.segments,
+    segments,
     metadata: validProject.metadata,
   };
 }
@@ -121,7 +129,7 @@ describe('project contracts', () => {
     const migrated = migrateProjectDocument(legacyProject('30000/1001'));
 
     expect(migrated).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       source: {
         frameRateNumerator: 30_000,
         frameRateDenominator: 1_001,
@@ -239,9 +247,9 @@ describe('project contracts', () => {
     ).toBe(false);
   });
 
-  it('accepts only version 2 in the persisted project schema', () => {
+  it('accepts only version 3 in the persisted project schema', () => {
     expect(
-      projectDocumentSchema.safeParse({ ...validProject, schemaVersion: 1 })
+      projectDocumentSchema.safeParse({ ...validProject, schemaVersion: 2 })
         .success,
     ).toBe(false);
     expect(

@@ -2,6 +2,13 @@ import {
   apiErrorSchema,
   capabilitiesSchema,
   importSelectionResponseSchema,
+  createTagRequestSchema,
+  deletedFragmentSchema,
+  fragmentCatalogueSchema,
+  fragmentMutationSchema,
+  segmentSchema,
+  tagDefinitionSchema,
+  tagDefinitionsSchema,
   jobRecordSchema,
   jobSnapshotSchema,
   projectDocumentSchema,
@@ -10,9 +17,14 @@ import {
   type ApiError,
   type Capabilities,
   type ImportSelectionResponse,
+  type DeletedFragment,
+  type FragmentCatalogue,
+  type FragmentMutation,
   type JobRecord,
   type JobSnapshot,
   type ProjectDocument,
+  type Segment,
+  type TagDefinition,
   type ThumbnailManifestV1,
   type WorkspaceSnapshot,
 } from '@cut-on-eight/contracts';
@@ -154,6 +166,70 @@ export function retryJob(jobId: string): Promise<JobRecord> {
     {
       method: 'POST',
     },
+  );
+}
+
+export function loadFragments(): Promise<FragmentCatalogue> {
+  return request('/api/fragments', fragmentCatalogueSchema);
+}
+
+export function loadTags(): Promise<TagDefinition[]> {
+  return request('/api/tags', tagDefinitionsSchema);
+}
+
+export function createTag(name: string): Promise<TagDefinition> {
+  const body = createTagRequestSchema.parse({ name });
+  return request('/api/tags', tagDefinitionSchema, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateFragment(
+  projectId: string,
+  fragmentId: string,
+  mutation: FragmentMutation,
+): Promise<Segment> {
+  return request(
+    `/api/projects/${encodeURIComponent(projectId)}/fragments/${encodeURIComponent(fragmentId)}`,
+    segmentSchema,
+    {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify(fragmentMutationSchema.parse(mutation)),
+    },
+  );
+}
+
+export function deleteFragment(
+  projectId: string,
+  fragmentId: string,
+): Promise<DeletedFragment> {
+  return request(
+    `/api/projects/${encodeURIComponent(projectId)}/fragments/${encodeURIComponent(fragmentId)}`,
+    deletedFragmentSchema,
+    { method: 'DELETE' },
+  );
+}
+
+export function restoreFragment(deleted: DeletedFragment): Promise<Segment> {
+  return request(
+    `/api/projects/${encodeURIComponent(deleted.projectId)}/fragments/${encodeURIComponent(deleted.fragment.id)}/restore`,
+    segmentSchema,
+    {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(deleted),
+    },
+  );
+}
+
+export function deleteProject(projectId: string): Promise<WorkspaceSnapshot> {
+  return request(
+    `/api/projects/${encodeURIComponent(projectId)}`,
+    workspaceSnapshotSchema,
+    { method: 'DELETE' },
   );
 }
 

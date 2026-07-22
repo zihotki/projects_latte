@@ -18,4 +18,9 @@ export function registerProjectRoutes(
     const project = projectDocumentSchema.parse(request.body);
     return services.closeProject(id, project);
   });
+
+  app.delete('/api/projects/:id', (request) => {
+    const id = parseProjectId(request.params, 'id');
+    return services.deleteProject(id);
+  });
 }

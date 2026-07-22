@@ -21,7 +21,7 @@ const roots: string[] = [];
 
 function project(id: string, fileName: string): ProjectDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     id,
     source: {
       fileName,

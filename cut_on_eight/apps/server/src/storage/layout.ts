@@ -63,6 +63,7 @@ function slugify(fileName: string): string {
 export class StorageLayout {
   readonly dataRoot: string;
   readonly catalogTransactionFile: string;
+  readonly catalogueMetadataFile: string;
   readonly libraryFile: string;
   readonly systemDirectory: string;
   readonly workspaceFile: string;
@@ -77,6 +78,10 @@ export class StorageLayout {
     this.catalogTransactionFile = resolve(
       this.systemDirectory,
       'catalog-transaction.json',
+    );
+    this.catalogueMetadataFile = resolve(
+      this.systemDirectory,
+      'catalogue-metadata.json',
     );
     this.libraryFile = resolve(this.systemDirectory, 'library.json');
     this.workspaceFile = resolve(this.systemDirectory, 'workspace.json');

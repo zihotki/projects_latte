@@ -2,7 +2,7 @@ import type { ProjectDocument } from '@cut-on-eight/contracts';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import type { ServerConfig } from '../src/config.js';
 import type { ProbeResult, ProbeRunner } from '../src/jobs/ffprobe-runner.js';
@@ -40,7 +40,7 @@ const metadata: ProbeResult = {
 
 function project(id: string, fileName: string): ProjectDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     id,
     source: {
       fileName,
@@ -162,6 +162,153 @@ afterEach(async () => {
 });
 
 describe('durable inspection queue', () => {
+  it('does not reconcile jobs while a project deletion barrier is active', async () => {
+    const { entries, jobs, layout, projects } = await fixture();
+    let reconciliations = 0;
+    const queue = new JobQueue(
+      layout,
+      new LibraryRepository(layout),
+      jobs,
+      { isAvailable: async () => true, inspect: async () => metadata },
+      updater(projects, entries),
+      async () => {
+        reconciliations += 1;
+        return [];
+      },
+    );
+
+    await queue.stopProject(firstId);
+    await queue.refresh();
+    expect(reconciliations).toBe(0);
+
+    queue.resumeProject(firstId);
+    await queue.refresh();
+    expect(reconciliations).toBe(1);
+  });
+
+  it('waits for in-flight reconciliation before opening a deletion barrier', async () => {
+    const { entries, jobs, layout, projects } = await fixture();
+    let reconciliationStarted!: () => void;
+    let releaseReconciliation!: () => void;
+    const started = new Promise<void>((resolve) => {
+      reconciliationStarted = resolve;
+    });
+    const queue = new JobQueue(
+      layout,
+      new LibraryRepository(layout),
+      jobs,
+      { isAvailable: async () => true, inspect: async () => metadata },
+      updater(projects, entries),
+      async () => {
+        reconciliationStarted();
+        await new Promise<void>((resolve) => {
+          releaseReconciliation = resolve;
+        });
+        return [];
+      },
+    );
+
+    const refresh = queue.refresh();
+    await started;
+    let stopped = false;
+    const stop = queue.stopProject(firstId).then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+
+    releaseReconciliation();
+    await Promise.all([refresh, stop]);
+    expect(stopped).toBe(true);
+  });
+
+  it('waits for an in-flight retry before opening a deletion barrier', async () => {
+    const { entries, jobs, layout, projects } = await fixture();
+    const queued = await jobs.createQueuedInspection(
+      firstId,
+      layout.forProject(firstId, 'First.mp4').directory,
+    );
+    const running = await jobs.markRunning(entries, queued);
+    const failed = await jobs.markFailed(entries, running, {
+      code: 'inspection_failed',
+      message: 'Inspection failed.',
+      retryable: true,
+    });
+    const originalRetry = jobs.retry.bind(jobs);
+    let retryStarted!: () => void;
+    let releaseRetry!: () => void;
+    const started = new Promise<void>((resolve) => {
+      retryStarted = resolve;
+    });
+    vi.spyOn(jobs, 'retry').mockImplementation(
+      async (libraryEntries, jobId) => {
+        retryStarted();
+        await new Promise<void>((resolve) => {
+          releaseRetry = resolve;
+        });
+        return originalRetry(libraryEntries, jobId);
+      },
+    );
+    const queue = new JobQueue(
+      layout,
+      new LibraryRepository(layout),
+      jobs,
+      { isAvailable: async () => true, inspect: async () => metadata },
+      updater(projects, entries),
+    );
+
+    const retry = queue.retry(failed.id);
+    await started;
+    let stopped = false;
+    const stop = queue.stopProject(firstId).then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+
+    releaseRetry();
+    await Promise.all([retry, stop]);
+    expect(stopped).toBe(true);
+  });
+
+  it('keeps the deletion barrier closed through post-inspection job writes', async () => {
+    const { entries, jobs, layout, projects } = await fixture();
+    await jobs.createQueuedInspection(
+      firstId,
+      layout.forProject(firstId, 'First.mp4').directory,
+    );
+    let releaseThumbnailWrite!: () => void;
+    const thumbnailWriteStarted = new Promise<void>((resolveStarted) => {
+      vi.spyOn(jobs, 'ensureThumbnailJob').mockImplementation(async () => {
+        resolveStarted();
+        await new Promise<void>((resolve) => {
+          releaseThumbnailWrite = resolve;
+        });
+        return undefined;
+      });
+    });
+    const queue = new JobQueue(
+      layout,
+      new LibraryRepository(layout),
+      jobs,
+      { isAvailable: async () => true, inspect: async () => metadata },
+      updater(projects, entries),
+    );
+
+    await queue.recover();
+    await thumbnailWriteStarted;
+    let stopped = false;
+    const stop = queue.stopProject(firstId).then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+
+    releaseThumbnailWrite();
+    await stop;
+    expect(stopped).toBe(true);
+  });
+
   it('keeps project-scoped recovery errors visible across refreshes', async () => {
     const { entries, jobs, layout, projects } = await fixture();
     const recoveryError = {

@@ -28,7 +28,7 @@ const identity = {
 
 function project(durationSeconds = 20): ProjectDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     id: '10000000-0000-4000-8000-000000000001',
     source: {
       fileName: 'Dance.mp4',

@@ -10,7 +10,14 @@ function segment(
   startSeconds: number,
   endSeconds: number,
 ): Segment {
-  return { id, startSeconds, endSeconds, exportSelected: true };
+  return {
+    id,
+    startSeconds,
+    endSeconds,
+    exportSelected: true,
+    title: null,
+    tagIds: [],
+  };
 }
 
 const firstId = '10000000-0000-4000-8000-000000000001';

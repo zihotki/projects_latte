@@ -46,6 +46,8 @@ export function createSegment<T extends SegmentState>(
     startSeconds,
     endSeconds,
     exportSelected: true,
+    title: null,
+    tagIds: [],
   };
 
   const validated = validateSegmentMutation(

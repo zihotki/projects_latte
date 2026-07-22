@@ -1,5 +1,28 @@
 export { importSelectionResponseSchema } from './api.js';
 export type { ImportSelectionResponse } from './api.js';
+export {
+  catalogueMetadataSchema,
+  createTagRequestSchema,
+  deletedFragmentSchema,
+  fragmentCatalogueDiagnosticSchema,
+  fragmentCatalogueSchema,
+  fragmentMutationSchema,
+  fragmentPreviewSchema,
+  fragmentSummarySchema,
+  tagDefinitionSchema,
+  tagDefinitionsSchema,
+} from './catalogue.js';
+export type {
+  CatalogueMetadata,
+  CreateTagRequest,
+  DeletedFragment,
+  FragmentCatalogue,
+  FragmentCatalogueDiagnostic,
+  FragmentMutation,
+  FragmentPreview,
+  FragmentSummary,
+  TagDefinition,
+} from './catalogue.js';
 export { apiErrorSchema } from './errors.js';
 export type { ApiError } from './errors.js';
 export { healthResponseSchema } from './health.js';

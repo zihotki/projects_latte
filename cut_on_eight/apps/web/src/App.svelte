@@ -1,30 +1,44 @@
 <script lang="ts">
   import type {
     Capabilities,
+    DeletedFragment,
+    FragmentCatalogue,
+    FragmentMutation,
     JobRecord,
     JobSnapshot,
     ProjectDocument,
+    Segment,
+    TagDefinition,
     ThumbnailManifestV1,
     WorkspaceSnapshot,
   } from '@cut-on-eight/contracts';
   import { onDestroy } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import EditorShell, {
     type ActiveView,
     type EditorMode,
   } from './components/EditorShell.svelte';
   import LibraryPanel from './components/LibraryPanel.svelte';
+  import FragmentsPanel from './components/FragmentsPanel.svelte';
   import ProjectStrip from './components/ProjectStrip.svelte';
   import VideoEditor from './components/VideoEditor.svelte';
   import {
     activateProject,
+    createTag as createCatalogueTag,
+    deleteFragment as deleteCatalogueFragment,
+    deleteProject as deleteManagedProject,
     closeProject,
     loadCapabilities,
+    loadFragments,
+    loadTags,
     loadWorkspace,
     loadThumbnailManifest,
     openProject,
     saveProject,
     selectImport,
     retryJob,
+    restoreFragment as restoreCatalogueFragment,
+    updateFragment as updateCatalogueFragment,
   } from './lib/api.js';
   import {
     connectJobEvents,
@@ -68,10 +82,14 @@
   let boundaryEditingProjectId = $state<string | null>(null);
   let thumbnailManifests = $state.raw<Record<string, ThumbnailManifestV1>>({});
   let thumbnailLoadErrors = $state<Record<string, string>>({});
+  let fragmentCatalogue = $state.raw<FragmentCatalogue | null>(null);
+  let catalogueTags = $state.raw<TagDefinition[]>([]);
+  let fragmentsLoading = $state(false);
+  let fragmentsError = $state<string | null>(null);
 
-  const controllers = new Map<string, SaveController>();
-  const sampledPlaybackPositions = new Map<string, number>();
-  const thumbnailRequestKeys = new Map<string, string>();
+  const controllers = new SvelteMap<string, SaveController>();
+  const sampledPlaybackPositions = new SvelteMap<string, number>();
+  const thumbnailRequestKeys = new SvelteMap<string, string>();
   let activeEditorControl: VideoEditorControl | null = null;
   let closeJobEvents: (() => void) | null = null;
   let disposed = false;
@@ -148,11 +166,15 @@
         : 'generating',
   );
 
-  $effect(() => {
-    const projectId = activeProject?.id;
-    const job = activeThumbnailJob;
+  function requestActiveThumbnails(): void {
+    const projectId = workspace?.activeProjectId;
+    const job =
+      projectId === null || projectId === undefined
+        ? null
+        : newestThumbnailJob(jobs, projectId);
     if (
       projectId !== undefined &&
+      projectId !== null &&
       (job === null || job.state === 'completed')
     ) {
       void refreshThumbnailManifest(
@@ -160,7 +182,7 @@
         job === null ? 'no-job' : `${job.id}:${job.updatedAt}`,
       );
     }
-  });
+  }
 
   function setBoundaryMode(projectId: string, focused: boolean): void {
     boundaryEditingProjectId = focused ? projectId : null;
@@ -169,7 +191,9 @@
   function readActiveView(): ActiveView | null {
     try {
       const value = localStorage.getItem(ACTIVE_VIEW_KEY);
-      return value === 'editor' || value === 'library' ? value : null;
+      return value === 'editor' || value === 'library' || value === 'fragments'
+        ? value
+        : null;
     } catch {
       return null;
     }
@@ -201,6 +225,156 @@
   function changeView(view: ActiveView): void {
     activeView = view;
     storePreference(ACTIVE_VIEW_KEY, view);
+    if (view === 'fragments') void refreshFragments();
+  }
+
+  async function refreshFragments(): Promise<void> {
+    fragmentsLoading = true;
+    fragmentsError = null;
+    try {
+      fragmentCatalogue = await loadFragments();
+      catalogueTags = fragmentCatalogue.tags;
+    } catch (error) {
+      fragmentsError = describeError(error, 'Could not load fragments');
+    } finally {
+      fragmentsLoading = false;
+    }
+  }
+
+  async function refreshTags(): Promise<void> {
+    try {
+      catalogueTags = await loadTags();
+    } catch {
+      // Tags are also refreshed when the fragment catalogue is opened.
+    }
+  }
+
+  async function createFragmentTag(name: string): Promise<TagDefinition> {
+    const tag = await createCatalogueTag(name);
+    if (!catalogueTags.some((item) => item.id === tag.id)) {
+      catalogueTags = [...catalogueTags, tag].sort((left, right) =>
+        left.name.localeCompare(right.name),
+      );
+    }
+    if (
+      fragmentCatalogue !== null &&
+      !fragmentCatalogue.tags.some((item) => item.id === tag.id)
+    ) {
+      fragmentCatalogue = {
+        ...fragmentCatalogue,
+        tags: [...fragmentCatalogue.tags, tag].sort((left, right) =>
+          left.name.localeCompare(right.name),
+        ),
+      };
+    }
+    return tag;
+  }
+
+  function replaceCatalogueSegment(projectId: string, segment: Segment): void {
+    if (fragmentCatalogue === null) return;
+    fragmentCatalogue = {
+      ...fragmentCatalogue,
+      fragments: fragmentCatalogue.fragments.map((fragment) =>
+        fragment.projectId === projectId && fragment.segment.id === segment.id
+          ? { ...fragment, segment }
+          : fragment,
+      ),
+    };
+  }
+
+  async function mutateCatalogueFragment(
+    projectId: string,
+    fragmentId: string,
+    mutation: FragmentMutation,
+  ): Promise<Segment> {
+    await controllers.get(projectId)?.flush();
+    const segment = await updateCatalogueFragment(
+      projectId,
+      fragmentId,
+      mutation,
+    );
+    if (workspace?.openProjects.some((project) => project.id === projectId)) {
+      workspace = {
+        ...workspace,
+        openProjects: workspace.openProjects.map((project) =>
+          project.id === projectId
+            ? {
+                ...project,
+                segments: project.segments.map((item) =>
+                  item.id === fragmentId ? segment : item,
+                ),
+              }
+            : project,
+        ),
+      };
+    }
+    replaceCatalogueSegment(projectId, segment);
+    return segment;
+  }
+
+  async function removeCatalogueFragment(
+    projectId: string,
+    fragmentId: string,
+  ): Promise<DeletedFragment> {
+    await controllers.get(projectId)?.flush();
+    const deleted = await deleteCatalogueFragment(projectId, fragmentId);
+    if (workspace?.openProjects.some((project) => project.id === projectId)) {
+      workspace = {
+        ...workspace,
+        openProjects: workspace.openProjects.map((project) =>
+          project.id === projectId
+            ? {
+                ...project,
+                selectedSegmentId:
+                  project.selectedSegmentId === fragmentId
+                    ? null
+                    : project.selectedSegmentId,
+                segments: project.segments.filter(
+                  (segment) => segment.id !== fragmentId,
+                ),
+              }
+            : project,
+        ),
+      };
+    }
+    if (fragmentCatalogue !== null) {
+      fragmentCatalogue = {
+        ...fragmentCatalogue,
+        fragments: fragmentCatalogue.fragments.filter(
+          (fragment) => fragment.segment.id !== fragmentId,
+        ),
+      };
+    }
+    return deleted;
+  }
+
+  async function restoreDeletedFragment(
+    deleted: DeletedFragment,
+  ): Promise<void> {
+    const segment = await restoreCatalogueFragment(deleted);
+    if (
+      workspace?.openProjects.some(
+        (project) => project.id === deleted.projectId,
+      )
+    ) {
+      workspace = {
+        ...workspace,
+        openProjects: workspace.openProjects.map((project) => {
+          if (project.id !== deleted.projectId) return project;
+          const segments = [...project.segments];
+          segments.splice(Math.min(deleted.index, segments.length), 0, segment);
+          return { ...project, segments };
+        }),
+      };
+    }
+    await refreshFragments();
+    replaceCatalogueSegment(deleted.projectId, segment);
+  }
+
+  async function removeManagedVideo(projectId: string): Promise<void> {
+    await controllers.get(projectId)?.flush();
+    applyWorkspace(await deleteManagedProject(projectId), false);
+    await refreshFragments();
   }
 
   function setSegmentPanelCollapsed(collapsed: boolean): void {
@@ -297,6 +471,7 @@
       ),
     };
     ensureControllers();
+    requestActiveThumbnails();
   }
 
   function saveStateFor(projectId: string): SaveState {
@@ -456,7 +631,10 @@
     closeJobEvents?.();
     closeJobEvents = connectJobEvents({
       onSnapshot: (snapshot) => {
-        if (!disposed) jobs = mergeJobSnapshot(jobs, snapshot);
+        if (!disposed) {
+          jobs = mergeJobSnapshot(jobs, snapshot);
+          requestActiveThumbnails();
+        }
       },
       onWarning: (warning) => {
         if (!disposed) jobConnectionWarning = warning;
@@ -472,6 +650,8 @@
       backendState = 'ready';
       void loadToolCapabilities();
       startJobEvents();
+      if (activeView === 'fragments') void refreshFragments();
+      else void refreshTags();
     } catch (error) {
       backendState = 'unavailable';
       errorMessage = describeError(error, 'Could not load the workspace');
@@ -584,6 +764,23 @@
           : mergeJobRecord(jobs, updated);
     } catch (error) {
       errorMessage = describeError(error, 'Could not retry inspection');
+    } finally {
+      retryingJobId = null;
+    }
+  }
+
+  async function retryCatalogueThumbnail(jobId: string): Promise<void> {
+    if (retryingJobId !== null) return;
+    retryingJobId = jobId;
+    try {
+      const updated = await retryJob(jobId);
+      jobs =
+        jobs === null
+          ? { jobs: [updated], errors: [] }
+          : mergeJobRecord(jobs, updated);
+      await refreshFragments();
+    } catch (error) {
+      fragmentsError = describeError(error, 'Could not retry thumbnails');
     } finally {
       retryingJobId = null;
     }
@@ -710,6 +907,8 @@
                 segmentsCollapsed={segmentPanelCollapsed}
                 onSegmentsCollapsedChange={setSegmentPanelCollapsed}
                 onBoundaryModeChange={setBoundaryMode}
+                tags={catalogueTags}
+                onCreateTag={createFragmentTag}
               />
             {/key}
           {:else}
@@ -739,8 +938,23 @@
           {importing}
           onImport={() => void importMp4()}
           onOpen={(projectId) => void reopenProject(projectId)}
+          onDelete={removeManagedVideo}
         />
       {/if}
+    {/snippet}
+
+    {#snippet fragments()}
+      <FragmentsPanel
+        catalogue={fragmentCatalogue}
+        loading={fragmentsLoading}
+        error={fragmentsError}
+        onRefresh={() => void refreshFragments()}
+        onUpdate={mutateCatalogueFragment}
+        onCreateTag={createFragmentTag}
+        onDelete={removeCatalogueFragment}
+        onRestore={restoreDeletedFragment}
+        onRetryThumbnail={(jobId) => void retryCatalogueThumbnail(jobId)}
+      />
     {/snippet}
   </EditorShell>
 </main>

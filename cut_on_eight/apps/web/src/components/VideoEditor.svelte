@@ -2,9 +2,11 @@
   import type {
     ProjectDocument,
     Segment,
+    TagDefinition,
     ThumbnailManifestV1,
   } from '@cut-on-eight/contracts';
   import { onDestroy, onMount, untrack } from 'svelte';
+  import type { Attachment } from 'svelte/attachments';
   import { sourceUrl } from '../lib/api.js';
   import type { RegisterVideoEditorControl } from '../lib/editor-control.js';
   import {
@@ -31,7 +33,7 @@
     nudgeBoundary,
     type BoundaryFocus,
   } from '../lib/trim-controller.js';
-  import BoundaryEditor from './BoundaryEditor.svelte';
+  import FragmentEditor from './FragmentEditor.svelte';
   import PrecisionTimeline, {
     type TimelineViewportChange,
   } from './PrecisionTimeline.svelte';
@@ -51,6 +53,8 @@
     thumbnailRetrying,
     onRetryThumbnails,
     onThumbnailLoadError,
+    tags,
+    onCreateTag,
   }: {
     project: ProjectDocument;
     onChange: (
@@ -68,6 +72,8 @@
     thumbnailRetrying: boolean;
     onRetryThumbnails: () => void;
     onThumbnailLoadError: () => void;
+    tags: TagDefinition[];
+    onCreateTag: (name: string) => Promise<TagDefinition>;
   } = $props();
 
   let workbench = $state<HTMLElement>();
@@ -93,6 +99,20 @@
   let viewportPersistenceTimer: ReturnType<typeof setTimeout> | null = null;
   let playbackCommandSequence = 0;
   let lastPublishedSeconds = untrack(() => project.playbackPositionSeconds);
+
+  const attachWorkbench: Attachment<HTMLElement> = (element) => {
+    workbench = element;
+    return () => {
+      if (workbench === element) workbench = undefined;
+    };
+  };
+
+  const attachVideo: Attachment<HTMLVideoElement> = (element) => {
+    video = element;
+    return () => {
+      if (video === element) video = undefined;
+    };
+  };
 
   const displayDuration = $derived(
     mediaDuration > 0 ? mediaDuration : (project.source.durationSeconds ?? 0),
@@ -391,6 +411,18 @@
     }));
   }
 
+  function updateSegmentMetadata(
+    segmentId: string,
+    change: Pick<Segment, 'title' | 'tagIds' | 'exportSelected'>,
+  ): void {
+    updateProject((current) => ({
+      ...current,
+      segments: current.segments.map((segment) =>
+        segment.id === segmentId ? { ...segment, ...change } : segment,
+      ),
+    }));
+  }
+
   function togglePauseAfterCreation(checked: boolean): void {
     updateProject((current) => ({
       ...current,
@@ -648,12 +680,12 @@
       role="region"
       aria-label="Video and timeline controls"
       tabindex="0"
-      bind:this={workbench}
+      {@attach attachWorkbench}
     >
       <!-- User-selected source files do not include a separately managed caption track. -->
       <!-- svelte-ignore a11y_media_has_caption -->
       <video
-        bind:this={video}
+        {@attach attachVideo}
         src={sourceUrl(project.id)}
         controls={!interactionLocked}
         preload="metadata"
@@ -710,14 +742,18 @@
       />
 
       {#if selectedSegment !== null}
-        <BoundaryEditor
+        <FragmentEditor
           segment={selectedSegment}
+          {tags}
           focus={boundaryFocus}
           frameSeconds={frameStep.seconds}
           approximate={frameStep.approximate}
           error={segmentError}
           onFocus={(edge) => setBoundaryFocus(focusBoundary(project, edge))}
           onNudge={nudgeFocusedBoundary}
+          onMetadataChange={(change) =>
+            updateSegmentMetadata(selectedSegment.id, change)}
+          {onCreateTag}
         />
       {/if}
     </div>

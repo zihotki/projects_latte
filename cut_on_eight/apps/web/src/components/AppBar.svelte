@@ -31,6 +31,11 @@
       aria-current={activeView === 'library' ? 'page' : undefined}
       onclick={() => onViewChange('library')}>Library</button
     >
+    <button
+      type="button"
+      aria-current={activeView === 'fragments' ? 'page' : undefined}
+      onclick={() => onViewChange('fragments')}>Fragments</button
+    >
   </nav>
 
   <div class="top-tools">

@@ -15,6 +15,8 @@ const segment: Segment = {
   startSeconds: 4,
   endSeconds: 8,
   exportSelected: true,
+  title: null,
+  tagIds: [],
 };
 
 describe('playback controller', () => {

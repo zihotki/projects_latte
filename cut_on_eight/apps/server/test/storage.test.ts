@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   symlink,
   unlink,
   writeFile,
@@ -26,6 +27,7 @@ import {
 } from '../src/storage/library-repository.js';
 import { StorageLayout } from '../src/storage/layout.js';
 import { ProjectRepository } from '../src/storage/project-repository.js';
+import { ProjectDeletion } from '../src/storage/project-deletion.js';
 import {
   WorkspaceRepository,
   type WorkspaceDocument,
@@ -46,7 +48,7 @@ async function createRoot(): Promise<string> {
 
 function projectDocument(): ProjectDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     id: projectId,
     source: {
       fileName: sourceFileName,
@@ -113,6 +115,42 @@ afterEach(async () => {
 });
 
 describe('atomic managed storage', () => {
+  it('restores a deletion tombstone after rolling back a prepared catalog transaction', async () => {
+    const root = await createRoot();
+    const layout = new StorageLayout(root);
+    const library = new LibraryRepository(layout);
+    const workspace = new WorkspaceRepository(layout);
+    const catalog = new CatalogRepository(layout, library, workspace);
+    const paths = layout.forProject(projectId, sourceFileName);
+    const beforeLibrary = libraryDocument(layout);
+    const beforeWorkspace = workspaceDocument();
+    await mkdir(paths.directory, { recursive: true });
+    await writeFile(paths.source, 'managed source');
+    await library.save(emptyLibrary);
+    await workspace.save(emptyWorkspace);
+    await writeJsonAtomic(layout.catalogTransactionFile, {
+      schemaVersion: 1,
+      phase: 'prepared',
+      before: { library: beforeLibrary, workspace: beforeWorkspace },
+      after: { library: emptyLibrary, workspace: emptyWorkspace },
+    });
+    const relativeDirectory = paths.relativeSource.slice(
+      0,
+      paths.relativeSource.lastIndexOf('/'),
+    );
+    const tombstone = join(root, `.deleting-${relativeDirectory}`);
+    await rename(paths.directory, tombstone);
+
+    await new ProjectDeletion(layout, library, workspace, catalog).recover();
+
+    await expect(readFile(paths.source, 'utf8')).resolves.toBe(
+      'managed source',
+    );
+    await expect(library.read()).resolves.toEqual(beforeLibrary);
+    await expect(workspace.read()).resolves.toEqual(beforeWorkspace);
+    await expect(access(tombstone)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('persists compact thumbnail jobs as separate atomic records', async () => {
     const root = await createRoot();
     const layout = new StorageLayout(root);
@@ -277,7 +315,7 @@ describe('atomic managed storage', () => {
     await expect(
       new ProjectRepository(layout).read(projectId, paths.relativeSource),
     ).resolves.toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       id: projectId,
       source: { fileName: sourceFileName },
       segments: [],
@@ -324,7 +362,7 @@ describe('atomic managed storage', () => {
     const migrated = await projects.read(projectId, paths.relativeSource);
 
     expect(migrated).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       source: {
         frameRateNumerator: 30_000,
         frameRateDenominator: 1_001,

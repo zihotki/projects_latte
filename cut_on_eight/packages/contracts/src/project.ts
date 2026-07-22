@@ -1,11 +1,28 @@
 import { z } from 'zod';
 
+const legacySegmentSchema = z.strictObject({
+  id: z.string().uuid(),
+  startSeconds: z.number().finite().nonnegative(),
+  endSeconds: z.number().finite().positive(),
+  exportSelected: z.boolean(),
+});
+
 export const segmentSchema = z
   .strictObject({
     id: z.string().uuid(),
     startSeconds: z.number().finite().nonnegative(),
     endSeconds: z.number().finite().positive(),
     exportSelected: z.boolean(),
+    title: z
+      .string()
+      .transform((value) => value.trim())
+      .nullable()
+      .transform((value) => value || null),
+    tagIds: z
+      .array(z.string().uuid())
+      .refine((ids) => new Set(ids).size === ids.length, {
+        message: 'Segment tag IDs must be unique',
+      }),
   })
   .refine((segment) => segment.endSeconds > segment.startSeconds, {
     message: 'Segment end must be after its start',
@@ -25,9 +42,10 @@ const commonProjectFields = {
   }),
 } as const;
 
-const legacyProjectDocumentSchema = z.strictObject({
+const legacyProjectDocumentV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   ...commonProjectFields,
+  segments: z.array(legacySegmentSchema),
   source: z.strictObject({
     fileName: z.string().min(1),
     durationSeconds: z.number().finite().positive().nullable(),
@@ -36,6 +54,14 @@ const legacyProjectDocumentSchema = z.strictObject({
     frameRate: z.string().nullable(),
     hasAudio: z.boolean().nullable(),
   }),
+});
+
+const legacyProjectDocumentV2Schema = z.strictObject({
+  schemaVersion: z.literal(2),
+  ...commonProjectFields,
+  segments: z.array(legacySegmentSchema),
+  source: z.unknown(),
+  editor: z.unknown(),
 });
 
 export const frameRateReliabilitySchema = z.enum(['reliable', 'approximate']);
@@ -82,7 +108,7 @@ const sourceSchema = z
 
 export const projectDocumentSchema = z
   .strictObject({
-    schemaVersion: z.literal(2),
+    schemaVersion: z.literal(3),
     ...commonProjectFields,
     source: sourceSchema,
     editor: z.strictObject({
@@ -141,11 +167,28 @@ export function migrateProjectDocument(value: unknown): ProjectDocument {
   const current = projectDocumentSchema.safeParse(value);
   if (current.success) return current.data;
 
-  const legacy = legacyProjectDocumentSchema.parse(value);
+  const version =
+    typeof value === 'object' && value !== null && 'schemaVersion' in value
+      ? value.schemaVersion
+      : undefined;
+  if (version === 2) {
+    const legacy = legacyProjectDocumentV2Schema.parse(value);
+    return projectDocumentSchema.parse({
+      ...legacy,
+      schemaVersion: 3,
+      segments: legacy.segments.map((segment) => ({
+        ...segment,
+        title: null,
+        tagIds: [],
+      })),
+    });
+  }
+
+  const legacy = legacyProjectDocumentV1Schema.parse(value);
   const frameRate = parseLegacyFrameRate(legacy.source.frameRate);
   return projectDocumentSchema.parse({
     ...legacy,
-    schemaVersion: 2,
+    schemaVersion: 3,
     source: {
       fileName: legacy.source.fileName,
       durationSeconds: legacy.source.durationSeconds,
@@ -159,6 +202,11 @@ export function migrateProjectDocument(value: unknown): ProjectDocument {
       inspectorVersion: null,
     },
     editor: { timelineZoom: 1, timelineOffsetSeconds: 0 },
+    segments: legacy.segments.map((segment) => ({
+      ...segment,
+      title: null,
+      tagIds: [],
+    })),
   });
 }
 

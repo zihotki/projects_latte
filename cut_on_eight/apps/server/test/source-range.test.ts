@@ -23,7 +23,7 @@ async function fixture(): Promise<{ config: ServerConfig }> {
   const layout = new StorageLayout(dataRoot);
   const paths = layout.forProject(projectId, 'Managed Source.mp4');
   const project: ProjectDocument = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     id: projectId,
     source: {
       fileName: 'Managed Source.mp4',

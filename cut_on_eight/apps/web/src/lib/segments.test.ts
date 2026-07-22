@@ -19,6 +19,17 @@ function emptyState(): SegmentState {
   return { segments: [], selectedSegmentId: null };
 }
 
+function segment(id: string, startSeconds: number, endSeconds: number) {
+  return {
+    id,
+    startSeconds,
+    endSeconds,
+    exportSelected: true,
+    title: null,
+    tagIds: [],
+  };
+}
+
 describe('segment operations', () => {
   it('creates segments in creation order without changing playback selection', () => {
     let state = emptyState();
@@ -61,30 +72,10 @@ describe('segment operations', () => {
 
   it('sorts a copy chronologically by start, end, and ID', () => {
     const state = [
-      {
-        id: segmentIds[3],
-        startSeconds: 8,
-        endSeconds: 12,
-        exportSelected: true,
-      },
-      {
-        id: segmentIds[2],
-        startSeconds: 2,
-        endSeconds: 7,
-        exportSelected: true,
-      },
-      {
-        id: segmentIds[1],
-        startSeconds: 2,
-        endSeconds: 6,
-        exportSelected: true,
-      },
-      {
-        id: segmentIds[0],
-        startSeconds: 2,
-        endSeconds: 6,
-        exportSelected: true,
-      },
+      segment(segmentIds[3], 8, 12),
+      segment(segmentIds[2], 2, 7),
+      segment(segmentIds[1], 2, 6),
+      segment(segmentIds[0], 2, 6),
     ];
 
     const sorted = sortSegmentsByStart(state);
@@ -100,20 +91,7 @@ describe('segment operations', () => {
   });
 
   it('deletes the selected segment and clears the selection without mutation', () => {
-    const state = [
-      {
-        id: segmentIds[0],
-        startSeconds: 1,
-        endSeconds: 2,
-        exportSelected: true,
-      },
-      {
-        id: segmentIds[1],
-        startSeconds: 3,
-        endSeconds: 4,
-        exportSelected: true,
-      },
-    ];
+    const state = [segment(segmentIds[0], 1, 2), segment(segmentIds[1], 3, 4)];
     const input = { segments: state, selectedSegmentId: segmentIds[0] };
 
     const result = deleteSelectedSegment(input);
@@ -128,20 +106,7 @@ describe('segment operations', () => {
 
   it('deletes the most recently created segment rather than the latest by time', () => {
     const input = {
-      segments: [
-        {
-          id: segmentIds[0],
-          startSeconds: 10,
-          endSeconds: 12,
-          exportSelected: true,
-        },
-        {
-          id: segmentIds[1],
-          startSeconds: 2,
-          endSeconds: 4,
-          exportSelected: true,
-        },
-      ],
+      segments: [segment(segmentIds[0], 10, 12), segment(segmentIds[1], 2, 4)],
       selectedSegmentId: segmentIds[0],
     };
 
@@ -172,20 +137,7 @@ describe('segment operations', () => {
 
   it('rejects a third overlap without mutating state', () => {
     const input = {
-      segments: [
-        {
-          id: segmentIds[0],
-          startSeconds: 1,
-          endSeconds: 5,
-          exportSelected: true,
-        },
-        {
-          id: segmentIds[1],
-          startSeconds: 2,
-          endSeconds: 6,
-          exportSelected: true,
-        },
-      ],
+      segments: [segment(segmentIds[0], 1, 5), segment(segmentIds[1], 2, 6)],
       selectedSegmentId: segmentIds[1],
     };
 
@@ -197,14 +149,7 @@ describe('segment operations', () => {
 
   it('clears selection when deleting the most recent selected segment', () => {
     const input = {
-      segments: [
-        {
-          id: segmentIds[0],
-          startSeconds: 1,
-          endSeconds: 2,
-          exportSelected: true,
-        },
-      ],
+      segments: [segment(segmentIds[0], 1, 2)],
       selectedSegmentId: segmentIds[0],
     };
 

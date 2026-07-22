@@ -22,7 +22,7 @@ function emptyProject(
   managedSourceRelativePath: string,
 ): ProjectDocument {
   return projectDocumentSchema.parse({
-    schemaVersion: 2,
+    schemaVersion: 3,
     id: projectId,
     source: {
       fileName: posix.basename(managedSourceRelativePath),

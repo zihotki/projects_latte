@@ -19,12 +19,19 @@ function segment(
   startSeconds: number,
   endSeconds: number,
 ): Segment {
-  return { id, startSeconds, endSeconds, exportSelected: true };
+  return {
+    id,
+    startSeconds,
+    endSeconds,
+    exportSelected: true,
+    title: null,
+    tagIds: [],
+  };
 }
 
 function project(segments = [segment(ids[0], 1, 5)]): ProjectDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     id: '20000000-0000-4000-8000-000000000001',
     source: {
       fileName: 'dance.mp4',
