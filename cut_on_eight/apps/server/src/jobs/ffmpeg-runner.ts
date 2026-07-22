@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { EventEmitter } from 'node:events';
+import { open, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   spriteColumns,
@@ -160,38 +161,131 @@ export class FfmpegRunner implements FfmpegRunnerLike {
     private readonly run: RunProcess = createBoundedFfmpegProcessRunner(),
   ) {}
 
-  generateSprites(request: GenerateSpritesRequest): Promise<void> {
-    const frameRate = 1 / request.plan.intervalSeconds;
-    const filter = [
-      `fps=${frameRate}`,
-      `scale=${thumbnailWidth}:${thumbnailHeight}:force_original_aspect_ratio=decrease`,
-      `pad=${thumbnailWidth}:${thumbnailHeight}:(ow-iw)/2:(oh-ih)/2`,
-      `tile=${spriteColumns}x${spriteRows}:nb_frames=${spriteColumns * spriteRows}:padding=0:margin=0`,
-    ].join(',');
-    return this.run(
-      this.executable,
-      [
-        '-hide_banner',
-        '-loglevel',
-        'error',
-        '-nostdin',
-        '-y',
-        '-i',
-        request.sourcePath,
-        '-an',
-        '-vf',
-        filter,
-        '-frames:v',
-        String(request.plan.pageCount),
-        '-c:v',
-        'libwebp',
-        '-lossless',
-        '0',
-        '-quality',
-        '72',
-        join(request.destinationDirectory, 'sprite-%03d.webp'),
-      ],
-      request.signal,
-    );
+  async generateSprites(request: GenerateSpritesRequest): Promise<void> {
+    const stagingBundle = join(request.destinationDirectory, '.sprites.ivf');
+    try {
+      await this.run(
+        this.executable,
+        createFfmpegSpriteArguments(request, stagingBundle),
+        request.signal,
+      );
+      const pages = webpPagesFromIvf(
+        await readFile(stagingBundle),
+        request.plan.pageCount,
+      );
+      await Promise.all(
+        pages.map((page, index) =>
+          writeDurablePage(
+            join(
+              request.destinationDirectory,
+              `sprite-${String(index + 1).padStart(3, '0')}.webp`,
+            ),
+            page,
+          ),
+        ),
+      );
+    } finally {
+      await unlink(stagingBundle).catch(() => undefined);
+    }
+  }
+}
+
+export function createFfmpegSpriteArguments(
+  request: GenerateSpritesRequest,
+  stagingBundle: string,
+): readonly string[] {
+  const frameRate = 1 / request.plan.intervalSeconds;
+  const filter = [
+    `fps=${frameRate}`,
+    `scale=${thumbnailWidth}:${thumbnailHeight}:force_original_aspect_ratio=decrease`,
+    `pad=${thumbnailWidth}:${thumbnailHeight}:(ow-iw)/2:(oh-ih)/2`,
+    `tile=${spriteColumns}x${spriteRows}:nb_frames=${spriteColumns * spriteRows}:padding=0:margin=0`,
+  ].join(',');
+  return [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-nostdin',
+    '-y',
+    '-i',
+    request.sourcePath,
+    '-an',
+    '-vf',
+    filter,
+    '-frames:v',
+    String(request.plan.pageCount),
+    '-c:v',
+    'libvpx',
+    '-deadline',
+    'good',
+    '-cpu-used',
+    '4',
+    '-crf',
+    '32',
+    '-b:v',
+    '0',
+    '-g',
+    '1',
+    '-f',
+    'ivf',
+    stagingBundle,
+  ];
+}
+
+export function webpPagesFromIvf(
+  bytes: Uint8Array,
+  expectedPages: number,
+): readonly Buffer[] {
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (
+    buffer.length < 32 ||
+    buffer.toString('ascii', 0, 4) !== 'DKIF' ||
+    buffer.readUInt16LE(6) !== 32 ||
+    buffer.toString('ascii', 8, 12) !== 'VP80'
+  ) {
+    throw invalidIvf();
+  }
+
+  const pages: Buffer[] = [];
+  let offset = 32;
+  while (offset < buffer.length) {
+    if (offset + 12 > buffer.length) throw invalidIvf();
+    const payloadSize = buffer.readUInt32LE(offset);
+    const payloadStart = offset + 12;
+    const payloadEnd = payloadStart + payloadSize;
+    if (payloadSize < 10 || payloadEnd > buffer.length) throw invalidIvf();
+    pages.push(wrapVp8AsWebp(buffer.subarray(payloadStart, payloadEnd)));
+    offset = payloadEnd;
+  }
+  if (pages.length !== expectedPages) throw invalidIvf();
+  return pages;
+}
+
+function wrapVp8AsWebp(payload: Buffer): Buffer {
+  const padding = payload.length % 2;
+  const result = Buffer.alloc(20 + payload.length + padding);
+  result.write('RIFF', 0, 'ascii');
+  result.writeUInt32LE(result.length - 8, 4);
+  result.write('WEBPVP8 ', 8, 'ascii');
+  result.writeUInt32LE(payload.length, 16);
+  payload.copy(result, 20);
+  return result;
+}
+
+function invalidIvf(): FfmpegError {
+  return new FfmpegError(
+    'ffmpeg_invalid_output',
+    'FFmpeg produced an incomplete thumbnail sprite bundle.',
+    true,
+  );
+}
+
+async function writeDurablePage(path: string, bytes: Buffer): Promise<void> {
+  const handle = await open(path, 'wx', 0o600);
+  try {
+    await handle.writeFile(bytes);
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
