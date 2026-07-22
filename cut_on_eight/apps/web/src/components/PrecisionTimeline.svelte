@@ -304,6 +304,7 @@
             class:selected={item.segment.id === selectedSegmentId}
             type="button"
             aria-label={`Select ${durationStatus === 'expected' ? '' : `${durationStatus} `}segment from ${item.segment.startSeconds.toFixed(2)} to ${item.segment.endSeconds.toFixed(2)} seconds`}
+            data-segment-focus-id={item.segment.id}
             data-duration-status={durationStatus}
             style:left={`${scale.timeToPixel(item.segment.startSeconds)}px`}
             style:width={`${Math.max(3, scale.timeToPixel(item.segment.endSeconds) - scale.timeToPixel(item.segment.startSeconds))}px`}

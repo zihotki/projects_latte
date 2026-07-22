@@ -45,6 +45,9 @@
             class="segment-list-select"
             type="button"
             aria-pressed={segment.id === selectedSegmentId}
+            aria-label={`Select segment ${index + 1} for keyboard playback`}
+            data-editor-playback-surface
+            data-segment-focus-id={segment.id}
             onclick={() => onSelect(segment)}
           >
             <span>Segment {index + 1}</span>

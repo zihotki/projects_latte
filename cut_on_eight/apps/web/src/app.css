@@ -440,8 +440,7 @@ button:disabled {
     outline-color 120ms ease,
     box-shadow 120ms ease;
 }
-.media-workbench:focus-visible,
-.media-workbench:focus-within {
+.media-workbench.keyboard-owner:focus {
   outline-color: #72a7c8;
   box-shadow: 0 0 0 1px #0b0d10;
 }
@@ -484,8 +483,7 @@ button:disabled {
   text-transform: uppercase;
   transition: opacity 120ms ease;
 }
-.media-workbench:focus-visible .keyboard-target,
-.media-workbench:focus-within .keyboard-target {
+.media-workbench.keyboard-owner:focus .keyboard-target {
   opacity: 1;
 }
 .pending-label {
@@ -918,6 +916,11 @@ kbd {
   background: transparent;
   text-align: left;
   cursor: pointer;
+}
+.segment-list-select[aria-pressed='true']:focus,
+.segment-range.selected:focus {
+  outline: 2px solid #72a7c8;
+  outline-offset: 2px;
 }
 .segment-list-select span,
 .segment-list-select strong,

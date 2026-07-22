@@ -10,6 +10,11 @@
   import { sourceUrl } from '../lib/api.js';
   import type { RegisterVideoEditorControl } from '../lib/editor-control.js';
   import {
+    resolveEditorKeyboardContext,
+    shouldDelegateSegmentSurfaceActivation,
+    shouldRouteEditorKeyboard,
+  } from '../lib/editor-keyboard-context.js';
+  import {
     createSegment,
     deleteMostRecentSegment,
     deleteSelectedSegment,
@@ -76,6 +81,7 @@
     onCreateTag: (name: string) => Promise<TagDefinition>;
   } = $props();
 
+  let editor = $state<HTMLElement>();
   let workbench = $state<HTMLElement>();
   let video = $state<HTMLVideoElement>();
   let currentSeconds = $state(untrack(() => project.playbackPositionSeconds));
@@ -100,6 +106,13 @@
   let playbackCommandSequence = 0;
   let lastPublishedSeconds = untrack(() => project.playbackPositionSeconds);
 
+  const attachEditor: Attachment<HTMLElement> = (element) => {
+    editor = element;
+    return () => {
+      if (editor === element) editor = undefined;
+    };
+  };
+
   const attachWorkbench: Attachment<HTMLElement> = (element) => {
     workbench = element;
     return () => {
@@ -123,6 +136,9 @@
     ) ?? null,
   );
   const frameStep = $derived(boundaryStep(project, false));
+  const keyboardContext = $derived(
+    resolveEditorKeyboardContext(project.selectedSegmentId, boundaryFocus),
+  );
 
   onMount(() =>
     registerControl({
@@ -358,23 +374,36 @@
       selectedSegmentId: segment.id,
     }));
     void applyPlaybackDecision(selectPlaybackSegment(playbackState, segment));
-    queueMicrotask(() =>
-      document
-        .querySelector(`[data-segment-id="${segment.id}"]`)
-        ?.scrollIntoView({ block: 'nearest' }),
-    );
+    queueMicrotask(() => focusSegmentSurface(segment.id));
   }
 
-  function clearSegmentSelection(seconds = currentSeconds): void {
+  function focusSegmentSurface(segmentId: string): void {
+    const listSurface = editor?.querySelector<HTMLElement>(
+      `[data-editor-playback-surface][data-segment-focus-id="${segmentId}"]`,
+    );
+    const surface =
+      listSurface ??
+      editor?.querySelector<HTMLElement>(
+        `.segment-range[data-segment-focus-id="${segmentId}"]`,
+      );
+    surface?.focus({ preventScroll: true });
+    surface?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function clearSegmentSelection(
+    seconds = currentSeconds,
+    preservePlayback = false,
+  ): void {
     setBoundaryFocus(null);
     updateProject((current) =>
       current.selectedSegmentId === null
         ? current
         : { ...current, selectedSegmentId: null },
     );
-    void applyPlaybackDecision(
-      clearSelection(playbackState, displayDuration, seconds),
-    );
+    const decision = clearSelection(playbackState, displayDuration, seconds);
+    if (preservePlayback) playbackState = decision.state;
+    else void applyPlaybackDecision(decision);
+    workbench?.focus({ preventScroll: true });
   }
 
   function seek(seconds: number): void {
@@ -464,11 +493,17 @@
   }
 
   function isNativeButtonActivation(event: KeyboardEvent): boolean {
-    return (
-      (event.code === 'Space' || event.key === 'Enter') &&
-      event.target instanceof Element &&
-      event.target.closest('button') !== null
-    );
+    if (event.code !== 'Space' && event.key !== 'Enter') return false;
+    if (!(event.target instanceof Element)) return false;
+
+    const button = event.target.closest<HTMLButtonElement>('button');
+    if (button === null) return false;
+
+    return !shouldDelegateSegmentSurfaceActivation({
+      key: event.code === 'Space' ? 'Space' : event.key,
+      focusedSegmentId: button.dataset.segmentFocusId ?? null,
+      selectedSegmentId: project.selectedSegmentId,
+    });
   }
 
   function isSaveShortcut(event: KeyboardEvent): boolean {
@@ -488,17 +523,19 @@
       return;
     }
 
-    if (workbench?.contains(document.activeElement)) handleKeyboard(event);
+    if (
+      shouldRouteEditorKeyboard({
+        focusWithinEditor: editor?.contains(document.activeElement) === true,
+        nativeInput: isTextEntryTarget(event.target),
+        nativeButtonActivation: isNativeButtonActivation(event),
+      })
+    ) {
+      handleKeyboard(event);
+    }
   }
 
   function handleKeyboard(event: KeyboardEvent): void {
-    if (
-      interactionLocked ||
-      event.defaultPrevented ||
-      isTextEntryTarget(event.target) ||
-      isNativeButtonActivation(event)
-    )
-      return;
+    if (interactionLocked || event.defaultPrevented) return;
 
     if (event.metaKey || event.ctrlKey || event.altKey) return;
 
@@ -513,6 +550,10 @@
       if (escaped.focus !== boundaryFocus) {
         event.preventDefault();
         setBoundaryFocus(escaped.focus);
+        const selectedId = project.selectedSegmentId;
+        if (escaped.focus === null && selectedId !== null) {
+          queueMicrotask(() => focusSegmentSurface(selectedId));
+        }
         return;
       }
       if (escaped.project !== project) {
@@ -625,14 +666,24 @@
 
   function handleVideoClick(event: MouseEvent): void {
     workbench?.focus({ preventScroll: true });
-    if (
-      video === undefined ||
-      project.selectedSegmentId === null ||
-      event.offsetY >= Math.max(0, video.clientHeight - 48)
-    ) {
+    if (video === undefined || project.selectedSegmentId === null) return;
+    const nativeControlsClick =
+      event.offsetY >= Math.max(0, video.clientHeight - 48);
+    clearSegmentSelection(currentSeconds, nativeControlsClick);
+  }
+
+  function handleEditorFocusIn(event: FocusEvent): void {
+    if (!(event.target instanceof Element)) return;
+    const surface = event.target.closest<HTMLElement>(
+      '[data-segment-focus-id]',
+    );
+    const segmentId = surface?.dataset.segmentFocusId;
+    if (segmentId === undefined || segmentId === project.selectedSegmentId) {
       return;
     }
-    clearSegmentSelection();
+
+    const segment = project.segments.find((item) => item.id === segmentId);
+    if (segment !== undefined) selectSegment(segment);
   }
 
   function handleSeeked(): void {
@@ -669,14 +720,20 @@
 
 <div
   class={['video-editor', segmentsCollapsed && 'segments-collapsed']}
+  data-keyboard-context={keyboardContext.kind}
   inert={interactionLocked}
   aria-busy={interactionLocked}
+  onfocusin={handleEditorFocusIn}
+  {@attach attachEditor}
 >
   <section class="video-workbench" aria-label="Video editor">
     <!-- This custom media surface intentionally owns keyboard playback commands. -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div
-      class="media-workbench"
+      class={[
+        'media-workbench',
+        keyboardContext.kind === 'source' && 'keyboard-owner',
+      ]}
       role="region"
       aria-label="Video and timeline controls"
       tabindex="0"
