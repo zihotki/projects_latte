@@ -6,18 +6,27 @@ export { healthResponseSchema } from './health.js';
 export type { HealthResponse } from './health.js';
 export {
   capabilitiesSchema,
+  inspectionJobRecordSchema,
   jobRecordSchema,
   jobSnapshotSchema,
   jobStateSchema,
   jobTypeSchema,
+  thumbnailJobRecordSchema,
 } from './jobs.js';
 export type {
   Capabilities,
+  InspectionJobRecord,
   JobRecord,
   JobSnapshot,
   JobState,
   JobType,
+  ThumbnailJobRecord,
 } from './jobs.js';
+export {
+  sourceFingerprintSchema,
+  thumbnailManifestV1Schema,
+} from './thumbnails.js';
+export type { ThumbnailManifestV1 } from './thumbnails.js';
 export {
   frameRateReliabilitySchema,
   frameStepSeconds,

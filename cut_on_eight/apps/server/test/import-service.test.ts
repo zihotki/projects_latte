@@ -411,6 +411,51 @@ describe('transactional managed import', () => {
     await expect(access(stale)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('restores one thumbnail job for an inspected project during recovery', async () => {
+    const source = await createMp4();
+    const dataRoot = await createRoot('cut-on-eight-thumbnail-recovery-');
+    const layout = new StorageLayout(dataRoot);
+    const service = createService(layout, source);
+    await service.selectAndImport();
+
+    const paths = layout.forProject(projectId, 'Cross Body Lead.mp4');
+    const projects = new ProjectRepository(layout);
+    const current = await projects.readRequired(
+      projectId,
+      paths.relativeSource,
+    );
+    await projects.save(projectId, paths.relativeSource, {
+      ...current,
+      source: {
+        ...current.source,
+        durationSeconds: 12,
+        width: 1280,
+        height: 720,
+        hasAudio: true,
+        inspectedAt: now.toISOString(),
+        inspectorVersion: 'ffprobe-v1',
+      },
+    });
+    await rm(paths.jobsDirectory, { recursive: true, force: true });
+
+    await service.recover();
+    await service.recover();
+
+    const jobFiles = await readdir(paths.jobsDirectory);
+    expect(jobFiles).toEqual([`${jobId}.json`]);
+    expect(
+      JSON.parse(
+        await readFile(join(paths.jobsDirectory, jobFiles[0]!), 'utf8'),
+      ),
+    ).toMatchObject({
+      projectId,
+      type: 'generate-thumbnails',
+      state: 'queued',
+      generatorVersion: 'thumbnail-overview-v1',
+      sourceFingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+    });
+  });
+
   it('reconciles a promoted import after a crash before catalog commit', async () => {
     const source = await createMp4();
     const dataRoot = await createRoot('cut-on-eight-recovery-');

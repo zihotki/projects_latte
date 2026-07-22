@@ -19,6 +19,7 @@ import {
   writeJsonAtomic,
 } from '../src/storage/atomic-json.js';
 import { CatalogRepository } from '../src/storage/catalog-repository.js';
+import { JobRepository } from '../src/jobs/job-repository.js';
 import {
   LibraryRepository,
   type LibraryDocument,
@@ -34,6 +35,7 @@ const projectId = '10000000-0000-4000-8000-000000000001';
 const sourceFileName = 'Cross Body Lead.mp4';
 const secondProjectId = '10000000-0000-4000-8000-000000000002';
 const secondSourceFileName = 'Inside Turn.mp4';
+const thumbnailJobId = '20000000-0000-4000-8000-000000000001';
 const roots: string[] = [];
 
 async function createRoot(): Promise<string> {
@@ -111,6 +113,39 @@ afterEach(async () => {
 });
 
 describe('atomic managed storage', () => {
+  it('persists compact thumbnail jobs as separate atomic records', async () => {
+    const root = await createRoot();
+    const layout = new StorageLayout(root);
+    const paths = layout.forProject(projectId, sourceFileName);
+    const jobs = new JobRepository(
+      layout,
+      () => thumbnailJobId,
+      () => new Date('2026-07-22T10:00:00.000Z'),
+    );
+
+    await jobs.ensureThumbnailJob(projectId, paths.directory, {
+      generatorVersion: 'thumbnail-overview-v1',
+      sourceFingerprint: 'sha256:source',
+    });
+
+    expect(await readdir(paths.jobsDirectory)).toEqual([
+      `${thumbnailJobId}.json`,
+    ]);
+    expect(
+      JSON.parse(
+        await readFile(
+          join(paths.jobsDirectory, `${thumbnailJobId}.json`),
+          'utf8',
+        ),
+      ),
+    ).toMatchObject({
+      type: 'generate-thumbnails',
+      generatorVersion: 'thumbnail-overview-v1',
+      sourceFingerprint: 'sha256:source',
+      state: 'queued',
+    });
+  });
+
   it('atomically replaces JSON without leaving temporary files', async () => {
     const root = await createRoot();
     const target = join(root, '_system', 'workspace.json');

@@ -9,6 +9,7 @@ import type { ProbeResult, ProbeRunner } from '../src/jobs/ffprobe-runner.js';
 import { ProbeError } from '../src/jobs/ffprobe-runner.js';
 import { JobQueue } from '../src/jobs/job-queue.js';
 import { JobRepository } from '../src/jobs/job-repository.js';
+import { thumbnailJobIdentity } from '../src/jobs/thumbnail-job.js';
 import {
   LibraryRepository,
   type LibraryEntry,
@@ -102,9 +103,12 @@ async function fixture(ids = [firstJobId]): Promise<{
     project(secondId, 'Second.mp4'),
   );
   const availableIds = [...ids];
+  let generatedId = 0;
   const jobs = new JobRepository(
     layout,
-    () => availableIds.shift() ?? secondJobId,
+    () =>
+      availableIds.shift() ??
+      `30000000-0000-4000-8000-${String(++generatedId).padStart(12, '0')}`,
     (() => {
       let tick = 0;
       return () => new Date(Date.UTC(2026, 6, 21, 10, 0, tick++));
@@ -214,9 +218,22 @@ describe('durable inspection queue', () => {
     await queue.waitForIdle();
 
     expect(queue.snapshot()).toMatchObject({
-      jobs: [{ projectId: firstId, state: 'completed' }],
       errors: [{ code: 'corrupt_job_record', projectId: secondId }],
     });
+    expect(queue.snapshot().jobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          projectId: firstId,
+          state: 'completed',
+          type: 'inspect-source',
+        }),
+        expect.objectContaining({
+          projectId: firstId,
+          state: 'queued',
+          type: 'generate-thumbnails',
+        }),
+      ]),
+    );
     expect(await readFile(corruptFile)).toEqual(corruptBytes);
   });
 
@@ -346,10 +363,15 @@ describe('durable inspection queue', () => {
     resolvers.shift()!(metadata);
     await queue.waitForIdle();
 
-    expect(queue.snapshot().jobs.map((job) => job.state)).toEqual([
-      'completed',
-      'completed',
-    ]);
+    expect(
+      queue
+        .snapshot()
+        .jobs.filter((job) => job.type === 'inspect-source')
+        .map((job) => job.state),
+    ).toEqual(['completed', 'completed']);
+    expect(
+      queue.snapshot().jobs.filter((job) => job.type === 'generate-thumbnails'),
+    ).toHaveLength(2);
     await expect(
       projects.readRequired(firstId, entries[0]!.managedSourcePath),
     ).resolves.toMatchObject({ source: metadata });
@@ -493,5 +515,96 @@ describe('durable inspection queue', () => {
     });
     await app.close();
     expect(entries[0]!.id).toBe(firstId);
+  });
+
+  it('queues thumbnail generation once after usable inspection', async () => {
+    const { entries, jobs, layout, projects } = await fixture();
+    await jobs.createQueuedInspection(
+      firstId,
+      layout.forProject(firstId, 'First.mp4').directory,
+    );
+    const queue = new JobQueue(
+      layout,
+      new LibraryRepository(layout),
+      jobs,
+      { isAvailable: async () => true, inspect: async () => metadata },
+      updater(projects, entries),
+    );
+
+    await queue.recover();
+    await queue.waitForIdle();
+    await queue.refresh();
+
+    const thumbnailJobs = queue
+      .snapshot()
+      .jobs.filter((job) => job.type === 'generate-thumbnails');
+    expect(thumbnailJobs).toHaveLength(1);
+    expect(thumbnailJobs[0]).toMatchObject({
+      state: 'queued',
+      generatorVersion: 'thumbnail-overview-v1',
+      sourceFingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+    });
+  });
+
+  it('deduplicates thumbnail jobs by source fingerprint and generator version', async () => {
+    const { entries, jobs, layout } = await fixture([firstJobId, secondJobId]);
+    const directory = layout.forProject(firstId, 'First.mp4').directory;
+    const identity = thumbnailJobIdentity(entries[0]!.fingerprint);
+
+    const first = await jobs.ensureThumbnailJob(firstId, directory, identity);
+    const duplicate = await jobs.ensureThumbnailJob(
+      firstId,
+      directory,
+      identity,
+    );
+    const nextVersion = await jobs.ensureThumbnailJob(firstId, directory, {
+      ...identity,
+      generatorVersion: 'thumbnail-overview-v2',
+    });
+
+    expect(duplicate.id).toBe(first.id);
+    expect(nextVersion.id).not.toBe(first.id);
+    expect((await jobs.list(entries)).jobs).toHaveLength(2);
+  });
+
+  it('recovers and retries thumbnail jobs without dispatching them early', async () => {
+    const { entries, jobs, layout, projects } = await fixture();
+    const thumbnail = await jobs.ensureThumbnailJob(
+      firstId,
+      layout.forProject(firstId, 'First.mp4').directory,
+      thumbnailJobIdentity(entries[0]!.fingerprint),
+    );
+    await jobs.markRunning(entries, thumbnail);
+    const queue = new JobQueue(
+      layout,
+      new LibraryRepository(layout),
+      jobs,
+      { isAvailable: async () => true, inspect: async () => metadata },
+      updater(projects, entries),
+    );
+
+    await queue.recover();
+    expect(queue.snapshot().jobs[0]).toMatchObject({
+      type: 'generate-thumbnails',
+      state: 'queued',
+      attempts: 1,
+    });
+
+    const restarted = await jobs.markRunning(
+      entries,
+      queue.snapshot().jobs[0]!,
+    );
+    const failed = await jobs.markFailed(entries, restarted, {
+      code: 'ffmpeg_failed',
+      message: 'Generation failed.',
+      retryable: true,
+    });
+    await queue.retry(failed.id);
+    expect(queue.snapshot().jobs[0]).toMatchObject({
+      type: 'generate-thumbnails',
+      state: 'queued',
+      attempts: 2,
+    });
+    await queue.waitForIdle();
   });
 });

@@ -36,6 +36,7 @@ import {
   type WorkspaceDocument,
 } from '../storage/workspace-repository.js';
 import { JobRepository } from '../jobs/job-repository.js';
+import { thumbnailJobIdentity } from '../jobs/thumbnail-job.js';
 import type { SourcePicker } from './source-picker.js';
 import { validateMp4Source, type ValidatedSource } from './source-validator.js';
 
@@ -72,6 +73,14 @@ interface QueuedInspectionWriter {
   ensureInspectionJob(
     projectId: string,
     projectDirectory: string,
+  ): Promise<{ readonly id: string }>;
+  ensureThumbnailJob(
+    projectId: string,
+    projectDirectory: string,
+    identity: {
+      readonly generatorVersion: string;
+      readonly sourceFingerprint: string;
+    },
   ): Promise<{ readonly id: string }>;
 }
 
@@ -527,6 +536,39 @@ export class ImportService {
       }
 
       await this.reconcileMarker(join(this.layout.dataRoot, entry.name));
+    }
+
+    await this.ensureThumbnailJobsForInspectedProjects();
+  }
+
+  private async ensureThumbnailJobsForInspectedProjects(): Promise<void> {
+    const library = await this.library.read();
+
+    for (const entry of library.entries) {
+      try {
+        const project = await this.projects.readRequired(
+          entry.id,
+          entry.managedSourcePath,
+        );
+        if (
+          project.source.durationSeconds === null ||
+          project.source.inspectedAt === null
+        ) {
+          continue;
+        }
+
+        const projectDirectory = this.layout.forProject(
+          entry.id,
+          project.source.fileName,
+        ).directory;
+        await this.jobs.ensureThumbnailJob(
+          entry.id,
+          projectDirectory,
+          thumbnailJobIdentity(entry.fingerprint),
+        );
+      } catch {
+        // Existing unavailable projects remain isolated during recovery.
+      }
     }
   }
 

@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readdir } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
-import { jobRecordSchema, type JobRecord } from '@cut-on-eight/contracts';
+import {
+  jobRecordSchema,
+  type JobRecord,
+  type JobType,
+  type ThumbnailJobRecord,
+} from '@cut-on-eight/contracts';
 import {
   CorruptPersistedDataError,
   readJsonValidated,
@@ -10,6 +15,7 @@ import {
 } from '../storage/atomic-json.js';
 import type { StorageLayout } from '../storage/layout.js';
 import type { LibraryEntry } from '../storage/library-repository.js';
+import type { ThumbnailJobIdentity } from './thumbnail-job.js';
 
 type IdFactory = () => string;
 type Clock = () => Date;
@@ -58,9 +64,38 @@ export class JobRepository {
     return this.exclusive(async () => {
       const jobs = await this.readProjectJobs(projectId, projectDirectory);
       return (
-        jobs.jobs[0] ??
-        this.createQueuedInspectionDirect(projectId, projectDirectory)
+        jobs.jobs.find((job) => job.type === 'inspect-source') ??
+        this.createQueuedDirect(projectId, projectDirectory, 'inspect-source')
       );
+    });
+  }
+
+  ensureThumbnailJob(
+    projectId: string,
+    projectDirectory: string,
+    identity: ThumbnailJobIdentity,
+  ): Promise<ThumbnailJobRecord> {
+    return this.exclusive(async () => {
+      const jobs = await this.readProjectJobs(projectId, projectDirectory);
+      const existing = jobs.jobs.find(
+        (job): job is ThumbnailJobRecord =>
+          job.type === 'generate-thumbnails' &&
+          job.generatorVersion === identity.generatorVersion &&
+          job.sourceFingerprint === identity.sourceFingerprint,
+      );
+
+      if (existing !== undefined) return existing;
+
+      const created = await this.createQueuedDirect(
+        projectId,
+        projectDirectory,
+        'generate-thumbnails',
+        identity,
+      );
+      if (created.type !== 'generate-thumbnails') {
+        throw new Error('Unexpected thumbnail job type');
+      }
+      return created;
     });
   }
 
@@ -101,7 +136,7 @@ export class JobRepository {
               state: 'failed',
               error: {
                 code: 'job_attempts_exhausted',
-                message: 'The inspection job exhausted its allowed attempts.',
+                message: 'The background job exhausted its allowed attempts.',
                 retryable: false,
               },
             }),
@@ -194,6 +229,19 @@ export class JobRepository {
     projectId: string,
     projectDirectory: string,
   ): Promise<JobRecord> {
+    return this.createQueuedDirect(
+      projectId,
+      projectDirectory,
+      'inspect-source',
+    );
+  }
+
+  private async createQueuedDirect(
+    projectId: string,
+    projectDirectory: string,
+    type: JobType,
+    thumbnailIdentity?: ThumbnailJobIdentity,
+  ): Promise<JobRecord> {
     const { jobsDirectory, resolvedDirectory } =
       this.resolveProjectDirectories(projectDirectory);
     await this.layout.assertNoSymlinkComponents(jobsDirectory);
@@ -205,7 +253,7 @@ export class JobRepository {
     await this.layout.assertNoSymlinkComponents(jobsDirectory);
 
     for (let attempt = 0; attempt < 16; attempt += 1) {
-      const job = this.newQueuedInspection(projectId);
+      const job = this.newQueuedJob(projectId, type, thumbnailIdentity);
       const jobFile = resolve(jobsDirectory, `${job.id}.json`);
       await this.layout.assertNoSymlinkComponents(jobFile);
       try {
@@ -217,7 +265,7 @@ export class JobRepository {
       await writeJsonAtomic(jobFile, job);
       return job;
     }
-    throw new Error('Unable to allocate a collision-safe inspection job');
+    throw new Error('Unable to allocate a collision-safe job');
   }
 
   private async readProjectJobs(
@@ -296,13 +344,18 @@ export class JobRepository {
     return validated;
   }
 
-  private newQueuedInspection(projectId: string): JobRecord {
+  private newQueuedJob(
+    projectId: string,
+    type: JobType,
+    thumbnailIdentity?: ThumbnailJobIdentity,
+  ): JobRecord {
     const timestamp = this.clock().toISOString();
     return jobRecordSchema.parse({
       schemaVersion: 1,
       id: this.createId(),
       projectId,
-      type: 'inspect-source',
+      type,
+      ...(type === 'generate-thumbnails' ? thumbnailIdentity : {}),
       state: 'queued',
       attempts: 0,
       maxAttempts: 3,

@@ -13,6 +13,7 @@ import {
   type ProbeResult,
   type ProbeRunner,
 } from './ffprobe-runner.js';
+import { thumbnailJobIdentity } from './thumbnail-job.js';
 
 type MetadataUpdater = (
   projectId: string,
@@ -96,7 +97,9 @@ export class JobQueue {
     if (
       this.worker !== undefined ||
       this.shuttingDown ||
-      !this.snapshotValue.jobs.some((job) => job.state === 'queued')
+      !this.snapshotValue.jobs.some(
+        (job) => job.type === 'inspect-source' && job.state === 'queued',
+      )
     ) {
       return;
     }
@@ -105,7 +108,11 @@ export class JobQueue {
     void worker.then(
       () => {
         if (this.worker === worker) this.worker = undefined;
-        if (this.snapshotValue.jobs.some((job) => job.state === 'queued')) {
+        if (
+          this.snapshotValue.jobs.some(
+            (job) => job.type === 'inspect-source' && job.state === 'queued',
+          )
+        ) {
           this.startWorker();
         }
       },
@@ -133,7 +140,9 @@ export class JobQueue {
       const library = await this.library.read();
       const current = await this.repository.list(library.entries);
       this.setSnapshot(current);
-      const queued = current.jobs.find((job) => job.state === 'queued');
+      const queued = current.jobs.find(
+        (job) => job.type === 'inspect-source' && job.state === 'queued',
+      );
       if (queued === undefined) return;
 
       const running = await this.repository.markRunning(
@@ -141,6 +150,7 @@ export class JobQueue {
         queued,
       );
       await this.publishFresh();
+      let completedEntry: (typeof library.entries)[number] | undefined;
       try {
         const entry = library.entries.find(
           (candidate) => candidate.id === running.projectId,
@@ -153,6 +163,7 @@ export class JobQueue {
         const metadata = await this.probe.inspect(source);
         await this.updateMetadata(running.projectId, metadata);
         await this.repository.markCompleted(library.entries, running);
+        completedEntry = entry;
       } catch (error) {
         await this.repository.markFailed(
           library.entries,
@@ -161,6 +172,32 @@ export class JobQueue {
         );
       }
       await this.publishFresh();
+
+      if (completedEntry !== undefined) {
+        try {
+          const source = this.layout.resolveManagedRelativePath(
+            completedEntry.managedSourcePath,
+          );
+          await this.repository.ensureThumbnailJob(
+            running.projectId,
+            dirname(source),
+            thumbnailJobIdentity(completedEntry.fingerprint),
+          );
+          await this.publishFresh();
+        } catch {
+          this.setSnapshot({
+            ...this.snapshotValue,
+            errors: [
+              ...this.snapshotValue.errors,
+              {
+                code: 'thumbnail_queue_failed',
+                message: 'Thumbnail generation could not be queued.',
+                projectId: running.projectId,
+              },
+            ],
+          });
+        }
+      }
     }
   }
 
