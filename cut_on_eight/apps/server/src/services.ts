@@ -174,12 +174,15 @@ class ManagedWorkspaceServices implements AppServices {
       jobs,
       probe,
       (projectId, metadata) => this.updateSourceMetadata(projectId, metadata),
+      () => this.imports.reconcileThumbnailJobs(),
     );
   }
 
   async recover(): Promise<void> {
-    await this.enqueue(() => this.imports.recover());
-    await this.jobQueue.recover();
+    const importRecoveryIssues = await this.enqueue(() =>
+      this.imports.recover(),
+    );
+    await this.jobQueue.recover([...importRecoveryIssues]);
   }
 
   async getCapabilities(): Promise<Capabilities> {

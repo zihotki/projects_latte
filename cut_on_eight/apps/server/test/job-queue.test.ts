@@ -157,6 +157,53 @@ afterEach(async () => {
 });
 
 describe('durable inspection queue', () => {
+  it('keeps project-scoped recovery errors visible across refreshes', async () => {
+    const { entries, jobs, layout, projects } = await fixture();
+    const recoveryError = {
+      code: 'thumbnail_queue_failed',
+      message: 'Thumbnail generation could not be queued during recovery.',
+      projectId: firstId,
+    };
+    const queue = new JobQueue(
+      layout,
+      new LibraryRepository(layout),
+      jobs,
+      { isAvailable: async () => true, inspect: async () => metadata },
+      updater(projects, entries),
+      async () => [recoveryError],
+    );
+
+    await queue.recover([recoveryError]);
+    await queue.refresh();
+
+    expect(queue.snapshot().errors).toContainEqual(recoveryError);
+  });
+
+  it('retries thumbnail reconciliation on refresh and clears a recovered error', async () => {
+    const { entries, jobs, layout, projects } = await fixture();
+    const recoveryError = {
+      code: 'thumbnail_queue_failed',
+      message: 'Thumbnail generation could not be queued during recovery.',
+      projectId: firstId,
+    };
+    let attempts = 0;
+    const queue = new JobQueue(
+      layout,
+      new LibraryRepository(layout),
+      jobs,
+      { isAvailable: async () => true, inspect: async () => metadata },
+      updater(projects, entries),
+      async () => (++attempts === 1 ? [recoveryError] : []),
+    );
+
+    await queue.refresh();
+    expect(queue.snapshot().errors).toContainEqual(recoveryError);
+
+    await queue.refresh();
+    expect(attempts).toBe(2);
+    expect(queue.snapshot().errors).toEqual([]);
+  });
+
   it('persists strictly increasing transition timestamps with a fixed clock', async () => {
     const { entries, layout } = await fixture();
     const fixedNow = new Date('2026-07-21T10:00:00.000Z');

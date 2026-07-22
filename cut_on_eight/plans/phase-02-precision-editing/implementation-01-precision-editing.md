@@ -373,25 +373,25 @@
   }
   ```
 
-- [ ] **Step 1: Add failing schema and lifecycle tests**
+- [x] **Step 1: Add failing schema and lifecycle tests**
 
   Validate positional tuple lengths, safe `sprite-NNN.webp` names, ascending bounded sample times, page indexes/rectangles, job recovery, retry, and inspection-completion enqueueing thumbnails exactly once.
 
-- [ ] **Step 2: Implement discriminated job contracts and repository creation**
+- [x] **Step 2: Implement discriminated job contracts and repository creation**
 
   Generalize job creation without weakening project/filename/path validation. Existing inspection records remain valid. Thumbnail records use the same atomic per-job file lifecycle and monotonic transitions.
 
-- [ ] **Step 3: Chain thumbnail work after usable inspection**
+- [x] **Step 3: Chain thumbnail work after usable inspection**
 
   After inspection metadata is atomically saved, ensure a queued thumbnail job. Recovery also ensures the job for inspected projects lacking a compatible completed set. Close does not cancel jobs; shutdown waits for the current process boundary and leaves recoverable state.
 
-- [ ] **Step 4: Run focused contract and queue tests**
+- [x] **Step 4: Run focused contract and queue tests**
 
   Run: `node_modules/.bin/vitest run packages/contracts/test/thumbnails.test.ts apps/server/test/job-queue.test.ts apps/server/test/storage.test.ts`
 
   Expected: all listed tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   ```bash
   git add packages/contracts apps/server/src/jobs apps/server/src/imports/import-service.ts apps/server/test

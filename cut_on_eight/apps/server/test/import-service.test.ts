@@ -456,6 +456,57 @@ describe('transactional managed import', () => {
     });
   });
 
+  it('surfaces thumbnail job persistence failures during recovery', async () => {
+    const source = await createMp4();
+    const dataRoot = await createRoot('cut-on-eight-thumbnail-failure-');
+    const layout = new StorageLayout(dataRoot);
+    await createService(layout, source).selectAndImport();
+
+    const paths = layout.forProject(projectId, 'Cross Body Lead.mp4');
+    const projects = new ProjectRepository(layout);
+    const current = await projects.readRequired(
+      projectId,
+      paths.relativeSource,
+    );
+    await projects.save(projectId, paths.relativeSource, {
+      ...current,
+      source: {
+        ...current.source,
+        durationSeconds: 12,
+        width: 1280,
+        height: 720,
+        hasAudio: true,
+        inspectedAt: now.toISOString(),
+        inspectorVersion: 'ffprobe-v1',
+      },
+    });
+
+    const jobs = new JobRepository(
+      layout,
+      () => jobId,
+      () => now,
+    );
+    const service = createService(layout, null, {
+      jobs: {
+        createQueuedInspection: (id, directory) =>
+          jobs.createQueuedInspection(id, directory),
+        ensureInspectionJob: (id, directory) =>
+          jobs.ensureInspectionJob(id, directory),
+        ensureThumbnailJob: async () => {
+          throw new Error('thumbnail job write failed');
+        },
+      },
+    });
+
+    await expect(service.recover()).resolves.toEqual([
+      {
+        code: 'thumbnail_queue_failed',
+        message: 'Thumbnail generation could not be queued during recovery.',
+        projectId,
+      },
+    ]);
+  });
+
   it('reconciles a promoted import after a crash before catalog commit', async () => {
     const source = await createMp4();
     const dataRoot = await createRoot('cut-on-eight-recovery-');

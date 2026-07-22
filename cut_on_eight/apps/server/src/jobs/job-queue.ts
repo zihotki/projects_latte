@@ -19,8 +19,12 @@ type MetadataUpdater = (
   projectId: string,
   metadata: ProbeResult,
 ) => Promise<void>;
+type ThumbnailJobReconciler = () => Promise<
+  readonly JobSnapshot['errors'][number][]
+>;
 
 export class JobQueue {
+  private recoveryErrors: JobSnapshot['errors'] = [];
   private readonly events = new EventEmitter();
   private shuttingDown = false;
   private snapshotValue: JobSnapshot = { jobs: [], errors: [] };
@@ -32,11 +36,17 @@ export class JobQueue {
     private readonly repository: JobRepository,
     private readonly probe: ProbeRunner,
     private readonly updateMetadata: MetadataUpdater,
+    private readonly reconcileThumbnailJobs: ThumbnailJobReconciler = async () => [],
   ) {}
 
-  async recover(): Promise<void> {
+  async recover(errors: JobSnapshot['errors'] = []): Promise<void> {
+    this.recoveryErrors = [...errors];
     const library = await this.library.read();
-    this.setSnapshot(await this.repository.recoverRunning(library.entries));
+    this.setSnapshot(
+      this.withRecoveryErrors(
+        await this.repository.recoverRunning(library.entries),
+      ),
+    );
     this.startWorker();
   }
 
@@ -58,8 +68,11 @@ export class JobQueue {
   }
 
   async refresh(): Promise<JobSnapshot> {
+    this.recoveryErrors = [...(await this.reconcileThumbnailJobs())];
     const library = await this.library.read();
-    this.setSnapshot(await this.repository.list(library.entries));
+    this.setSnapshot(
+      this.withRecoveryErrors(await this.repository.list(library.entries)),
+    );
     this.startWorker();
     return this.snapshot();
   }
@@ -139,7 +152,7 @@ export class JobQueue {
 
       const library = await this.library.read();
       const current = await this.repository.list(library.entries);
-      this.setSnapshot(current);
+      this.setSnapshot(this.withRecoveryErrors(current));
       const queued = current.jobs.find(
         (job) => job.type === 'inspect-source' && job.state === 'queued',
       );
@@ -222,7 +235,16 @@ export class JobQueue {
 
   private async publishFresh(): Promise<void> {
     const library = await this.library.read();
-    this.setSnapshot(await this.repository.list(library.entries));
+    this.setSnapshot(
+      this.withRecoveryErrors(await this.repository.list(library.entries)),
+    );
+  }
+
+  private withRecoveryErrors(value: JobSnapshot): JobSnapshot {
+    return {
+      ...value,
+      errors: [...value.errors, ...this.recoveryErrors],
+    };
   }
 
   private setSnapshot(value: JobSnapshot): void {

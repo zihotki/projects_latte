@@ -1,6 +1,7 @@
 import {
   jobRecordSchema,
   projectDocumentSchema,
+  type JobSnapshot,
   type ProjectDocument,
 } from '@cut-on-eight/contracts';
 import { randomUUID } from 'node:crypto';
@@ -50,6 +51,8 @@ export type ImportResult =
       readonly outcome: 'imported' | 'reopened';
       readonly projectId: string;
     };
+
+export type ImportRecoveryIssue = JobSnapshot['errors'][number];
 
 interface ImportMarker {
   readonly entry: LibraryEntry;
@@ -282,8 +285,12 @@ export class ImportService {
     return this.enqueue(() => this.importSelectedUnlocked(selectedPath));
   }
 
-  async recover(): Promise<void> {
-    await this.enqueue(() => this.recoverUnlocked());
+  recover(): Promise<readonly ImportRecoveryIssue[]> {
+    return this.enqueue(() => this.recoverUnlocked());
+  }
+
+  reconcileThumbnailJobs(): Promise<readonly ImportRecoveryIssue[]> {
+    return this.enqueue(() => this.ensureThumbnailJobsForInspectedProjects());
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
@@ -502,7 +509,7 @@ export class ImportService {
     throw new Error('Unable to allocate a collision-safe import directory');
   }
 
-  private async recoverUnlocked(): Promise<void> {
+  private async recoverUnlocked(): Promise<readonly ImportRecoveryIssue[]> {
     await this.catalog.recover();
     let entries;
 
@@ -511,7 +518,7 @@ export class ImportService {
       entries = await readdir(this.layout.dataRoot, { withFileTypes: true });
     } catch (error) {
       if (isMissing(error)) {
-        return;
+        return [];
       }
 
       throw error;
@@ -538,38 +545,54 @@ export class ImportService {
       await this.reconcileMarker(join(this.layout.dataRoot, entry.name));
     }
 
-    await this.ensureThumbnailJobsForInspectedProjects();
+    return this.ensureThumbnailJobsForInspectedProjects();
   }
 
-  private async ensureThumbnailJobsForInspectedProjects(): Promise<void> {
+  private async ensureThumbnailJobsForInspectedProjects(): Promise<
+    readonly ImportRecoveryIssue[]
+  > {
     const library = await this.library.read();
+    const issues: ImportRecoveryIssue[] = [];
 
     for (const entry of library.entries) {
+      let project;
       try {
-        const project = await this.projects.readRequired(
+        project = await this.projects.readRequired(
           entry.id,
           entry.managedSourcePath,
         );
-        if (
-          project.source.durationSeconds === null ||
-          project.source.inspectedAt === null
-        ) {
-          continue;
-        }
+      } catch {
+        // Existing unavailable projects remain isolated during recovery.
+        continue;
+      }
 
-        const projectDirectory = this.layout.forProject(
-          entry.id,
-          project.source.fileName,
-        ).directory;
+      if (
+        project.source.durationSeconds === null ||
+        project.source.inspectedAt === null
+      ) {
+        continue;
+      }
+
+      const projectDirectory = this.layout.forProject(
+        entry.id,
+        project.source.fileName,
+      ).directory;
+      try {
         await this.jobs.ensureThumbnailJob(
           entry.id,
           projectDirectory,
           thumbnailJobIdentity(entry.fingerprint),
         );
       } catch {
-        // Existing unavailable projects remain isolated during recovery.
+        issues.push({
+          code: 'thumbnail_queue_failed',
+          message: 'Thumbnail generation could not be queued during recovery.',
+          projectId: entry.id,
+        });
       }
     }
+
+    return issues;
   }
 
   private async reconcileMarker(projectDirectory: string): Promise<void> {
