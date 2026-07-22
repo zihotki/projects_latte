@@ -87,12 +87,14 @@ describe('managed MP4 byte-range API', () => {
       closeProject: unused,
       getCapabilities: unused,
       getJobs: unused,
+      getThumbnailManifest: unused,
       getWorkspace: unused,
       openProject: unused,
       openSource: async () => {
         sourceOpenCount += 1;
         throw new Error('HEAD must not open a source');
       },
+      openThumbnailPage: unused,
       recover: async () => undefined,
       retryJob: unused,
       saveProject: unused,

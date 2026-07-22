@@ -10,11 +10,12 @@ import {
   type JobRecord,
   type JobSnapshot,
   type ProjectDocument,
+  type ThumbnailManifestV1,
   type WorkspaceSnapshot,
 } from '@cut-on-eight/contracts';
 import { constants } from 'node:fs';
 import { open, type FileHandle } from 'node:fs/promises';
-import { posix } from 'node:path';
+import { posix, resolve } from 'node:path';
 import type { ServerConfig } from './config.js';
 import { ApiRouteError } from './http/api-error.js';
 import { ImportService } from './imports/import-service.js';
@@ -27,6 +28,7 @@ import {
 import { JobQueue } from './jobs/job-queue.js';
 import { JobRepository } from './jobs/job-repository.js';
 import { FfmpegRunner } from './jobs/ffmpeg-runner.js';
+import { thumbnailJobIdentity } from './jobs/thumbnail-job.js';
 import { CatalogRepository } from './storage/catalog-repository.js';
 import { CorruptPersistedDataError } from './storage/atomic-json.js';
 import {
@@ -47,8 +49,14 @@ import {
   ThumbnailWorker,
   type ThumbnailGenerator,
 } from './thumbnails/thumbnail-worker.js';
+import { readCompatibleThumbnailManifest } from './thumbnails/thumbnail-manifest.js';
 
 export interface ManagedSource {
+  readonly file: FileHandle;
+  readonly size: number;
+}
+
+export interface ManagedThumbnailPage {
   readonly file: FileHandle;
   readonly size: number;
 }
@@ -61,9 +69,14 @@ export interface AppServices {
   ): Promise<WorkspaceSnapshot>;
   getCapabilities(): Promise<Capabilities>;
   getJobs(): Promise<JobSnapshot>;
+  getThumbnailManifest(projectId: string): Promise<ThumbnailManifestV1>;
   getWorkspace(): Promise<WorkspaceSnapshot>;
   openProject(projectId: string): Promise<WorkspaceSnapshot>;
   openSource(projectId: string): Promise<ManagedSource>;
+  openThumbnailPage(
+    projectId: string,
+    fileName: string,
+  ): Promise<ManagedThumbnailPage>;
   recover(): Promise<void>;
   retryJob(jobId: string): Promise<JobRecord>;
   saveProject(
@@ -411,6 +424,75 @@ class ManagedWorkspaceServices implements AppServices {
     }
   }
 
+  async getThumbnailManifest(projectId: string): Promise<ThumbnailManifestV1> {
+    const { entry, project } = await this.loadThumbnailProject(projectId);
+    const identity = thumbnailJobIdentity(entry.fingerprint);
+    const durationSeconds = project.source.durationSeconds;
+    const manifest =
+      durationSeconds === null
+        ? undefined
+        : await readCompatibleThumbnailManifest(
+            this.layout.thumbnailsDirectory(entry.managedSourcePath),
+            { ...identity, durationSeconds },
+          );
+
+    if (manifest !== undefined) return manifest;
+
+    // Reconciliation durably queues missing, stale, or corrupt output.
+    await this.jobQueue.refresh();
+    throw new ApiRouteError(
+      404,
+      'thumbnail_not_ready',
+      'Timeline thumbnails are not ready yet.',
+      true,
+      { projectId },
+    );
+  }
+
+  async openThumbnailPage(
+    projectId: string,
+    fileName: string,
+  ): Promise<ManagedThumbnailPage> {
+    const manifest = await this.getThumbnailManifest(projectId);
+    if (!manifest.pages.some(([declared]) => declared === fileName)) {
+      throw new ApiRouteError(
+        404,
+        'thumbnail_page_not_found',
+        'The thumbnail sprite page was not found.',
+        false,
+        { projectId },
+      );
+    }
+
+    const entry = await this.requireLibraryEntry(projectId);
+    const pagePath = resolve(
+      this.layout.thumbnailsDirectory(entry.managedSourcePath),
+      fileName,
+    );
+    await this.layout.assertNoSymlinkComponents(pagePath);
+    let file: FileHandle | undefined;
+
+    try {
+      file = await open(pagePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const status = await file.stat();
+      if (!status.isFile() || !Number.isSafeInteger(status.size)) {
+        throw new Error('Thumbnail page is not a regular file');
+      }
+      return { file, size: status.size };
+    } catch (error) {
+      await file?.close().catch(() => undefined);
+      if (error instanceof ApiRouteError) throw error;
+      await this.jobQueue.refresh().catch(() => undefined);
+      throw new ApiRouteError(
+        404,
+        'thumbnail_not_ready',
+        'Timeline thumbnails are not ready yet.',
+        true,
+        { projectId },
+      );
+    }
+  }
+
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.operationQueue.then(operation);
     this.operationQueue = result.then(
@@ -453,16 +535,27 @@ class ManagedWorkspaceServices implements AppServices {
     project: ProjectDocument;
     sourcePath: string;
   }> {
-    const entry = await this.requireLibraryEntry(projectId);
+    const { entry, project } = await this.loadThumbnailProject(projectId);
     return {
       destinationDirectory: this.layout.thumbnailsDirectory(
         entry.managedSourcePath,
       ),
-      project: await this.projects.readRequired(
-        projectId,
+      project,
+      sourcePath: this.layout.resolveManagedRelativePath(
         entry.managedSourcePath,
       ),
-      sourcePath: this.layout.resolveManagedRelativePath(
+    };
+  }
+
+  private async loadThumbnailProject(projectId: string): Promise<{
+    entry: LibraryEntry;
+    project: ProjectDocument;
+  }> {
+    const entry = await this.requireLibraryEntry(projectId);
+    return {
+      entry,
+      project: await this.projects.readRequired(
+        projectId,
         entry.managedSourcePath,
       ),
     };

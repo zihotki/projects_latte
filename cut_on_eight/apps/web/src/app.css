@@ -465,6 +465,13 @@ button:disabled {
   cursor: pointer;
   font-size: 0.7rem;
 }
+.thumbnail-status {
+  margin-right: auto;
+  color: #8f98a5;
+}
+.thumbnail-status[data-state='failed'] {
+  color: #f1c66b;
+}
 .timeline-viewport {
   position: relative;
   height: 4.1rem;
@@ -481,13 +488,7 @@ button:disabled {
   height: 100%;
 }
 .timeline-canvas {
-  background: linear-gradient(
-    90deg,
-    rgb(255 255 255 / 2%),
-    transparent 20%,
-    rgb(255 255 255 / 2%) 50%,
-    transparent 80%
-  );
+  background: #242931;
   pointer-events: none;
 }
 .timeline-lane {

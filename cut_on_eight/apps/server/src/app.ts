@@ -6,6 +6,7 @@ import { installApiRequestProtection } from './http/request-protection.js';
 import { registerProjectRoutes } from './http/project-routes.js';
 import { registerJobRoutes } from './http/job-routes.js';
 import { registerSourceRoutes } from './http/source-routes.js';
+import { registerThumbnailRoutes } from './http/thumbnail-routes.js';
 import { registerWorkspaceRoutes } from './http/workspace-routes.js';
 import {
   MacOsSourcePicker,
@@ -49,6 +50,7 @@ export function createApp(options: CreateAppOptions = {}): CutOnEightApp {
   registerWorkspaceRoutes(app, services);
   registerProjectRoutes(app, services);
   registerSourceRoutes(app, services);
+  registerThumbnailRoutes(app, services);
   registerJobRoutes(app, services);
 
   app.addHook('onClose', async () => services.shutdown?.());

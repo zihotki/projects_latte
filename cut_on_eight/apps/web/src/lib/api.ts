@@ -5,6 +5,7 @@ import {
   jobRecordSchema,
   jobSnapshotSchema,
   projectDocumentSchema,
+  thumbnailManifestV1Schema,
   workspaceSnapshotSchema,
   type ApiError,
   type Capabilities,
@@ -12,6 +13,7 @@ import {
   type JobRecord,
   type JobSnapshot,
   type ProjectDocument,
+  type ThumbnailManifestV1,
   type WorkspaceSnapshot,
 } from '@cut-on-eight/contracts';
 
@@ -157,4 +159,21 @@ export function retryJob(jobId: string): Promise<JobRecord> {
 
 export function sourceUrl(projectId: string): string {
   return `/api/sources/${encodeURIComponent(projectId)}/content`;
+}
+
+export function loadThumbnailManifest(
+  projectId: string,
+): Promise<ThumbnailManifestV1> {
+  return request(
+    `/api/projects/${encodeURIComponent(projectId)}/thumbnails/manifest`,
+    thumbnailManifestV1Schema,
+  );
+}
+
+export function thumbnailPageUrl(
+  projectId: string,
+  fileName: string,
+  immutableIdentity: string,
+): string {
+  return `/api/projects/${encodeURIComponent(projectId)}/thumbnails/${encodeURIComponent(fileName)}?identity=${encodeURIComponent(immutableIdentity)}`;
 }

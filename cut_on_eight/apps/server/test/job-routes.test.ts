@@ -53,9 +53,11 @@ function services(getJobs: () => Promise<JobSnapshot>): {
         ffprobeAvailable: false,
       }),
       getJobs,
+      getThumbnailManifest: unused,
       getWorkspace: unused as () => Promise<WorkspaceSnapshot>,
       openProject: unused as (id: string) => Promise<WorkspaceSnapshot>,
       openSource: unused as (id: string) => Promise<ManagedSource>,
+      openThumbnailPage: unused,
       recover: async () => undefined,
       retryJob: unused as (id: string) => Promise<JobRecord>,
       saveProject: unused as (

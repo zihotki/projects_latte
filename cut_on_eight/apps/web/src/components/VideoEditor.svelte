@@ -1,5 +1,9 @@
 <script lang="ts">
-  import type { ProjectDocument, Segment } from '@cut-on-eight/contracts';
+  import type {
+    ProjectDocument,
+    Segment,
+    ThumbnailManifestV1,
+  } from '@cut-on-eight/contracts';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { sourceUrl } from '../lib/api.js';
   import type { RegisterVideoEditorControl } from '../lib/editor-control.js';
@@ -42,6 +46,11 @@
     segmentsCollapsed,
     onSegmentsCollapsedChange,
     onBoundaryModeChange,
+    thumbnailManifest,
+    thumbnailState,
+    thumbnailRetrying,
+    onRetryThumbnails,
+    onThumbnailLoadError,
   }: {
     project: ProjectDocument;
     onChange: (
@@ -54,6 +63,11 @@
     segmentsCollapsed: boolean;
     onSegmentsCollapsedChange: (collapsed: boolean) => void;
     onBoundaryModeChange: (projectId: string, focused: boolean) => void;
+    thumbnailManifest: ThumbnailManifestV1 | null;
+    thumbnailState: 'generating' | 'ready' | 'failed';
+    thumbnailRetrying: boolean;
+    onRetryThumbnails: () => void;
+    onThumbnailLoadError: () => void;
   } = $props();
 
   let video = $state<HTMLVideoElement>();
@@ -658,6 +672,12 @@
     </div>
 
     <PrecisionTimeline
+      projectId={project.id}
+      {thumbnailManifest}
+      {thumbnailState}
+      {thumbnailRetrying}
+      {onRetryThumbnails}
+      {onThumbnailLoadError}
       durationSeconds={displayDuration}
       {currentSeconds}
       {pendingStartSeconds}

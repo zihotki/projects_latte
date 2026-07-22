@@ -470,23 +470,23 @@
 - `GET /api/projects/:id/thumbnails/:fileName` returns only a manifest-declared WebP with immutable cache headers.
 - `drawVisibleThumbnails(context, manifest, images, scale, canvasSize)` draws intersecting samples only and returns `{ drawn, skipped }` for tests/diagnostics.
 
-- [ ] **Step 1: Write failing route-security tests**
+- [x] **Step 1: Write failing route-security tests**
 
   Cover ready/not-ready manifests, corrupt manifest regeneration signal, unknown/traversal/symlink sprite rejection, range-independent complete WebP response, immutable cache headers, and one project's failure not affecting another.
 
-- [ ] **Step 2: Implement validated manifest and sprite routes**
+- [x] **Step 2: Implement validated manifest and sprite routes**
 
   Resolve project paths through `StorageLayout`, reject symlink components, parse the manifest before selecting a page, and never accept arbitrary filenames from the filesystem. Register routes under existing Host/Origin/Sec-Fetch protection.
 
-- [ ] **Step 3: Write failing renderer tests**
+- [x] **Step 3: Write failing renderer tests**
 
   Use a fake Canvas context to assert only viewport-intersecting samples draw, source rectangles match positional tuples, unavailable images leave a neutral background, and stale async image loads cannot repaint a different active project.
 
-- [ ] **Step 4: Implement Canvas sprite loading and drawing**
+- [x] **Step 4: Implement Canvas sprite loading and drawing**
 
   Load one `Image` per visible sprite page, cache by project/fingerprint/page, and invalidate on manifest change. Draw only visible cells. Timeline remains usable before/without thumbnails and shows compact generating/failed/retry state from the existing job stream.
 
-- [ ] **Step 5: Run focused tests and Svelte validation**
+- [x] **Step 5: Run focused tests and Svelte validation**
 
   Run: `node_modules/.bin/vitest run apps/server/test/thumbnail-routes.test.ts apps/web/src/lib/thumbnail-renderer.test.ts`
 
@@ -494,7 +494,7 @@
 
   Expected: route, renderer, and local Svelte checks pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add apps/server/src apps/server/test apps/web/src

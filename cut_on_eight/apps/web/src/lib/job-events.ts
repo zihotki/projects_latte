@@ -62,6 +62,20 @@ export function newestInspectionJob(
   return newest;
 }
 
+export function newestThumbnailJob(
+  snapshot: JobSnapshot | null,
+  projectId: string,
+): JobRecord | null {
+  let newest: JobRecord | null = null;
+  for (const job of snapshot?.jobs ?? []) {
+    if (job.projectId !== projectId || job.type !== 'generate-thumbnails') {
+      continue;
+    }
+    if (newest === null || compareJobCreation(job, newest) >= 0) newest = job;
+  }
+  return newest;
+}
+
 function compareJobCreation(left: JobRecord, right: JobRecord): number {
   const createdDifference =
     Date.parse(left.createdAt) - Date.parse(right.createdAt);

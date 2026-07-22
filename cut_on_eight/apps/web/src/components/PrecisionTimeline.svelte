@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { Segment } from '@cut-on-eight/contracts';
+  import type { Segment, ThumbnailManifestV1 } from '@cut-on-eight/contracts';
+  import { thumbnailPageUrl } from '../lib/api.js';
   import { segmentDurationStatus } from '../lib/segment-constraints.js';
   import { TimeScale } from '../lib/timeline-geometry.js';
   import {
@@ -9,6 +10,12 @@
     zoomAt,
   } from '../lib/timeline-viewport.js';
   import { assignSegmentRows } from '../lib/two-row-layout.js';
+  import {
+    drawVisibleThumbnails,
+    loadBrowserImage,
+    ThumbnailImageCache,
+    visibleThumbnailPageIndexes,
+  } from '../lib/thumbnail-renderer.js';
 
   export interface TimelineViewportChange {
     readonly offsetSeconds: number;
@@ -27,6 +34,12 @@
     onSeek,
     onClearSelectionAndSeek,
     onViewportInput,
+    projectId,
+    thumbnailManifest,
+    thumbnailState,
+    thumbnailRetrying,
+    onRetryThumbnails,
+    onThumbnailLoadError,
   }: {
     durationSeconds: number;
     currentSeconds: number;
@@ -39,10 +52,19 @@
     onSeek: (seconds: number) => void;
     onClearSelectionAndSeek: (seconds: number) => void;
     onViewportInput: (viewport: TimelineViewportChange) => void;
+    projectId: string;
+    thumbnailManifest: ThumbnailManifestV1 | null;
+    thumbnailState: 'generating' | 'ready' | 'failed';
+    thumbnailRetrying: boolean;
+    onRetryThumbnails: () => void;
+    onThumbnailLoadError: () => void;
   } = $props();
 
   let viewportWidth = $state(0);
+  let canvas = $state<HTMLCanvasElement>();
   let lastEnsuredSegmentId: string | null = null;
+  let thumbnailPaintVersion = 0;
+  const thumbnailImages = new ThumbnailImageCache(loadBrowserImage);
 
   const scale = $derived(
     new TimeScale({
@@ -74,6 +96,69 @@
       ),
     );
   });
+
+  $effect(() => {
+    const element = canvas;
+    const manifest = thumbnailManifest;
+    const currentScale = scale;
+    const width = viewportWidth;
+    const version = ++thumbnailPaintVersion;
+
+    if (element === undefined || width <= 0) return;
+    paintThumbnailBackground(element, null, null, currentScale, width);
+    if (manifest === null || thumbnailState !== 'ready') {
+      thumbnailImages.deactivate();
+      return;
+    }
+
+    const pageIndexes = visibleThumbnailPageIndexes(manifest, currentScale);
+    void thumbnailImages
+      .loadVisible(projectId, manifest, pageIndexes, (fileName) =>
+        thumbnailPageUrl(
+          projectId,
+          fileName,
+          `${manifest.generatorVersion}:${manifest.sourceFingerprint}`,
+        ),
+      )
+      .then((result) => {
+        if (result === null || version !== thumbnailPaintVersion) return;
+        if (result.failed > 0) {
+          onThumbnailLoadError();
+          return;
+        }
+        paintThumbnailBackground(
+          element,
+          manifest,
+          result.images,
+          currentScale,
+          width,
+        );
+      });
+  });
+
+  function paintThumbnailBackground(
+    element: HTMLCanvasElement,
+    manifest: ThumbnailManifestV1 | null,
+    images: ReadonlyMap<number, HTMLImageElement> | null,
+    currentScale: TimeScale,
+    width: number,
+  ): void {
+    const height = Math.max(1, element.clientHeight);
+    const density = window.devicePixelRatio || 1;
+    element.width = Math.max(1, Math.round(width * density));
+    element.height = Math.max(1, Math.round(height * density));
+    const context = element.getContext('2d');
+    if (context === null) return;
+    context.setTransform(density, 0, 0, density, 0, 0);
+    context.fillStyle = '#242931';
+    context.fillRect(0, 0, width, height);
+    if (manifest !== null && images !== null) {
+      drawVisibleThumbnails(context, manifest, images, currentScale, {
+        width,
+        height,
+      });
+    }
+  }
 
   function applyViewport(next: TimeScale): void {
     if (
@@ -149,6 +234,17 @@
         .visibleRange()
         .endSeconds.toFixed(1)}s</span
     >
+    {#if thumbnailState === 'generating'}
+      <span class="thumbnail-status">Thumbnails…</span>
+    {:else if thumbnailState === 'failed'}
+      <span class="thumbnail-status" data-state="failed">No thumbnails</span>
+      <button
+        type="button"
+        disabled={thumbnailRetrying}
+        onclick={onRetryThumbnails}
+        >{thumbnailRetrying ? 'Retrying…' : 'Retry'}</button
+      >
+    {/if}
     <button
       type="button"
       aria-label="Zoom timeline out"
@@ -173,7 +269,8 @@
     bind:clientWidth={viewportWidth}
     onwheel={handleWheel}
   >
-    <canvas class="timeline-canvas" aria-hidden="true"></canvas>
+    <canvas bind:this={canvas} class="timeline-canvas" aria-hidden="true"
+    ></canvas>
     <div
       class="timeline-lane"
       role="slider"

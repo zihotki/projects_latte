@@ -4,6 +4,7 @@
     JobRecord,
     JobSnapshot,
     ProjectDocument,
+    ThumbnailManifestV1,
     WorkspaceSnapshot,
   } from '@cut-on-eight/contracts';
   import { onDestroy } from 'svelte';
@@ -19,6 +20,7 @@
     closeProject,
     loadCapabilities,
     loadWorkspace,
+    loadThumbnailManifest,
     openProject,
     saveProject,
     selectImport,
@@ -30,6 +32,7 @@
     mergeJobRecord,
     mergeJobSnapshot,
     newestInspectionJob,
+    newestThumbnailJob,
   } from './lib/job-events.js';
   import {
     SaveController,
@@ -63,9 +66,12 @@
   let activeView = $state<ActiveView>('library');
   let segmentPanelCollapsed = $state(false);
   let boundaryEditingProjectId = $state<string | null>(null);
+  let thumbnailManifests = $state.raw<Record<string, ThumbnailManifestV1>>({});
+  let thumbnailLoadErrors = $state<Record<string, string>>({});
 
   const controllers = new Map<string, SaveController>();
   const sampledPlaybackPositions = new Map<string, number>();
+  const thumbnailRequestKeys = new Map<string, string>();
   let activeEditorControl: VideoEditorControl | null = null;
   let closeJobEvents: (() => void) | null = null;
   let disposed = false;
@@ -124,6 +130,37 @@
         ? 'video'
         : 'segment',
   );
+  const activeThumbnailJob = $derived(
+    activeProject === null ? null : newestThumbnailJob(jobs, activeProject.id),
+  );
+  const activeThumbnailManifest = $derived(
+    activeProject === null
+      ? null
+      : (thumbnailManifests[activeProject.id] ?? null),
+  );
+  const activeThumbnailState = $derived<'generating' | 'ready' | 'failed'>(
+    activeThumbnailManifest !== null
+      ? 'ready'
+      : activeProject !== null &&
+          (activeThumbnailJob?.state === 'failed' ||
+            thumbnailLoadErrors[activeProject.id] !== undefined)
+        ? 'failed'
+        : 'generating',
+  );
+
+  $effect(() => {
+    const projectId = activeProject?.id;
+    const job = activeThumbnailJob;
+    if (
+      projectId !== undefined &&
+      (job === null || job.state === 'completed')
+    ) {
+      void refreshThumbnailManifest(
+        projectId,
+        job === null ? 'no-job' : `${job.id}:${job.updatedAt}`,
+      );
+    }
+  });
 
   function setBoundaryMode(projectId: string, focused: boolean): void {
     boundaryEditingProjectId = focused ? projectId : null;
@@ -347,6 +384,63 @@
 
   function inspectionJobFor(projectId: string): JobRecord | null {
     return newestInspectionJob(jobs, projectId);
+  }
+
+  async function refreshThumbnailManifest(
+    projectId: string,
+    requestKey: string,
+  ): Promise<void> {
+    if (thumbnailRequestKeys.get(projectId) === requestKey) return;
+    thumbnailRequestKeys.set(projectId, requestKey);
+    try {
+      const manifest = await loadThumbnailManifest(projectId);
+      if (thumbnailRequestKeys.get(projectId) !== requestKey) return;
+      thumbnailManifests = { ...thumbnailManifests, [projectId]: manifest };
+      const nextErrors = { ...thumbnailLoadErrors };
+      delete nextErrors[projectId];
+      thumbnailLoadErrors = nextErrors;
+    } catch (error) {
+      if (thumbnailRequestKeys.get(projectId) !== requestKey) return;
+      const nextManifests = { ...thumbnailManifests };
+      delete nextManifests[projectId];
+      thumbnailManifests = nextManifests;
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'thumbnail_not_ready'
+      ) {
+        return;
+      }
+      thumbnailLoadErrors = {
+        ...thumbnailLoadErrors,
+        [projectId]: describeError(error, 'Thumbnails unavailable'),
+      };
+    }
+  }
+
+  async function retryThumbnails(): Promise<void> {
+    if (activeProject === null || retryingJobId !== null) return;
+    const projectId = activeProject.id;
+    const job = activeThumbnailJob;
+    if (job?.state === 'failed') {
+      await retryInspection(job);
+      return;
+    }
+    thumbnailRequestKeys.delete(projectId);
+    const nextErrors = { ...thumbnailLoadErrors };
+    delete nextErrors[projectId];
+    thumbnailLoadErrors = nextErrors;
+    await refreshThumbnailManifest(projectId, `manual:${Date.now()}`);
+  }
+
+  function thumbnailPageLoadFailed(projectId: string): void {
+    const nextManifests = { ...thumbnailManifests };
+    delete nextManifests[projectId];
+    thumbnailManifests = nextManifests;
+    thumbnailLoadErrors = {
+      ...thumbnailLoadErrors,
+      [projectId]: 'Thumbnail sprites could not be loaded.',
+    };
   }
 
   async function loadToolCapabilities(): Promise<void> {
@@ -603,6 +697,12 @@
             {#key activeProject.id}
               <VideoEditor
                 project={activeProject}
+                thumbnailManifest={activeThumbnailManifest}
+                thumbnailState={activeThumbnailState}
+                thumbnailRetrying={retryingJobId === activeThumbnailJob?.id}
+                onRetryThumbnails={() => void retryThumbnails()}
+                onThumbnailLoadError={() =>
+                  thumbnailPageLoadFailed(activeProject.id)}
                 onChange={updateProject}
                 onPlaybackSample={samplePlaybackPosition}
                 registerControl={registerEditorControl}
