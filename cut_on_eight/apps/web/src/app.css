@@ -412,6 +412,20 @@ button:disabled {
 .segment-list-panel {
   min-width: 0;
 }
+.media-workbench {
+  min-width: 0;
+  border-radius: 0.35rem;
+  outline: 2px solid transparent;
+  outline-offset: 3px;
+  transition:
+    outline-color 120ms ease,
+    box-shadow 120ms ease;
+}
+.media-workbench:focus-visible,
+.media-workbench:focus-within {
+  outline-color: #72a7c8;
+  box-shadow: 0 0 0 1px #0b0d10;
+}
 .segment-list-panel {
   padding: 0.75rem;
   border-left: 1px solid #303640;
@@ -437,6 +451,23 @@ button:disabled {
   color: #aeb5c0;
   font-variant-numeric: tabular-nums;
   font-size: 0.78rem;
+}
+.keyboard-target {
+  margin-left: auto;
+  padding: 0.12rem 0.35rem;
+  border: 1px solid #72a7c8;
+  border-radius: 0.25rem;
+  color: #cfe9f8;
+  font-size: 0.65rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  opacity: 0;
+  text-transform: uppercase;
+  transition: opacity 120ms ease;
+}
+.media-workbench:focus-visible .keyboard-target,
+.media-workbench:focus-within .keyboard-target {
+  opacity: 1;
 }
 .pending-label {
   color: #f1c66b;

@@ -20,7 +20,7 @@ function emptyState(): SegmentState {
 }
 
 describe('segment operations', () => {
-  it('creates and selects segments in creation order', () => {
+  it('creates segments in creation order without changing playback selection', () => {
     let state = emptyState();
 
     for (const [index, id] of segmentIds.slice(0, 3).entries()) {
@@ -38,10 +38,25 @@ describe('segment operations', () => {
     expect(state.segments.map((segment) => segment.id)).toEqual(
       segmentIds.slice(0, 3),
     );
-    expect(state.selectedSegmentId).toBe(segmentIds[2]);
+    expect(state.selectedSegmentId).toBeNull();
     expect(state.segments.every((segment) => segment.exportSelected)).toBe(
       true,
     );
+
+    const withSelection = {
+      ...state,
+      selectedSegmentId: segmentIds[0],
+    };
+    const additional = createSegment(
+      withSelection,
+      1,
+      2,
+      12,
+      () => segmentIds[3],
+    );
+
+    expect(additional.ok).toBe(true);
+    expect(additional.state.selectedSegmentId).toBe(segmentIds[0]);
   });
 
   it('sorts a copy chronologically by start, end, and ID', () => {

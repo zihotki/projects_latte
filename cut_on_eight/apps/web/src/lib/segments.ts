@@ -60,7 +60,7 @@ export function createSegment<T extends SegmentState>(
     state: {
       ...state,
       segments: [...state.segments, validated.segment],
-      selectedSegmentId: validated.segment.id,
+      selectedSegmentId: state.selectedSegmentId,
     },
   };
 }

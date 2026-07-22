@@ -70,6 +70,7 @@
     onThumbnailLoadError: () => void;
   } = $props();
 
+  let workbench = $state<HTMLElement>();
   let video = $state<HTMLVideoElement>();
   let currentSeconds = $state(untrack(() => project.playbackPositionSeconds));
   let mediaDuration = $state(
@@ -430,23 +431,42 @@
     );
   }
 
-  function handleKeyboard(event: KeyboardEvent): void {
-    if (
-      interactionLocked ||
-      event.defaultPrevented ||
-      isTextEntryTarget(event.target)
-    )
-      return;
+  function isNativeButtonActivation(event: KeyboardEvent): boolean {
+    return (
+      (event.code === 'Space' || event.key === 'Enter') &&
+      event.target instanceof Element &&
+      event.target.closest('button') !== null
+    );
+  }
 
-    const saveShortcut =
+  function isSaveShortcut(event: KeyboardEvent): boolean {
+    return (
       (event.metaKey || event.ctrlKey) &&
       !event.altKey &&
-      event.key.toLowerCase() === 's';
-    if (saveShortcut) {
+      event.key.toLowerCase() === 's'
+    );
+  }
+
+  function handleWindowKeyboard(event: KeyboardEvent): void {
+    if (interactionLocked || event.defaultPrevented) return;
+
+    if (isSaveShortcut(event)) {
       event.preventDefault();
       onSave();
       return;
     }
+
+    if (workbench?.contains(document.activeElement)) handleKeyboard(event);
+  }
+
+  function handleKeyboard(event: KeyboardEvent): void {
+    if (
+      interactionLocked ||
+      event.defaultPrevented ||
+      isTextEntryTarget(event.target) ||
+      isNativeButtonActivation(event)
+    )
+      return;
 
     if (event.metaKey || event.ctrlKey || event.altKey) return;
 
@@ -503,14 +523,6 @@
       return;
     }
 
-    if (
-      event.key === 'Enter' &&
-      event.target instanceof Element &&
-      event.target.closest('button') !== null
-    ) {
-      return;
-    }
-
     if (event.key === 'Enter' && project.selectedSegmentId !== null) {
       event.preventDefault();
       void applyPlaybackDecision(
@@ -538,7 +550,6 @@
       const segmentStart = pendingStartSeconds;
       pendingStartSeconds = null;
       let created = false;
-      let createdSegment: Segment | null = null;
       updateProject((current) => {
         const result = createSegment(
           current,
@@ -548,15 +559,8 @@
         );
         segmentError = result.ok ? null : result.message;
         created = result.ok;
-        if (result.ok) createdSegment = result.state.segments.at(-1) ?? null;
         return result.state;
       });
-      if (createdSegment !== null) {
-        setBoundaryFocus(null);
-        void applyPlaybackDecision(
-          selectPlaybackSegment(playbackState, createdSegment),
-        );
-      }
       if (created && project.settings.pauseAfterCreation) video?.pause();
       return;
     }
@@ -588,6 +592,7 @@
   }
 
   function handleVideoClick(event: MouseEvent): void {
+    workbench?.focus({ preventScroll: true });
     if (
       video === undefined ||
       project.selectedSegmentId === null ||
@@ -628,7 +633,7 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeyboard} />
+<svelte:window onkeydown={handleWindowKeyboard} />
 
 <div
   class={['video-editor', segmentsCollapsed && 'segments-collapsed']}
@@ -636,72 +641,86 @@
   aria-busy={interactionLocked}
 >
   <section class="video-workbench" aria-label="Video editor">
-    <!-- User-selected source files do not include a separately managed caption track. -->
-    <!-- svelte-ignore a11y_media_has_caption -->
-    <video
-      bind:this={video}
-      src={sourceUrl(project.id)}
-      controls={!interactionLocked}
-      preload="metadata"
-      onloadedmetadata={restorePosition}
-      onplay={handlePlay}
-      onpause={handlePause}
-      onended={handleEnded}
-      onclick={handleVideoClick}
-      onseeking={() => {
-        if (video !== undefined) currentSeconds = video.currentTime;
-      }}
-      onseeked={handleSeeked}
-    ></video>
+    <!-- This custom media surface intentionally owns keyboard playback commands. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div
+      class="media-workbench"
+      role="region"
+      aria-label="Video and timeline controls"
+      tabindex="0"
+      bind:this={workbench}
+    >
+      <!-- User-selected source files do not include a separately managed caption track. -->
+      <!-- svelte-ignore a11y_media_has_caption -->
+      <video
+        bind:this={video}
+        src={sourceUrl(project.id)}
+        controls={!interactionLocked}
+        preload="metadata"
+        onloadedmetadata={restorePosition}
+        onplay={handlePlay}
+        onpause={handlePause}
+        onended={handleEnded}
+        onclick={handleVideoClick}
+        onseeking={() => {
+          if (video !== undefined) currentSeconds = video.currentTime;
+        }}
+        onseeked={handleSeeked}
+      ></video>
 
-    <div class="transport-summary" aria-live="off">
-      <span>{currentSeconds.toFixed(2)}s / {displayDuration.toFixed(2)}s</span>
-      <span>{playing ? 'Playing' : 'Paused'}</span>
-      <span
-        >{project.selectedSegmentId === null ? 'Full video' : 'Segment'}</span
-      >
-      {#if pendingStartSeconds !== null}
-        <span class="pending-label">In: {pendingStartSeconds.toFixed(2)}s</span>
-      {/if}
-      {#if segmentError !== null}
-        <span class="error-text" aria-live="polite">{segmentError}</span>
-      {/if}
-      {#if playbackError !== null}
-        <span class="error-text" aria-live="polite">{playbackError}</span>
+      <div class="transport-summary" aria-live="off">
+        <span>{currentSeconds.toFixed(2)}s / {displayDuration.toFixed(2)}s</span
+        >
+        <span>{playing ? 'Playing' : 'Paused'}</span>
+        <span
+          >{project.selectedSegmentId === null ? 'Full video' : 'Segment'}</span
+        >
+        <span class="keyboard-target" aria-hidden="true">Keyboard active</span>
+        {#if pendingStartSeconds !== null}
+          <span class="pending-label"
+            >In: {pendingStartSeconds.toFixed(2)}s</span
+          >
+        {/if}
+        {#if segmentError !== null}
+          <span class="error-text" aria-live="polite">{segmentError}</span>
+        {/if}
+        {#if playbackError !== null}
+          <span class="error-text" aria-live="polite">{playbackError}</span>
+        {/if}
+      </div>
+
+      <PrecisionTimeline
+        projectId={project.id}
+        {thumbnailManifest}
+        {thumbnailState}
+        {thumbnailRetrying}
+        {onRetryThumbnails}
+        {onThumbnailLoadError}
+        durationSeconds={displayDuration}
+        {currentSeconds}
+        {pendingStartSeconds}
+        segments={project.segments}
+        selectedSegmentId={project.selectedSegmentId}
+        zoom={timelineZoom}
+        offsetSeconds={timelineOffsetSeconds}
+        onSelect={selectSegment}
+        onSeek={seek}
+        onClearSelectionAndSeek={clearSegmentSelection}
+        onViewportInput={updateTimelineViewport}
+      />
+
+      {#if selectedSegment !== null}
+        <BoundaryEditor
+          segment={selectedSegment}
+          focus={boundaryFocus}
+          frameSeconds={frameStep.seconds}
+          approximate={frameStep.approximate}
+          error={segmentError}
+          onFocus={(edge) => setBoundaryFocus(focusBoundary(project, edge))}
+          onNudge={nudgeFocusedBoundary}
+        />
       {/if}
     </div>
-
-    <PrecisionTimeline
-      projectId={project.id}
-      {thumbnailManifest}
-      {thumbnailState}
-      {thumbnailRetrying}
-      {onRetryThumbnails}
-      {onThumbnailLoadError}
-      durationSeconds={displayDuration}
-      {currentSeconds}
-      {pendingStartSeconds}
-      segments={project.segments}
-      selectedSegmentId={project.selectedSegmentId}
-      zoom={timelineZoom}
-      offsetSeconds={timelineOffsetSeconds}
-      onSelect={selectSegment}
-      onSeek={seek}
-      onClearSelectionAndSeek={clearSegmentSelection}
-      onViewportInput={updateTimelineViewport}
-    />
-
-    {#if selectedSegment !== null}
-      <BoundaryEditor
-        segment={selectedSegment}
-        focus={boundaryFocus}
-        frameSeconds={frameStep.seconds}
-        approximate={frameStep.approximate}
-        error={segmentError}
-        onFocus={(edge) => setBoundaryFocus(focusBoundary(project, edge))}
-        onNudge={nudgeFocusedBoundary}
-      />
-    {/if}
 
     <div class="editor-controls">
       <label>

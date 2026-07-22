@@ -30,11 +30,11 @@
 - Consumes: `createSegment<T extends SegmentState>(state, startSeconds, endSeconds, durationSeconds, createId)`.
 - Produces: the same result type, with successful creation preserving `state.selectedSegmentId`.
 
-- [ ] **Step 1: Change the segment test to require selection preservation**
+- [x] **Step 1: Change the segment test to require selection preservation**
 
   Rename the creation test to `creates segments in creation order without changing playback selection`. Assert a null selection remains null, then add a case whose existing selected segment remains selected after another valid fragment is created.
 
-- [ ] **Step 2: Run the focused test and confirm the old selection behavior fails**
+- [x] **Step 2: Run the focused test and confirm the old selection behavior fails**
 
   ```bash
   node_modules/.bin/vitest run apps/web/src/lib/segments.test.ts
@@ -42,7 +42,7 @@
 
   Expected: the creation selection assertions fail because `createSegment` currently selects the new fragment.
 
-- [ ] **Step 3: Preserve the incoming selection**
+- [x] **Step 3: Preserve the incoming selection**
 
   Return the appended segment list without assigning `validated.segment.id`:
 
@@ -54,7 +54,7 @@
   }
   ```
 
-- [ ] **Step 4: Run the focused test**
+- [x] **Step 4: Run the focused test**
 
   ```bash
   node_modules/.bin/vitest run apps/web/src/lib/segments.test.ts
@@ -74,7 +74,7 @@
 - Consumes: existing `handleKeyboard`, `togglePlayback`, playback decisions, and `handleVideoClick`.
 - Produces: a `tabindex="0"` media region that owns media shortcuts and visibly communicates `:focus-within`; the window listener retains only Cmd/Ctrl+S.
 
-- [ ] **Step 1: Bind and focus the workbench from video interaction**
+- [x] **Step 1: Bind and focus the workbench from video interaction**
 
   Add `let workbench = $state<HTMLElement>();`, bind it to `.video-workbench`, and call:
 
@@ -84,19 +84,19 @@
 
   at the start of `handleVideoClick`. This keeps video clicks on the keyboard surface before optionally clearing fragment selection.
 
-- [ ] **Step 2: Scope keyboard routing to the workbench**
+- [x] **Step 2: Scope keyboard routing to the workbench**
 
-  Replace the media-wide `<svelte:window onkeydown={handleKeyboard} />` listener with a save-only window handler. Put `tabindex="0"` and `onkeydown={handleKeyboard}` on `.video-workbench`. In `handleKeyboard`, ignore all media keys from inputs, textareas, selects, and editable content. Preserve native Space/Enter activation on buttons, but allow arrow commands from focused boundary buttons to reach the existing boundary controller. The timeline slider and workbench itself forward the complete media command set.
+  Replace the unconditional media-wide `<svelte:window onkeydown={handleKeyboard} />` listener with a window handler that always retains save but routes media commands only when the active element is inside the focusable workbench. In `handleKeyboard`, ignore all media keys from inputs, textareas, selects, and editable content. Preserve native Space/Enter activation on buttons, but allow arrow commands from focused boundary buttons to reach the existing boundary controller. The timeline slider and workbench itself forward the complete media command set.
 
-- [ ] **Step 3: Stop selecting newly created fragments in component playback state**
+- [x] **Step 3: Stop selecting newly created fragments in component playback state**
 
   Remove `createdSegment` and the `selectPlaybackSegment(...)` call from the `O` branch. Successful creation only updates the project, clears the pending in-point, optionally applies the existing pause-after-creation setting, and leaves `playbackState` unchanged.
 
-- [ ] **Step 4: Add a restrained visual focus indicator**
+- [x] **Step 4: Add a restrained visual focus indicator**
 
   Add an `aria-hidden="true"` `Keyboard active` label to the transport summary. Show it only under `.video-workbench:focus-within`, and give the workbench a two-pixel outline with offset under `:focus-visible`/`:focus-within`. Keep the label compact and do not overlay the video or timeline.
 
-- [ ] **Step 5: Run focused and component validation**
+- [x] **Step 5: Run focused and component validation**
 
   ```bash
   node_modules/.bin/vitest run apps/web/src/lib/segments.test.ts apps/web/src/lib/playback-controller.test.ts apps/web/src/lib/trim-controller.test.ts
@@ -108,7 +108,7 @@
 
   Expected: focused tests pass, Svelte reports zero errors and warnings, and all static checks pass.
 
-- [ ] **Step 6: Browser smoke and commit**
+- [x] **Step 6: Browser smoke and commit**
 
   Verify that the workbench indicator appears on keyboard focus; full-video playback continues after `I`/`O`; the new fragment stays unselected; Space and seek keys work from the workbench/timeline; clicking a fragment still selects and seeks without autoplay; and keys outside the workbench do not control video.
 
