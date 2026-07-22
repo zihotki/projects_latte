@@ -17,6 +17,7 @@ export interface CreateAppOptions {
   readonly config?: ServerConfig;
   readonly picker?: SourcePicker;
   readonly probeRunner?: import('./jobs/ffprobe-runner.js').ProbeRunner;
+  readonly thumbnailGenerator?: import('./thumbnails/thumbnail-worker.js').ThumbnailGenerator;
   readonly services?: AppServices;
 }
 
@@ -31,6 +32,7 @@ export function createApp(options: CreateAppOptions = {}): CutOnEightApp {
       config: options.config ?? getServerConfig(),
       picker: options.picker ?? new MacOsSourcePicker(),
       probeRunner: options.probeRunner,
+      thumbnailGenerator: options.thumbnailGenerator,
     });
   const app = Fastify({ logger: true });
 

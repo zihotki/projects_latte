@@ -13,7 +13,13 @@ import {
   type ProbeResult,
   type ProbeRunner,
 } from './ffprobe-runner.js';
+import { FfmpegError } from './ffmpeg-runner.js';
 import { thumbnailJobIdentity } from './thumbnail-job.js';
+import type { ProjectDocument } from '@cut-on-eight/contracts';
+import {
+  ThumbnailGenerationError,
+  type ThumbnailGenerator,
+} from '../thumbnails/thumbnail-worker.js';
 
 type MetadataUpdater = (
   projectId: string,
@@ -22,8 +28,15 @@ type MetadataUpdater = (
 type ThumbnailJobReconciler = () => Promise<
   readonly JobSnapshot['errors'][number][]
 >;
+interface ThumbnailContext {
+  readonly destinationDirectory: string;
+  readonly project: ProjectDocument;
+  readonly sourcePath: string;
+}
+type ThumbnailContextLoader = (projectId: string) => Promise<ThumbnailContext>;
 
 export class JobQueue {
+  private activeThumbnailAbort: AbortController | undefined;
   private recoveryErrors: JobSnapshot['errors'] = [];
   private readonly events = new EventEmitter();
   private shuttingDown = false;
@@ -37,6 +50,8 @@ export class JobQueue {
     private readonly probe: ProbeRunner,
     private readonly updateMetadata: MetadataUpdater,
     private readonly reconcileThumbnailJobs: ThumbnailJobReconciler = async () => [],
+    private readonly thumbnailGenerator?: ThumbnailGenerator,
+    private readonly loadThumbnailContext?: ThumbnailContextLoader,
   ) {}
 
   async recover(errors: JobSnapshot['errors'] = []): Promise<void> {
@@ -103,6 +118,7 @@ export class JobQueue {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    this.activeThumbnailAbort?.abort();
     await this.waitForIdle();
   }
 
@@ -110,9 +126,7 @@ export class JobQueue {
     if (
       this.worker !== undefined ||
       this.shuttingDown ||
-      !this.snapshotValue.jobs.some(
-        (job) => job.type === 'inspect-source' && job.state === 'queued',
-      )
+      !this.snapshotValue.jobs.some((job) => this.canRun(job))
     ) {
       return;
     }
@@ -121,11 +135,7 @@ export class JobQueue {
     void worker.then(
       () => {
         if (this.worker === worker) this.worker = undefined;
-        if (
-          this.snapshotValue.jobs.some(
-            (job) => job.type === 'inspect-source' && job.state === 'queued',
-          )
-        ) {
+        if (this.snapshotValue.jobs.some((job) => this.canRun(job))) {
           this.startWorker();
         }
       },
@@ -137,7 +147,7 @@ export class JobQueue {
             ...this.snapshotValue.errors,
             {
               code: 'job_queue_failed',
-              message: 'The inspection queue could not continue.',
+              message: 'The background queue could not continue.',
               projectId: null,
             },
           ],
@@ -153,9 +163,7 @@ export class JobQueue {
       const library = await this.library.read();
       const current = await this.repository.list(library.entries);
       this.setSnapshot(this.withRecoveryErrors(current));
-      const queued = current.jobs.find(
-        (job) => job.type === 'inspect-source' && job.state === 'queued',
-      );
+      const queued = current.jobs.find((job) => this.canRun(job));
       if (queued === undefined) return;
 
       const running = await this.repository.markRunning(
@@ -164,27 +172,69 @@ export class JobQueue {
       );
       await this.publishFresh();
       let completedEntry: (typeof library.entries)[number] | undefined;
+      let pausedForShutdown = false;
+      let thumbnailAbort: AbortController | undefined;
       try {
         const entry = library.entries.find(
           (candidate) => candidate.id === running.projectId,
         );
         if (entry === undefined) throw new Error('job_project_not_found');
-        const source = this.layout.resolveManagedRelativePath(
-          entry.managedSourcePath,
-        );
-        await this.layout.assertNoSymlinkComponents(source);
-        const metadata = await this.probe.inspect(source);
-        await this.updateMetadata(running.projectId, metadata);
+        if (running.type === 'inspect-source') {
+          const source = this.layout.resolveManagedRelativePath(
+            entry.managedSourcePath,
+          );
+          await this.layout.assertNoSymlinkComponents(source);
+          const metadata = await this.probe.inspect(source);
+          await this.updateMetadata(running.projectId, metadata);
+          completedEntry = entry;
+        } else {
+          if (
+            this.thumbnailGenerator === undefined ||
+            this.loadThumbnailContext === undefined
+          ) {
+            throw new ThumbnailGenerationError(
+              'Thumbnail generation is not configured.',
+            );
+          }
+          const context = await this.loadThumbnailContext(running.projectId);
+          await this.layout.assertNoSymlinkComponents(context.sourcePath);
+          await this.layout.assertNoSymlinkComponents(
+            context.destinationDirectory,
+          );
+          thumbnailAbort = new AbortController();
+          this.activeThumbnailAbort = thumbnailAbort;
+          if (this.shuttingDown) thumbnailAbort.abort();
+          await this.thumbnailGenerator.generate(
+            context.project,
+            context.sourcePath,
+            context.destinationDirectory,
+            {
+              generatorVersion: running.generatorVersion,
+              sourceFingerprint: running.sourceFingerprint,
+            },
+            thumbnailAbort.signal,
+          );
+        }
         await this.repository.markCompleted(library.entries, running);
-        completedEntry = entry;
       } catch (error) {
-        await this.repository.markFailed(
-          library.entries,
-          running,
-          this.safeFailure(error),
-        );
+        pausedForShutdown =
+          running.type === 'generate-thumbnails' &&
+          this.shuttingDown &&
+          thumbnailAbort?.signal.aborted === true;
+        if (!pausedForShutdown) {
+          await this.repository.markFailed(
+            library.entries,
+            running,
+            this.safeFailure(running.type, error),
+          );
+        }
+      } finally {
+        if (this.activeThumbnailAbort === thumbnailAbort) {
+          this.activeThumbnailAbort = undefined;
+        }
       }
       await this.publishFresh();
+      if (pausedForShutdown) return;
 
       if (completedEntry !== undefined) {
         try {
@@ -214,12 +264,26 @@ export class JobQueue {
     }
   }
 
-  private safeFailure(error: unknown): {
+  private safeFailure(
+    jobType: JobRecord['type'],
+    error: unknown,
+  ): {
     code: string;
     message: string;
     retryable: boolean;
   } {
-    if (error instanceof ProbeError) {
+    if (jobType === 'inspect-source' && error instanceof ProbeError) {
+      return {
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable,
+      };
+    }
+    if (
+      jobType === 'generate-thumbnails' &&
+      (error instanceof FfmpegError ||
+        error instanceof ThumbnailGenerationError)
+    ) {
       return {
         code: error.code,
         message: error.message,
@@ -227,10 +291,23 @@ export class JobQueue {
       };
     }
     return {
-      code: 'inspection_failed',
-      message: 'The managed source could not be inspected.',
+      code:
+        jobType === 'inspect-source'
+          ? 'inspection_failed'
+          : 'thumbnail_generation_failed',
+      message:
+        jobType === 'inspect-source'
+          ? 'The managed source could not be inspected.'
+          : 'Thumbnail sprites could not be generated safely.',
       retryable: true,
     };
+  }
+
+  private canRun(job: JobRecord): boolean {
+    return (
+      job.state === 'queued' &&
+      (job.type === 'inspect-source' || this.thumbnailGenerator !== undefined)
+    );
   }
 
   private async publishFresh(): Promise<void> {

@@ -114,6 +114,11 @@ export class StorageLayout {
     return `${this.resolveManagedRelativePath(managedSourceRelativePath)}.danceclips.json`;
   }
 
+  thumbnailsDirectory(managedSourceRelativePath: string): string {
+    const source = this.resolveManagedRelativePath(managedSourceRelativePath);
+    return resolve(source, '..', 'thumbnails');
+  }
+
   async assertNoSymlinkComponents(target: string): Promise<void> {
     const absoluteTarget = resolve(target);
     const relativeTarget = relative(this.dataRoot, absoluteTarget);

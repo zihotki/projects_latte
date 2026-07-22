@@ -419,29 +419,29 @@
 - Produces `FfmpegRunner.generateSprites(request): Promise<void>` using `spawn(..., { shell: false })`, bounded stderr, timeout, and injected process runner for tests.
 - Produces `ThumbnailWorker.generate(project, sourcePath, destinationDirectory): Promise<ThumbnailManifestV1>`.
 
-- [ ] **Step 1: Write failing sampling and fake-runner tests**
+- [x] **Step 1: Write failing sampling and fake-runner tests**
 
   Cover short/one-hour sources, maximum 600 samples, safe sprite capacity/dimensions, shell-free argument construction, timeout/output limits, missing FFmpeg, partial output, corrupt dimensions, and failure preserving the previous valid set.
 
-- [ ] **Step 2: Implement bounded WebP sprite generation**
+- [x] **Step 2: Implement bounded WebP sprite generation**
 
   Generate only inside a sibling staging directory. FFmpeg writes bounded sprite pages directly or writes ephemeral sampled frames that are packed and deleted before promotion. Never promote individual frames. Use deterministic `sprite-001.webp` names.
 
-- [ ] **Step 3: Validate and atomically promote the complete set**
+- [x] **Step 3: Validate and atomically promote the complete set**
 
   Validate manifest tuples and every referenced page before writing `manifest.json` last inside staging. Rename the previous set aside, rename staging to `thumbnails`, sync the project directory, then remove the old set. On failure restore the previous complete set and report a retryable safe error.
 
-- [ ] **Step 4: Integrate the worker with job dispatch**
+- [x] **Step 4: Integrate the worker with job dispatch**
 
   Dispatch by `job.type`; inspection and generation failures receive distinct stable codes. A missing/stale/corrupt manifest queues regeneration. Valid compatible output survives reopen/restart without another job.
 
-- [ ] **Step 5: Run focused server tests**
+- [x] **Step 5: Run focused server tests**
 
   Run: `node_modules/.bin/vitest run apps/server/test/ffmpeg-runner.test.ts apps/server/test/thumbnail-worker.test.ts apps/server/test/job-queue.test.ts`
 
   Expected: fake-process tests pass without invoking real FFmpeg.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add apps/server/src apps/server/test

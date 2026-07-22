@@ -81,7 +81,8 @@ export class JobRepository {
         (job): job is ThumbnailJobRecord =>
           job.type === 'generate-thumbnails' &&
           job.generatorVersion === identity.generatorVersion &&
-          job.sourceFingerprint === identity.sourceFingerprint,
+          job.sourceFingerprint === identity.sourceFingerprint &&
+          job.state !== 'completed',
       );
 
       if (existing !== undefined) return existing;

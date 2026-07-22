@@ -38,6 +38,7 @@ import {
 } from '../storage/workspace-repository.js';
 import { JobRepository } from '../jobs/job-repository.js';
 import { thumbnailJobIdentity } from '../jobs/thumbnail-job.js';
+import { readCompatibleThumbnailManifest } from '../thumbnails/thumbnail-manifest.js';
 import type { SourcePicker } from './source-picker.js';
 import { validateMp4Source, type ValidatedSource } from './source-validator.js';
 
@@ -578,10 +579,19 @@ export class ImportService {
         project.source.fileName,
       ).directory;
       try {
+        const identity = thumbnailJobIdentity(entry.fingerprint);
+        const compatible = await readCompatibleThumbnailManifest(
+          this.layout.thumbnailsDirectory(entry.managedSourcePath),
+          {
+            ...identity,
+            durationSeconds: project.source.durationSeconds,
+          },
+        );
+        if (compatible !== undefined) continue;
         await this.jobs.ensureThumbnailJob(
           entry.id,
           projectDirectory,
-          thumbnailJobIdentity(entry.fingerprint),
+          identity,
         );
       } catch {
         issues.push({

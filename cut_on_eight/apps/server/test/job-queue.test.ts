@@ -7,9 +7,14 @@ import { createApp } from '../src/app.js';
 import type { ServerConfig } from '../src/config.js';
 import type { ProbeResult, ProbeRunner } from '../src/jobs/ffprobe-runner.js';
 import { ProbeError } from '../src/jobs/ffprobe-runner.js';
+import { FfmpegError } from '../src/jobs/ffmpeg-runner.js';
 import { JobQueue } from '../src/jobs/job-queue.js';
 import { JobRepository } from '../src/jobs/job-repository.js';
 import { thumbnailJobIdentity } from '../src/jobs/thumbnail-job.js';
+import {
+  createSamplingPlan,
+  createThumbnailManifest,
+} from '../src/thumbnails/thumbnail-manifest.js';
 import {
   LibraryRepository,
   type LibraryEntry,
@@ -533,7 +538,17 @@ describe('durable inspection queue', () => {
       host: '127.0.0.1',
       port: 4318,
     };
-    const app = createApp({ config, probeRunner: probe });
+    const app = createApp({
+      config,
+      probeRunner: probe,
+      thumbnailGenerator: {
+        generate: async (_project, _source, _destination, identity) =>
+          createThumbnailManifest(
+            { ...identity, durationSeconds: metadata.durationSeconds },
+            createSamplingPlan(metadata.durationSeconds),
+          ),
+      },
+    });
     await app.recover();
     await until(() => resolveProbe !== undefined);
 
@@ -653,5 +668,122 @@ describe('durable inspection queue', () => {
       attempts: 2,
     });
     await queue.waitForIdle();
+  });
+
+  it('dispatches thumbnail jobs and maps unexpected failures to a stable retryable code', async () => {
+    const { entries, jobs, layout, projects } = await fixture();
+    const current = project(firstId, 'First.mp4');
+    const inspected = {
+      ...current,
+      source: { ...current.source, ...metadata },
+    };
+    await projects.save(firstId, entries[0]!.managedSourcePath, inspected);
+    await jobs.ensureThumbnailJob(
+      firstId,
+      layout.forProject(firstId, 'First.mp4').directory,
+      thumbnailJobIdentity(entries[0]!.fingerprint),
+    );
+    const calls: string[] = [];
+    const queue = new JobQueue(
+      layout,
+      new LibraryRepository(layout),
+      jobs,
+      { isAvailable: async () => true, inspect: async () => metadata },
+      updater(projects, entries),
+      async () => [],
+      {
+        generate: async (_document, sourcePath) => {
+          calls.push(sourcePath);
+          throw Object.assign(new Error('raw EIO detail'), { code: 'EIO' });
+        },
+      },
+      async () => ({
+        project: inspected,
+        sourcePath: layout.resolveManagedRelativePath(
+          entries[0]!.managedSourcePath,
+        ),
+        destinationDirectory: layout.thumbnailsDirectory(
+          entries[0]!.managedSourcePath,
+        ),
+      }),
+    );
+
+    await queue.recover();
+    await queue.waitForIdle();
+
+    expect(calls).toHaveLength(1);
+    expect(queue.snapshot().jobs[0]).toMatchObject({
+      type: 'generate-thumbnails',
+      state: 'failed',
+      error: {
+        code: 'thumbnail_generation_failed',
+        message: 'Thumbnail sprites could not be generated safely.',
+        retryable: true,
+      },
+    });
+  });
+
+  it('aborts thumbnail work on shutdown and leaves it recoverable', async () => {
+    const { entries, jobs, layout, projects } = await fixture();
+    const current = project(firstId, 'First.mp4');
+    const inspected = {
+      ...current,
+      source: { ...current.source, ...metadata },
+    };
+    await projects.save(firstId, entries[0]!.managedSourcePath, inspected);
+    await jobs.ensureThumbnailJob(
+      firstId,
+      layout.forProject(firstId, 'First.mp4').directory,
+      thumbnailJobIdentity(entries[0]!.fingerprint),
+    );
+    let activeSignal: AbortSignal | undefined;
+    const queue = new JobQueue(
+      layout,
+      new LibraryRepository(layout),
+      jobs,
+      { isAvailable: async () => true, inspect: async () => metadata },
+      updater(projects, entries),
+      async () => [],
+      {
+        generate: async (_document, _source, _destination, _identity, signal) =>
+          new Promise((_resolve, reject) => {
+            activeSignal = signal;
+            signal?.addEventListener(
+              'abort',
+              () =>
+                reject(
+                  new FfmpegError(
+                    'ffmpeg_aborted',
+                    'FFmpeg thumbnail generation was paused for shutdown.',
+                    true,
+                  ),
+                ),
+              { once: true },
+            );
+          }),
+      },
+      async () => ({
+        project: inspected,
+        sourcePath: layout.resolveManagedRelativePath(
+          entries[0]!.managedSourcePath,
+        ),
+        destinationDirectory: layout.thumbnailsDirectory(
+          entries[0]!.managedSourcePath,
+        ),
+      }),
+    );
+
+    await queue.recover();
+    await until(() => activeSignal !== undefined);
+    await queue.shutdown();
+
+    expect(activeSignal?.aborted).toBe(true);
+    expect(queue.snapshot().jobs[0]).toMatchObject({
+      type: 'generate-thumbnails',
+      state: 'running',
+    });
+    await expect(jobs.recoverRunning(entries)).resolves.toMatchObject({
+      jobs: [{ type: 'generate-thumbnails', state: 'queued', attempts: 1 }],
+    });
   });
 });

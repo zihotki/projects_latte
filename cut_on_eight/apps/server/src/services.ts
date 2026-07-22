@@ -26,6 +26,7 @@ import {
 } from './jobs/ffprobe-runner.js';
 import { JobQueue } from './jobs/job-queue.js';
 import { JobRepository } from './jobs/job-repository.js';
+import { FfmpegRunner } from './jobs/ffmpeg-runner.js';
 import { CatalogRepository } from './storage/catalog-repository.js';
 import { CorruptPersistedDataError } from './storage/atomic-json.js';
 import {
@@ -42,6 +43,10 @@ import {
   WorkspaceRepository,
   type WorkspaceDocument,
 } from './storage/workspace-repository.js';
+import {
+  ThumbnailWorker,
+  type ThumbnailGenerator,
+} from './thumbnails/thumbnail-worker.js';
 
 export interface ManagedSource {
   readonly file: FileHandle;
@@ -74,6 +79,7 @@ export interface CreateServicesOptions {
   readonly config: ServerConfig;
   readonly picker: SourcePicker;
   readonly probeRunner?: ProbeRunner;
+  readonly thumbnailGenerator?: ThumbnailGenerator;
 }
 
 function activeWorkspace(
@@ -152,6 +158,7 @@ export function createServices(options: CreateServicesOptions): AppServices {
     imports,
     jobs,
     options.probeRunner ?? new FfprobeRunner(),
+    options.thumbnailGenerator ?? new ThumbnailWorker(new FfmpegRunner()),
   );
 }
 
@@ -167,6 +174,7 @@ class ManagedWorkspaceServices implements AppServices {
     private readonly imports: ImportService,
     jobs: JobRepository,
     probe: ProbeRunner,
+    thumbnailGenerator: ThumbnailGenerator,
   ) {
     this.jobQueue = new JobQueue(
       layout,
@@ -175,6 +183,8 @@ class ManagedWorkspaceServices implements AppServices {
       probe,
       (projectId, metadata) => this.updateSourceMetadata(projectId, metadata),
       () => this.imports.reconcileThumbnailJobs(),
+      thumbnailGenerator,
+      (projectId) => this.loadThumbnailContext(projectId),
     );
   }
 
@@ -436,6 +446,26 @@ class ManagedWorkspaceServices implements AppServices {
         },
       });
     });
+  }
+
+  private async loadThumbnailContext(projectId: string): Promise<{
+    destinationDirectory: string;
+    project: ProjectDocument;
+    sourcePath: string;
+  }> {
+    const entry = await this.requireLibraryEntry(projectId);
+    return {
+      destinationDirectory: this.layout.thumbnailsDirectory(
+        entry.managedSourcePath,
+      ),
+      project: await this.projects.readRequired(
+        projectId,
+        entry.managedSourcePath,
+      ),
+      sourcePath: this.layout.resolveManagedRelativePath(
+        entry.managedSourcePath,
+      ),
+    };
   }
 
   private async requireLibraryEntry(projectId: string): Promise<LibraryEntry> {
