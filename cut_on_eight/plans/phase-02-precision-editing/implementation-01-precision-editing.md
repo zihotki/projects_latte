@@ -515,11 +515,11 @@
 
 - Consumes all prior tasks; produces no new runtime contract.
 
-- [ ] **Step 1: Run one optional real-FFmpeg integration smoke**
+- [x] **Step 1: Run one optional real-FFmpeg integration smoke**
 
   Generate a tiny MP4 in `/private/tmp`, import it into an isolated `/private/tmp/cut-on-eight-phase2-data`, wait for inspection and thumbnails, then assert the managed project contains `manifest.json` plus bounded `.webp` pages and no individual sampled frame files. Skip with a clear note only when FFmpeg is unavailable.
 
-- [ ] **Step 2: Run the complete automated suite once**
+- [x] **Step 2: Run the complete automated suite once**
 
   Run direct package binaries to avoid the known silent root-wrapper issue:
 
@@ -536,27 +536,27 @@
 
   Expected: all tests and static checks pass.
 
-- [ ] **Step 3: Build production artifacts**
+- [x] **Step 3: Build production artifacts**
 
   Run:
 
   ```bash
   node_modules/.bin/tsc -p packages/contracts/tsconfig.json
   node_modules/.bin/tsc -p apps/server/tsconfig.json
-  apps/web/node_modules/.bin/vite build --config apps/web/vite.config.ts
+  (cd apps/web && node_modules/.bin/vite build --config vite.config.ts)
   ```
 
   Expected: contracts, server, and Vite builds finish successfully.
 
-- [ ] **Step 4: Browser smoke the acceptance workflow**
+- [x] **Step 4: Browser smoke the acceptance workflow**
 
   Through the Vite proxy, verify Editor/Library navigation, compact help/status, panel collapse, project switching, full-video seek, segment select-without-play, exact looping, Escape clearing, Start/End click and keyboard nudges, duration warnings, zoom/pan/fit, two-row overlap, triple-overlap explanation, async thumbnail appearance/retry, and no console errors.
 
-- [ ] **Step 5: Record manual macOS acceptance accurately**
+- [x] **Step 5: Record manual macOS acceptance accurately**
 
   Mark browser-automated items complete. Keep native picker, trackpad feel, real video playback precision, and native Play loop behavior explicitly pending unless a person performs them; do not claim them from unit tests.
 
-- [ ] **Step 6: Update status and commit**
+- [x] **Step 6: Update status and commit**
 
   Set design status to `Implemented` only when all automated checks and required manual acceptance are complete; otherwise use `Implementation complete; manual macOS acceptance pending` and list the remaining checks.
 
@@ -564,6 +564,8 @@
   git add README.md plans/phase-02-precision-editing
   git commit -m "docs: record Phase 2 verification"
   ```
+
+**Recorded 2026-07-22:** The real-FFmpeg smoke passed with a manifest and one WebP sprite page. The complete suite passed with 223 tests (31 contracts, 124 server, 68 web), TypeScript, Svelte, ESLint, and Prettier checks passed, and all production builds completed. Browser automation covered the Editor/Library workflow, project switching, seek and playback scope, precision controls, zoom/fit, overlap constraints, thumbnail retry, and a clean console. Native picker behavior, trackpad feel, representative real-video precision, and native Play-control loop feel remain pending human macOS acceptance.
 
 ---
 

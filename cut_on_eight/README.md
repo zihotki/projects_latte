@@ -7,11 +7,12 @@ Local browser-based dance-video segmentation and cataloguing for macOS.
 - macOS (the importer uses the native file picker)
 - Node.js 24 or newer
 - pnpm 11.9.0 (`corepack enable` can provide the pinned version)
-- `ffprobe` on `PATH` for source metadata inspection (usually installed with
-  FFmpeg)
+- `ffprobe` and `ffmpeg` on `PATH` for source inspection and timeline thumbnails
 
 Missing `ffprobe` does not block importing, playback, marking, or saving. The
 inspection fails visibly and can be retried after `ffprobe` is installed.
+Missing or failed `ffmpeg` does not block editing; thumbnail generation fails
+visibly and can be retried after FFmpeg is available.
 
 ## Start
 
@@ -77,6 +78,24 @@ Source inspection jobs are persisted in each project directory. Work continues
 after a project is closed, and queued or interrupted work resumes when the
 backend restarts. Failed retryable jobs expose a **Retry** action. Missing or
 failed `ffprobe` affects metadata inspection only and never blocks editing.
+
+## Phase 2 precision editor
+
+The Editor keeps the video, zoomable thumbnail timeline, and segments dominant;
+Library is a separate top-level view and the segment panel can be collapsed.
+Selecting a segment seeks to it without playing. Press **Space** to loop that
+segment, **Enter** for contextual preview, or click outside segments to return
+to the full video. Use the Start/End controls and arrow keys for click-or-keyboard
+boundary nudging; the editor prevents more than two simultaneous overlaps and
+explains rejected edits. The central help popover shows the active shortcuts.
+
+Thumbnail work is durably queued after inspection and stored as bounded WebP
+sprite pages with one compact manifest per video. Editing remains available
+while generation is queued, running, failed, or being retried.
+
+Phase 2 implementation and automated browser acceptance are complete. Manual
+macOS acceptance remains for the native picker, trackpad interaction feel,
+representative real-video precision, and native Play-control looping feel.
 
 > [!WARNING]
 > Treat the managed data root as application-owned storage. Deleting or editing
