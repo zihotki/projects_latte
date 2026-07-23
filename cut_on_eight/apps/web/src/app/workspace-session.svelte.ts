@@ -36,6 +36,7 @@ export interface WorkspacePort {
 
 export interface WorkspaceSessionCallbacks {
   readonly onWorkspaceApplied?: (snapshot: WorkspaceSnapshot) => void;
+  readonly onProjectOpened?: (projectId: string) => void;
   readonly onImportOutcome?: (
     outcome: ImportSelectionResponse['outcome'],
   ) => void;
@@ -127,6 +128,7 @@ export class WorkspaceSession implements WorkspacePort {
         await this.controllers.get(prepared.projectId)?.flush();
       }
       this.applyWorkspace(await this.api.openProject(projectId));
+      this.callbacks.onProjectOpened?.(projectId);
       return true;
     } catch (error) {
       prepared?.control?.releaseAfterSave();
