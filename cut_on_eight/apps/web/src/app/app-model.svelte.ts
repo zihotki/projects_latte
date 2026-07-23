@@ -41,6 +41,8 @@ import {
 
 export class AppModel {
   backendState = $state<BackendState>('checking');
+  private startRevision = 0;
+  private disposed = false;
 
   constructor(
     readonly workspace: WorkspaceSession,
@@ -70,8 +72,11 @@ export class AppModel {
   }
 
   async start(): Promise<void> {
+    if (this.disposed) return;
+    const revision = ++this.startRevision;
     try {
       const snapshot = await this.workspace.initialize();
+      if (!this.isCurrentStart(revision)) return;
       this.preferences.initialize(snapshot);
       this.backendState = 'ready';
       void this.background.loadToolCapabilities();
@@ -82,7 +87,7 @@ export class AppModel {
         void this.fragments.refreshTags();
       }
     } catch {
-      this.backendState = 'unavailable';
+      if (this.isCurrentStart(revision)) this.backendState = 'unavailable';
     }
   }
 
@@ -97,8 +102,16 @@ export class AppModel {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.startRevision += 1;
+    this.fragments.dispose();
     this.background.dispose();
     this.workspace.dispose();
+  }
+
+  private isCurrentStart(revision: number): boolean {
+    return !this.disposed && revision === this.startRevision;
   }
 }
 

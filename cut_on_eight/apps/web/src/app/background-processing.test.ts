@@ -112,4 +112,15 @@ describe('BackgroundProcessing', () => {
     model.thumbnailPageLoadFailed(projectId);
     expect(model.thumbnailStateFor(projectId)).toBe('failed');
   });
+
+  it('does not reconnect after disposal', () => {
+    const connectJobEvents = vi.fn().mockReturnValue(() => undefined);
+    const model = new BackgroundProcessing(
+      api({ connectJobEvents }),
+      () => null,
+    );
+    model.dispose();
+    model.start();
+    expect(connectJobEvents).not.toHaveBeenCalled();
+  });
 });

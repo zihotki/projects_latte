@@ -55,6 +55,16 @@ function jobs(): JobRetryPort {
   return { retryingJobId: null, retryJobById: vi.fn() };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, reject, resolve };
+}
+
 function api(): FragmentApi {
   return {
     loadFragments: vi.fn().mockResolvedValue(catalogue()),
@@ -123,5 +133,36 @@ describe('FragmentLibrary', () => {
     await library.createTag('dance');
     await library.createTag('dance');
     expect(library.tags).toHaveLength(1);
+  });
+
+  it('ignores an older refresh that settles after a newer one', async () => {
+    const first = deferred<FragmentCatalogue>();
+    const second = deferred<FragmentCatalogue>();
+    const apiClient = api();
+    vi.mocked(apiClient.loadFragments)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const library = new FragmentLibrary(apiClient, workspace(), jobs());
+    const older = library.refresh();
+    const newer = library.refresh();
+    second.resolve(catalogue({ ...segment, title: 'new' }));
+    await newer;
+    first.reject(new Error('old failure'));
+    await older;
+    expect(library.catalogue?.fragments[0]?.segment.title).toBe('new');
+    expect(library.error).toBeNull();
+    expect(library.loading).toBe(false);
+  });
+
+  it('ignores refresh results after disposal', async () => {
+    const pending = deferred<FragmentCatalogue>();
+    const apiClient = api();
+    vi.mocked(apiClient.loadFragments).mockReturnValueOnce(pending.promise);
+    const library = new FragmentLibrary(apiClient, workspace(), jobs());
+    const refresh = library.refresh();
+    library.dispose();
+    pending.resolve(catalogue());
+    await refresh;
+    expect(library.catalogue).toBeNull();
   });
 });

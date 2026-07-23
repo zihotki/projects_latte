@@ -29,6 +29,7 @@ function createModel(
     deleteProject: vi.fn(),
   });
   const close = vi.fn();
+  const connectJobEvents = vi.fn().mockReturnValue(close);
   const background = new BackgroundProcessing(
     {
       loadCapabilities: vi.fn().mockResolvedValue({
@@ -37,7 +38,7 @@ function createModel(
       }),
       loadThumbnailManifest: vi.fn(),
       retryJob: vi.fn(),
-      connectJobEvents: vi.fn().mockReturnValue(close),
+      connectJobEvents,
     },
     () => workspace.workspace?.activeProjectId ?? null,
   );
@@ -67,9 +68,16 @@ function createModel(
   return {
     app: new AppModel(workspace, background, fragments, preferences),
     close,
+    connectJobEvents,
     loadFragments,
     loadTags,
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => (resolve = done));
+  return { promise, resolve };
 }
 
 describe('AppModel', () => {
@@ -106,5 +114,17 @@ describe('AppModel', () => {
     app.dispose();
     app.dispose();
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('does not start background work when disposed during initialization', async () => {
+    const pending = deferred<WorkspaceSnapshot>();
+    const { app, connectJobEvents } = createModel({
+      loadWorkspace: () => pending.promise,
+    });
+    const started = app.start();
+    app.dispose();
+    pending.resolve(emptyWorkspace);
+    await started;
+    expect(connectJobEvents).not.toHaveBeenCalled();
   });
 });

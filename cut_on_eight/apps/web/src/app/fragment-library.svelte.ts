@@ -33,6 +33,10 @@ export class FragmentLibrary {
   tags = $state.raw<TagDefinition[]>([]);
   loading = $state(false);
   error = $state<string | null>(null);
+  retryingJobId = $state<string | null>(null);
+
+  private requestRevision = 0;
+  private disposed = false;
 
   constructor(
     private readonly api: FragmentApi,
@@ -40,26 +44,30 @@ export class FragmentLibrary {
     private readonly jobs: JobRetryPort,
   ) {}
 
-  get retryingJobId(): string | null {
-    return this.jobs.retryingJobId;
-  }
-
   async refresh(): Promise<void> {
+    if (this.disposed) return;
+    const revision = ++this.requestRevision;
     this.loading = true;
     this.error = null;
     try {
-      this.catalogue = await this.api.loadFragments();
-      this.tags = this.catalogue.tags;
+      const catalogue = await this.api.loadFragments();
+      if (!this.isCurrent(revision)) return;
+      this.catalogue = catalogue;
+      this.tags = catalogue.tags;
     } catch (error) {
+      if (!this.isCurrent(revision)) return;
       this.error = describeError(error, 'Could not load fragments');
     } finally {
-      this.loading = false;
+      if (this.isCurrent(revision)) this.loading = false;
     }
   }
 
   async refreshTags(): Promise<void> {
+    if (this.disposed) return;
+    const revision = ++this.requestRevision;
     try {
-      this.tags = await this.api.loadTags();
+      const tags = await this.api.loadTags();
+      if (this.isCurrent(revision)) this.tags = tags;
     } catch {
       // Opening the fragment catalogue performs a full tag refresh later.
     }
@@ -119,18 +127,27 @@ export class FragmentLibrary {
   }
 
   async retryThumbnail(jobId: string): Promise<void> {
-    if (this.jobs.retryingJobId !== null) return;
+    if (this.retryingJobId !== null || this.jobs.retryingJobId !== null) return;
+    this.retryingJobId = jobId;
     try {
       await this.jobs.retryJobById(jobId);
       await this.refresh();
     } catch (error) {
       this.error = describeError(error, 'Could not retry thumbnails');
+    } finally {
+      this.retryingJobId = null;
     }
   }
 
   async removeManagedVideo(projectId: string): Promise<void> {
     await this.workspace.deleteManagedVideo(projectId);
     await this.refresh();
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.requestRevision += 1;
   }
 
   private replaceCatalogueSegment(projectId: string, segment: Segment): void {
@@ -143,6 +160,10 @@ export class FragmentLibrary {
           : fragment,
       ),
     };
+  }
+
+  private isCurrent(revision: number): boolean {
+    return !this.disposed && revision === this.requestRevision;
   }
 }
 

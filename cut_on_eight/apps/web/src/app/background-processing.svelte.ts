@@ -39,6 +39,7 @@ export class BackgroundProcessing {
   ) {}
 
   start(): void {
+    if (this.disposed) return;
     this.closeJobEvents?.();
     this.closeJobEvents = this.api.connectJobEvents({
       onSnapshot: (snapshot) => {
