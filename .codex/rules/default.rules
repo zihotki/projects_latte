@@ -1,0 +1,113 @@
+# Read-only Git inspection.
+prefix_rule(
+    pattern = ["git", ["status", "diff", "log", "show", "ls-files", "rev-parse"]],
+    decision = "allow",
+    justification = "Routine repository inspection is safe in this trusted repository",
+    match = [
+        "git status --short",
+        "git diff --check",
+        "git log --oneline -10",
+        "git show --stat HEAD",
+        "git ls-files",
+        "git rev-parse --show-toplevel",
+    ],
+    not_match = [
+        "git reset --hard",
+        "git restore .",
+        "git push",
+    ],
+)
+
+# Local Git index and commit operations. Networked and destructive Git commands
+# intentionally remain approval-gated.
+prefix_rule(
+    pattern = ["git", "add"],
+    decision = "allow",
+    justification = "Staging in-scope repository changes is routine local work",
+    match = [
+        "git add AGENTS.md",
+        "git add cut_on_eight/apps/web/src/App.svelte",
+    ],
+    not_match = [
+        "git push",
+        "git reset --hard",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "commit"],
+    decision = "allow",
+    justification = "Creating local commits is routine work in this repository",
+    match = [
+        "git commit -m \"refactor: organize frontend state\"",
+    ],
+    not_match = [
+        "git push",
+    ],
+)
+
+# Existing project scripts for local development and verification. Dependency
+# installation and arbitrary pnpm exec commands intentionally remain gated.
+prefix_rule(
+    pattern = ["pnpm", ["build", "check", "test", "lint", "format", "format:check", "dev"]],
+    decision = "allow",
+    justification = "Repository-defined development and verification scripts are trusted",
+    match = [
+        "pnpm build",
+        "pnpm check",
+        "pnpm test",
+        "pnpm lint",
+        "pnpm format",
+        "pnpm format:check",
+        "pnpm dev",
+    ],
+    not_match = [
+        "pnpm install",
+        "pnpm add svelte",
+        "pnpm exec sh",
+    ],
+)
+
+prefix_rule(
+    pattern = [
+        "pnpm",
+        "--filter",
+        ["@cut-on-eight/web", "@cut-on-eight/server", "@cut-on-eight/contracts"],
+        ["build", "check", "test", "dev"],
+    ],
+    decision = "allow",
+    justification = "Workspace package development and verification scripts are trusted",
+    match = [
+        "pnpm --filter @cut-on-eight/web check",
+        "pnpm --filter @cut-on-eight/server test",
+        "pnpm --filter @cut-on-eight/contracts build",
+    ],
+    not_match = [
+        "pnpm --filter other-package test",
+        "pnpm --filter @cut-on-eight/web add dependency",
+    ],
+)
+
+# Formatting and Svelte diagnostics required by this repository's AGENTS.md.
+prefix_rule(
+    pattern = [
+        ["node_modules/.bin/prettier", "../../node_modules/.bin/prettier"],
+        ["--check", "--write"],
+    ],
+    decision = "allow",
+    justification = "The repository formatter is trusted for project files",
+    match = [
+        "node_modules/.bin/prettier --check .",
+        "node_modules/.bin/prettier --write apps/web/src/App.svelte",
+        "../../node_modules/.bin/prettier --write src/App.svelte",
+    ],
+)
+
+prefix_rule(
+    pattern = ["node_modules/.bin/svelte-mcp", "svelte-autofixer"],
+    decision = "allow",
+    justification = "The repository Svelte autofixer is required for Svelte changes",
+    match = [
+        "node_modules/.bin/svelte-mcp svelte-autofixer apps/web/src/App.svelte --svelte-version 5",
+    ],
+)

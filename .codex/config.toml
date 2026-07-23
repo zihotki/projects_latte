@@ -1,0 +1,9 @@
+# Keep routine repository work automatic while retaining approval prompts for
+# operations that leave the workspace, use the network, or are not allowlisted.
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[mcp_servers.svelte]
+command = "pnpm"
+args = ["exec", "svelte-mcp"]
+cwd = "../cut_on_eight"
