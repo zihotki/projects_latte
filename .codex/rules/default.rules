@@ -46,68 +46,42 @@ prefix_rule(
     ],
 )
 
-# Existing project scripts for local development and verification. Dependency
-# installation and arbitrary pnpm exec commands intentionally remain gated.
-prefix_rule(
-    pattern = ["pnpm", ["build", "check", "test", "lint", "format", "format:check", "dev"]],
-    decision = "allow",
-    justification = "Repository-defined development and verification scripts are trusted",
-    match = [
-        "pnpm build",
-        "pnpm check",
-        "pnpm test",
-        "pnpm lint",
-        "pnpm format",
-        "pnpm format:check",
-        "pnpm dev",
-    ],
-    not_match = [
-        "pnpm install",
-        "pnpm add svelte",
-        "pnpm exec sh",
-    ],
-)
-
+# Repository-owned package scripts are the public command interface. Dependency
+# installation, arbitrary pnpm exec, and direct binary commands remain gated.
 prefix_rule(
     pattern = [
         "pnpm",
-        "--filter",
-        ["@cut-on-eight/web", "@cut-on-eight/server", "@cut-on-eight/contracts"],
-        ["build", "check", "test", "dev"],
+        "-C",
+        "cut_on_eight",
+        [
+            "verify",
+            "dev",
+            "test:web",
+            "test:server",
+            "test:contracts",
+            "check:web",
+            "format:file",
+            "svelte:fix",
+        ],
     ],
     decision = "allow",
-    justification = "Workspace package development and verification scripts are trusted",
+    justification = "The documented Cut on Eight command interface is trusted",
     match = [
-        "pnpm --filter @cut-on-eight/web check",
-        "pnpm --filter @cut-on-eight/server test",
-        "pnpm --filter @cut-on-eight/contracts build",
+        "pnpm -C cut_on_eight verify",
+        "pnpm -C cut_on_eight dev",
+        "pnpm -C cut_on_eight test:web",
+        "pnpm -C cut_on_eight test:web apps/web/src/app/app-model.test.ts",
+        "pnpm -C cut_on_eight test:server",
+        "pnpm -C cut_on_eight test:contracts",
+        "pnpm -C cut_on_eight check:web",
+        "pnpm -C cut_on_eight format:file apps/web/src/App.svelte",
+        "pnpm -C cut_on_eight svelte:fix apps/web/src/App.svelte",
     ],
     not_match = [
-        "pnpm --filter other-package test",
-        "pnpm --filter @cut-on-eight/web add dependency",
-    ],
-)
-
-# Formatting and Svelte diagnostics required by this repository's AGENTS.md.
-prefix_rule(
-    pattern = [
-        ["node_modules/.bin/prettier", "../../node_modules/.bin/prettier"],
-        ["--check", "--write"],
-    ],
-    decision = "allow",
-    justification = "The repository formatter is trusted for project files",
-    match = [
-        "node_modules/.bin/prettier --check .",
-        "node_modules/.bin/prettier --write apps/web/src/App.svelte",
-        "../../node_modules/.bin/prettier --write src/App.svelte",
-    ],
-)
-
-prefix_rule(
-    pattern = ["node_modules/.bin/svelte-mcp", "svelte-autofixer"],
-    decision = "allow",
-    justification = "The repository Svelte autofixer is required for Svelte changes",
-    match = [
-        "node_modules/.bin/svelte-mcp svelte-autofixer apps/web/src/App.svelte --svelte-version 5",
+        "pnpm -C cut_on_eight install",
+        "pnpm -C cut_on_eight add svelte",
+        "pnpm -C cut_on_eight exec sh",
+        "node_modules/.bin/prettier --write cut_on_eight/apps/web/src/App.svelte",
+        "node_modules/.bin/svelte-mcp svelte-autofixer cut_on_eight/apps/web/src/App.svelte",
     ],
 )

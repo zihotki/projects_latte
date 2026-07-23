@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.9.0",
+  "packageManager": "pnpm@11.13.0",
   "engines": {
     "node": ">=24"
   },
@@ -15,6 +15,13 @@
     "check": "pnpm -r check && pnpm lint && pnpm format:check",
     "pretest": "pnpm --filter @cut-on-eight/contracts build",
     "test": "pnpm -r --if-present test",
+    "verify": "pnpm -r build && pnpm -r check && pnpm -r --if-present test && pnpm lint && pnpm format:check",
+    "test:web": "pnpm --filter @cut-on-eight/contracts build && pnpm --filter @cut-on-eight/web test",
+    "test:server": "pnpm --filter @cut-on-eight/contracts build && pnpm --filter @cut-on-eight/server test",
+    "test:contracts": "pnpm --filter @cut-on-eight/contracts test",
+    "check:web": "pnpm --filter @cut-on-eight/contracts build && pnpm --filter @cut-on-eight/web check",
+    "format:file": "prettier --write",
+    "svelte:fix": "svelte-mcp svelte-autofixer",
     "lint": "eslint \"apps/**/*.ts\" \"packages/**/*.ts\"",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

@@ -13,5 +13,4 @@ Treat these as decision-making guidance rather than requirements to introduce ev
 
 ## Local Workflow
 
-- Work from the repository root by default; use worktrees only when explicitly requested.
-- Use `.local/` for repository-local scratch files, smoke-test data, and tool caches. Avoid system temporary directories for project work unless a tool requires them.
+- Work from the repository root, keep scratch/cache files in `.local/`, and prefer focused project scripts via `pnpm -C <project> <script>`.
