@@ -121,7 +121,9 @@ stack:
 
 ```text
 cut_on_eight/
-  apphost.ts
+  aspire.config.json
+  aspire-apphost/
+    apphost.mts
   apps/
     web/
     server/
