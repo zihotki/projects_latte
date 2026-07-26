@@ -1,4 +1,4 @@
-import type { Job, PgBoss } from 'pg-boss';
+import type { Job, JobWithMetadata, PgBoss } from 'pg-boss';
 import type { Kysely } from 'kysely';
 import type { BlobStore, LocalMediaFiles } from '../blobs/blob-store.js';
 import type { CatalogDatabase } from '../catalog/database-types.js';
@@ -33,10 +33,11 @@ export async function registerWorkerHandlers(input: {
     { batchSize: 1 },
     async (jobs) => runBatch(jobNames.inspectVideo, jobs, inspect),
   );
-  await input.boss.work<JobEnvelope<PreviewJob>>(
+  await input.boss.work(
     jobNames.generateFragmentPreview,
-    { batchSize: 2 },
-    async (jobs) => runBatch(jobNames.generateFragmentPreview, jobs, preview),
+    { batchSize: 2, includeMetadata: true },
+    async (jobs: JobWithMetadata<JobEnvelope<PreviewJob>>[]) =>
+      runPreviewBatch(jobNames.generateFragmentPreview, jobs, preview),
   );
   await input.boss.work<JobEnvelope<{ fragmentId: string }>>(
     jobNames.purgeFragment,
@@ -52,6 +53,22 @@ export async function registerWorkerHandlers(input: {
     jobNames.deleteAsset,
     { batchSize: 2 },
     async (jobs) => runBatch(jobNames.deleteAsset, jobs, deleteAsset),
+  );
+}
+
+async function runPreviewBatch(
+  name: string,
+  jobs: JobWithMetadata<JobEnvelope<PreviewJob>>[],
+  operation: ReturnType<typeof createGeneratePreviewProcessor>,
+): Promise<void> {
+  await Promise.all(
+    jobs.map((job) =>
+      inJobSpan(name, job, (payload) =>
+        operation(payload, {
+          terminalFailure: job.retryCount >= job.retryLimit,
+        }),
+      ),
+    ),
   );
 }
 

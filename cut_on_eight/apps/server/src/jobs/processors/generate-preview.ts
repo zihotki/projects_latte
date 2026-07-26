@@ -12,14 +12,22 @@ export interface PreviewJob {
   readonly expectedRevision: number;
 }
 
+export interface PreviewAttempt {
+  readonly terminalFailure: boolean;
+}
+
 const previewFailureCode = 'fragment_preview_generation_failed';
+const directAttempt: PreviewAttempt = { terminalFailure: true };
 
 export function createGeneratePreviewProcessor(
   database: Kysely<CatalogDatabase>,
   blobs: BlobStore & LocalMediaFiles,
   generator = new FragmentPreviewGenerator(blobs),
 ) {
-  return async (job: PreviewJob): Promise<void> => {
+  return async (
+    job: PreviewJob,
+    attemptMetadata: PreviewAttempt = directAttempt,
+  ): Promise<void> => {
     const row = await database
       .selectFrom('fragments')
       .innerJoin('videos', 'videos.id', 'fragments.video_id')
@@ -148,7 +156,9 @@ export function createGeneratePreviewProcessor(
       if (!keep) await blobs.delete(destination);
     } catch (error) {
       if (stagedKey !== null) await blobs.delete(stagedKey);
-      await markPreviewFailed(database, job);
+      if (attemptMetadata.terminalFailure) {
+        await markPreviewFailed(database, job);
+      }
       throw error;
     }
   };

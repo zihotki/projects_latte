@@ -185,6 +185,22 @@ integration('media workers', () => {
         .mockRejectedValue(new Error('preview generation failed')),
     } as unknown as FragmentPreviewGenerator);
     await expect(
+      failedGenerate(
+        { videoId, fragmentId, expectedRevision: 1 },
+        { terminalFailure: false },
+      ),
+    ).rejects.toThrow('preview generation failed');
+    expect(
+      await database
+        .selectFrom('fragment_previews')
+        .select(['status', 'failure_code'])
+        .where('fragment_id', '=', fragmentId)
+        .executeTakeFirstOrThrow(),
+    ).toMatchObject({
+      status: 'pending',
+      failure_code: null,
+    });
+    await expect(
       failedGenerate({ videoId, fragmentId, expectedRevision: 1 }),
     ).rejects.toThrow('preview generation failed');
     expect(
