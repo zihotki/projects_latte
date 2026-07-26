@@ -7,6 +7,7 @@ import {
   BackgroundProcessing,
   type BackgroundApi,
 } from './background-processing.svelte.js';
+import type { WorkspaceSnapshot } from '../domain/editor-model.js';
 
 const projectId = '11111111-1111-4111-8111-111111111111';
 
@@ -46,6 +47,24 @@ function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => (resolve = done));
   return { promise, resolve };
+}
+
+function workspaceSnapshot(
+  status: NonNullable<WorkspaceSnapshot['library'][number]['status']>,
+): WorkspaceSnapshot {
+  return {
+    activeProjectId: null,
+    openProjects: [],
+    library: [
+      {
+        id: projectId,
+        fileName: 'video.mp4',
+        durationSeconds: null,
+        status,
+        revision: 1,
+      },
+    ],
+  };
 }
 
 function api(overrides: Partial<BackgroundApi> = {}): BackgroundApi {
@@ -125,5 +144,34 @@ describe('BackgroundProcessing', () => {
     model.dispose();
     model.start();
     expect(connectJobEvents).not.toHaveBeenCalled();
+  });
+
+  it('rearms once while processing and stops on a terminal snapshot', async () => {
+    vi.useFakeTimers();
+    try {
+      const loadWorkspace = vi
+        .fn()
+        .mockResolvedValueOnce(workspaceSnapshot('queued'))
+        .mockResolvedValueOnce(workspaceSnapshot('ready'));
+      const collaboration: { model: BackgroundProcessing | null } = {
+        model: null,
+      };
+      const model = new BackgroundProcessing(
+        api({
+          loadWorkspace,
+          onWorkspace: () => collaboration.model?.start(),
+        }),
+        () => null,
+      );
+      collaboration.model = model;
+      model.start();
+      model.start();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(loadWorkspace).toHaveBeenCalledTimes(2);
+      model.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

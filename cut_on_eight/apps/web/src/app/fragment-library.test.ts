@@ -45,6 +45,7 @@ function workspace(): WorkspacePort {
   return {
     hasOpenProject: vi.fn().mockReturnValue(true),
     flushProject: vi.fn().mockResolvedValue(undefined),
+    fragmentFor: vi.fn().mockReturnValue({ segment, index: 0 }),
     patchSegment: vi.fn(),
     removeSegment: vi.fn(),
     restoreSegment: vi.fn(),
@@ -82,6 +83,8 @@ function api(): FragmentApi {
       projectId,
       index: 0,
       fragment: segment,
+      undoToken: 'undo-token',
+      undoUntil: new Date(Date.now() + 60_000).toISOString(),
     }),
     restoreFragment: vi.fn().mockResolvedValue(segment),
   };
@@ -126,6 +129,45 @@ describe('FragmentLibrary', () => {
       segment,
       0,
     );
+    expect(library.deletedFragment).toBeNull();
+  });
+
+  it('deletes the post-flush editor revision through the soft-delete API', async () => {
+    const apiClient = api();
+    const workspacePort = workspace();
+    const saved = { ...segment, revision: 9 };
+    vi.mocked(workspacePort.fragmentFor).mockReturnValue({
+      segment: saved,
+      index: 0,
+    });
+    const library = new FragmentLibrary(apiClient, workspacePort, jobs());
+    await library.refresh();
+    await library.removeFragment(projectId, fragmentId);
+    expect(workspacePort.flushProject).toHaveBeenCalledWith(projectId);
+    expect(apiClient.deleteFragment).toHaveBeenCalledWith(projectId, saved, 0);
+    expect(workspacePort.removeSegment).toHaveBeenCalledWith(
+      projectId,
+      fragmentId,
+    );
+    expect(library.deletedFragment?.undoToken).toBe('undo-token');
+    library.dispose();
+  });
+
+  it('drops expired Undo state and refreshes authoritative fragments', async () => {
+    const apiClient = api();
+    vi.mocked(apiClient.restoreFragment).mockRejectedValue(
+      Object.assign(new Error('expired'), {
+        code: 'fragment_restore_expired',
+      }),
+    );
+    const library = new FragmentLibrary(apiClient, workspace(), jobs());
+    await library.refresh();
+    const deleted = await library.removeFragment(projectId, fragmentId);
+    await expect(library.restoreDeletedFragment(deleted)).rejects.toThrow(
+      'expired',
+    );
+    expect(library.deletedFragment).toBeNull();
+    expect(apiClient.loadFragments).toHaveBeenCalledTimes(2);
   });
 
   it('deduplicates tags by id', async () => {

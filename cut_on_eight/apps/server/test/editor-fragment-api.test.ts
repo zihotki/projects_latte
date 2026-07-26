@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { rm } from 'node:fs/promises';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { PgBoss } from 'pg-boss';
 import type { Kysely } from 'kysely';
@@ -11,6 +12,7 @@ import {
 } from '@cut-on-eight/api-contracts';
 import { createApp, type CutOnEightApp } from '../src/app.js';
 import { LocalBlobStore } from '../src/blobs/local-blob-store.js';
+import { previewBlobKey } from '../src/blobs/blob-key.js';
 import {
   closeCatalogDatabase,
   createCatalogDatabase,
@@ -36,6 +38,7 @@ if (databaseUrl === undefined) {
 integration('editor and fragment API', () => {
   let database: Kysely<CatalogDatabase>;
   let app: CutOnEightApp;
+  let blobs: LocalBlobStore;
   const videoId = randomUUID();
   const firstId = randomUUID();
   const secondId = randomUUID();
@@ -73,7 +76,7 @@ integration('editor and fragment API', () => {
     const boss = {
       send: vi.fn().mockResolvedValue(randomUUID()),
     } as unknown as PgBoss;
-    const blobs = new LocalBlobStore(config.dataRoot);
+    blobs = new LocalBlobStore(config.dataRoot);
     const workspace = new WorkspaceService(database);
     const runtime: ApiRuntime = {
       db: database,
@@ -91,7 +94,13 @@ integration('editor and fragment API', () => {
   afterAll(async () => {
     await app?.close();
     await database?.deleteFrom('videos').where('id', '=', videoId).execute();
+    await database
+      ?.deleteFrom('assets')
+      .where('owner_kind', '=', 'fragment')
+      .where('owner_id', 'in', [firstId, secondId, thirdId])
+      .execute();
     if (database !== undefined) await closeCatalogDatabase(database);
+    await rm(config.dataRoot, { recursive: true, force: true });
   });
 
   test('enforces overlaps and revisions, then deletes and restores with Undo', async () => {
@@ -107,14 +116,19 @@ integration('editor and fragment API', () => {
     const savedResponse = await app.inject({
       method: 'PATCH',
       url: `/api/videos/${videoId}/editor`,
-      payload: editorSave(1, [
-        fragment(firstId, null, 0, 3_000_000, [tag.id]),
-        fragment(secondId, null, 1_000_000, 4_000_000, []),
-      ]),
+      payload: editorSave(
+        1,
+        [
+          fragment(firstId, null, 0, 3_000_000, [tag.id]),
+          fragment(secondId, null, 1_000_000, 4_000_000, []),
+        ],
+        firstId,
+      ),
     });
     expect(savedResponse.statusCode).toBe(200);
     const saved = editorVideoSchema.parse(savedResponse.json());
     expect(saved.fragments).toHaveLength(2);
+    expect(saved.editor.selectedFragmentId).toBe(firstId);
 
     const overlap = await app.inject({
       method: 'PATCH',
@@ -169,6 +183,47 @@ integration('editor and fragment API', () => {
     expect(stale.statusCode).toBe(409);
     expect(stale.json()).toMatchObject({ code: 'stale_revision' });
 
+    const previewAssetId = randomUUID();
+    const previewKey = previewBlobKey(videoId, firstId, patched.revision);
+    const stagedPreview = await blobs.writeStaged(
+      (async function* () {
+        yield Buffer.from('preview');
+      })(),
+    );
+    await blobs.publish(stagedPreview, previewKey);
+    await database
+      .insertInto('assets')
+      .values({
+        id: previewAssetId,
+        storage_key: previewKey,
+        owner_kind: 'fragment',
+        owner_id: firstId,
+        kind: 'fragment_preview',
+        mime_type: 'image/webp',
+        size_bytes: stagedPreview.size,
+        sha256: stagedPreview.sha256,
+        revision: patched.revision,
+        state: 'ready',
+      })
+      .execute();
+    await database
+      .updateTable('fragment_previews')
+      .set({
+        asset_id: previewAssetId,
+        status: 'ready',
+        sample_us: [100_000],
+      })
+      .where('fragment_id', '=', firstId)
+      .execute();
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/assets/${previewAssetId}`,
+        })
+      ).statusCode,
+    ).toBe(200);
+
     const deletedResponse = await app.inject({
       method: 'DELETE',
       url: `/api/fragments/${firstId}`,
@@ -179,6 +234,14 @@ integration('editor and fragment API', () => {
       (await app.inject({ method: 'GET', url: '/api/fragments' })).json(),
     );
     expect(hidden.some(({ id }) => id === firstId)).toBe(false);
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/assets/${previewAssetId}`,
+        })
+      ).statusCode,
+    ).toBe(404);
 
     const restoredResponse = await app.inject({
       method: 'POST',
@@ -188,12 +251,21 @@ integration('editor and fragment API', () => {
     const restored = fragmentSchema.parse(restoredResponse.json());
     expect(restored.id).toBe(firstId);
     expect(restored.tags).toEqual([tag]);
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/assets/${previewAssetId}`,
+        })
+      ).statusCode,
+    ).toBe(200);
   });
 });
 
 function editorSave(
   expectedVideoRevision: number,
   fragments: ReturnType<typeof fragment>[],
+  selectedFragmentId: string | null = null,
 ) {
   return {
     expectedVideoRevision,
@@ -202,7 +274,7 @@ function editorSave(
     tagIds: [],
     playbackPositionUs: 0,
     editor: {
-      selectedFragmentId: null,
+      selectedFragmentId,
       pauseAfterCreation: false,
       timelineZoom: 1,
       timelineOffsetUs: 0,

@@ -14,6 +14,8 @@ import {
 } from './processors/generate-preview.js';
 import { createPurgeFragmentProcessor } from './processors/purge-fragment.js';
 import { createDeleteVideoProcessor } from './processors/delete-video.js';
+import { createDeleteAssetProcessor } from './processors/delete-asset.js';
+import type { DeleteAssetJob } from './processors/asset-deletion.js';
 
 export async function registerWorkerHandlers(input: {
   database: Kysely<CatalogDatabase>;
@@ -22,8 +24,9 @@ export async function registerWorkerHandlers(input: {
 }): Promise<void> {
   const inspect = createInspectVideoProcessor(input.database, input.blobs);
   const preview = createGeneratePreviewProcessor(input.database, input.blobs);
-  const purge = createPurgeFragmentProcessor(input.database);
+  const purge = createPurgeFragmentProcessor(input.database, input.boss);
   const deleteVideo = createDeleteVideoProcessor(input.database, input.blobs);
+  const deleteAsset = createDeleteAssetProcessor(input.database, input.blobs);
 
   await input.boss.work<JobEnvelope<InspectVideoJob>>(
     jobNames.inspectVideo,
@@ -44,6 +47,11 @@ export async function registerWorkerHandlers(input: {
     JobEnvelope<{ videoId: string; expectedRevision: number }>
   >(jobNames.deleteVideo, { batchSize: 1 }, async (jobs) =>
     runBatch(jobNames.deleteVideo, jobs, deleteVideo),
+  );
+  await input.boss.work<JobEnvelope<DeleteAssetJob>>(
+    jobNames.deleteAsset,
+    { batchSize: 2 },
+    async (jobs) => runBatch(jobNames.deleteAsset, jobs, deleteAsset),
   );
 }
 

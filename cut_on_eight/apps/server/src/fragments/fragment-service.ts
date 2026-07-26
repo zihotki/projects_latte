@@ -19,6 +19,7 @@ import {
 import { validateFragmentSet } from '../domain/fragment-timing.js';
 import { envelope } from '../jobs/job-envelope.js';
 import { jobNames } from '../jobs/job-contracts.js';
+import { queueAssetDeletion } from '../jobs/processors/asset-deletion.js';
 import { toFragmentDto, toTagDto } from '../api/public-mappers.js';
 import { VideoRepository } from '../videos/video-repository.js';
 import { WorkspaceService } from '../workspace/workspace-service.js';
@@ -112,6 +113,15 @@ export class FragmentService {
         }
       }
       validateFragmentSet([...merged.values()], video.durationUs);
+      if (
+        request.editor.selectedFragmentId !== null &&
+        !merged.has(request.editor.selectedFragmentId)
+      ) {
+        throw new DomainConflict(
+          'validation_failed',
+          'The selected fragment does not belong to this video.',
+        );
+      }
 
       await transaction
         .updateTable('videos')
@@ -129,27 +139,6 @@ export class FragmentService {
         .set({ playback_position_us: request.playbackPositionUs })
         .where('video_id', '=', videoId)
         .execute();
-      await transaction
-        .insertInto('editor_state')
-        .values({
-          video_id: videoId,
-          selected_fragment_id: request.editor.selectedFragmentId,
-          pause_after_creation: request.editor.pauseAfterCreation,
-          timeline_zoom: request.editor.timelineZoom,
-          timeline_offset_us: request.editor.timelineOffsetUs,
-          updated_at: new Date(),
-        })
-        .onConflict((conflict) =>
-          conflict.column('video_id').doUpdateSet({
-            selected_fragment_id: request.editor.selectedFragmentId,
-            pause_after_creation: request.editor.pauseAfterCreation,
-            timeline_zoom: request.editor.timelineZoom,
-            timeline_offset_us: request.editor.timelineOffsetUs,
-            updated_at: new Date(),
-          }),
-        )
-        .execute();
-
       for (const mutation of request.fragments) {
         const prior = existingById.get(mutation.id);
         const timingChanged =
@@ -187,7 +176,12 @@ export class FragmentService {
         }
         await replaceFragmentTags(transaction, mutation.id, mutation.tagIds);
         if (timingChanged) {
-          await upsertPendingPreview(transaction, mutation.id, revision);
+          await upsertPendingPreview(
+            transaction,
+            this.boss,
+            mutation.id,
+            revision,
+          );
           await this.boss.send(
             jobNames.generateFragmentPreview,
             envelope({
@@ -202,6 +196,26 @@ export class FragmentService {
           );
         }
       }
+      await transaction
+        .insertInto('editor_state')
+        .values({
+          video_id: videoId,
+          selected_fragment_id: request.editor.selectedFragmentId,
+          pause_after_creation: request.editor.pauseAfterCreation,
+          timeline_zoom: request.editor.timelineZoom,
+          timeline_offset_us: request.editor.timelineOffsetUs,
+          updated_at: new Date(),
+        })
+        .onConflict((conflict) =>
+          conflict.column('video_id').doUpdateSet({
+            selected_fragment_id: request.editor.selectedFragmentId,
+            pause_after_creation: request.editor.pauseAfterCreation,
+            timeline_zoom: request.editor.timelineZoom,
+            timeline_offset_us: request.editor.timelineOffsetUs,
+            updated_at: new Date(),
+          }),
+        )
+        .execute();
     });
     const snapshot = await this.workspace.snapshot();
     const editor = snapshot.openVideos.find(
@@ -258,7 +272,12 @@ export class FragmentService {
         .execute();
       await replaceFragmentTags(transaction, fragmentId, request.tagIds);
       if (changed) {
-        await upsertPendingPreview(transaction, fragmentId, revision);
+        await upsertPendingPreview(
+          transaction,
+          this.boss,
+          fragmentId,
+          revision,
+        );
         await this.boss.send(
           jobNames.generateFragmentPreview,
           envelope({
@@ -432,9 +451,16 @@ async function replaceFragmentTags(
 
 async function upsertPendingPreview(
   transaction: Transaction<CatalogDatabase>,
+  boss: Pick<PgBoss, 'send'>,
   fragmentId: string,
   revision: number,
 ): Promise<void> {
+  const current = await transaction
+    .selectFrom('fragment_previews')
+    .select('asset_id')
+    .where('fragment_id', '=', fragmentId)
+    .executeTakeFirst();
+  await queueAssetDeletion(transaction, boss, current?.asset_id ?? null);
   await transaction
     .insertInto('fragment_previews')
     .values({

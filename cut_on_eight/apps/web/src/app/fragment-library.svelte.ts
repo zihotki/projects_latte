@@ -36,9 +36,11 @@ export class FragmentLibrary {
   loading = $state(false);
   error = $state<string | null>(null);
   retryingJobId = $state<string | null>(null);
+  deletedFragment = $state.raw<DeletedFragment | null>(null);
 
   private requestRevision = 0;
   private previewPollTimer: ReturnType<typeof setTimeout> | null = null;
+  private undoTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
 
   constructor(
@@ -115,16 +117,19 @@ export class FragmentLibrary {
     fragmentId: string,
   ): Promise<DeletedFragment> {
     await this.workspace.flushProject(projectId);
-    const index =
+    const openFragment = this.workspace.fragmentFor(projectId, fragmentId);
+    const catalogueIndex =
       this.catalogue?.fragments.findIndex(
         ({ segment }) => segment.id === fragmentId,
       ) ?? -1;
-    const fragment = this.catalogue?.fragments[index]?.segment;
+    const fragment =
+      openFragment?.segment ??
+      this.catalogue?.fragments[catalogueIndex]?.segment;
     if (fragment === undefined) throw new Error('Fragment is unavailable.');
     const deleted = await this.api.deleteFragment(
       projectId,
       fragment,
-      Math.max(0, index),
+      openFragment?.index ?? Math.max(0, catalogueIndex),
     );
     this.workspace.removeSegment(projectId, fragmentId);
     if (this.catalogue !== null) {
@@ -135,14 +140,37 @@ export class FragmentLibrary {
         ),
       };
     }
+    this.rememberDeleted(deleted);
     return deleted;
   }
 
   async restoreDeletedFragment(deleted: DeletedFragment): Promise<void> {
-    const segment = await this.api.restoreFragment(deleted);
-    this.workspace.restoreSegment(deleted.projectId, segment, deleted.index);
-    await this.refresh();
-    this.replaceCatalogueSegment(deleted.projectId, segment);
+    try {
+      const segment = await this.api.restoreFragment(deleted);
+      this.workspace.restoreSegment(deleted.projectId, segment, deleted.index);
+      if (this.deletedFragment?.undoToken === deleted.undoToken) {
+        this.dismissDeletedFragment();
+      }
+      await this.refresh();
+      this.replaceCatalogueSegment(deleted.projectId, segment);
+    } catch (error) {
+      if (hasErrorCode(error, 'fragment_restore_expired')) {
+        this.dismissDeletedFragment();
+        await this.refresh();
+      }
+      throw error;
+    }
+  }
+
+  async restoreLastDeletedFragment(): Promise<void> {
+    if (this.deletedFragment === null) return;
+    await this.restoreDeletedFragment(this.deletedFragment);
+  }
+
+  dismissDeletedFragment(): void {
+    if (this.undoTimer !== null) clearTimeout(this.undoTimer);
+    this.undoTimer = null;
+    this.deletedFragment = null;
   }
 
   async retryThumbnail(jobId: string): Promise<void> {
@@ -168,6 +196,7 @@ export class FragmentLibrary {
     this.disposed = true;
     this.requestRevision += 1;
     this.clearPreviewPoll();
+    this.dismissDeletedFragment();
   }
 
   private replaceCatalogueSegment(projectId: string, segment: Segment): void {
@@ -205,6 +234,15 @@ export class FragmentLibrary {
     clearTimeout(this.previewPollTimer);
     this.previewPollTimer = null;
   }
+
+  private rememberDeleted(deleted: DeletedFragment): void {
+    this.dismissDeletedFragment();
+    this.deletedFragment = deleted;
+    this.undoTimer = setTimeout(
+      () => this.dismissDeletedFragment(),
+      Math.max(0, Date.parse(deleted.undoUntil) - Date.now()),
+    );
+  }
 }
 
 function addSortedTag(
@@ -220,4 +258,12 @@ function describeError(error: unknown, action: string): string {
   return error instanceof Error
     ? `${action}: ${error.message}`
     : `${action}: unknown error`;
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    (error as Error & { code: unknown }).code === code
+  );
 }

@@ -23,7 +23,7 @@ export interface BlobStore {
     key: BlobKey,
     range?: { start: number; endInclusive: number },
   ): Promise<BlobRange>;
-  stat(key: BlobKey): Promise<{ size: number }>;
+  stat(key: BlobKey): Promise<{ size: number; sha256: string }>;
   delete(key: BlobKey): Promise<void>;
 }
 

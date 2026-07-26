@@ -114,6 +114,73 @@ describe('WorkspaceSession', () => {
     expect(apiClient.deleteProject).toHaveBeenCalledWith(projectId, 7);
   });
 
+  it('accepts ready media facts from polling before the next editor save', async () => {
+    const apiClient = api();
+    const session = new WorkspaceSession(apiClient);
+    session.applyWorkspace(
+      {
+        activeProjectId: projectId,
+        openProjects: [
+          {
+            ...project(),
+            revision: 1,
+            sourceHref: null,
+            source: {
+              ...project().source,
+              durationSeconds: null,
+              width: null,
+              height: null,
+              inspectedAt: null,
+              inspectorVersion: null,
+            },
+          },
+        ],
+        library: [
+          {
+            id: projectId,
+            fileName: 'video.mp4',
+            durationSeconds: null,
+            status: 'queued',
+            revision: 1,
+          },
+        ],
+      },
+      false,
+    );
+    session.applyWorkspace({
+      activeProjectId: projectId,
+      openProjects: [
+        {
+          ...project(),
+          revision: 2,
+          sourceHref: `/api/videos/${projectId}/source`,
+        },
+      ],
+      library: [
+        {
+          id: projectId,
+          fileName: 'video.mp4',
+          durationSeconds: 100,
+          status: 'ready',
+          revision: 2,
+        },
+      ],
+    });
+    session.updateProject(projectId, (current) => ({
+      ...current,
+      metadata: { ...current.metadata, title: 'polled and edited' },
+    }));
+    await session.flushProject(projectId);
+    expect(apiClient.saveProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        revision: 2,
+        sourceHref: `/api/videos/${projectId}/source`,
+        source: expect.objectContaining({ durationSeconds: 100 }),
+        metadata: expect.objectContaining({ title: 'polled and edited' }),
+      }),
+    );
+  });
+
   it('cancels late workspace writes after disposal', () => {
     const session = new WorkspaceSession(api());
     session.dispose();

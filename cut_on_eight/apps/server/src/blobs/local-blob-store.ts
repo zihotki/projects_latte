@@ -99,9 +99,12 @@ export class LocalBlobStore implements BlobStore, LocalMediaFiles {
     };
   }
 
-  async stat(key: BlobKey): Promise<{ size: number }> {
-    const { size } = await fsStat(this.pathFor(key));
-    return { size };
+  async stat(key: BlobKey): Promise<{ size: number; sha256: string }> {
+    const path = this.pathFor(key);
+    const { size } = await fsStat(path);
+    const hash = createHash('sha256');
+    for await (const chunk of createReadStream(path)) hash.update(chunk);
+    return { size, sha256: hash.digest('hex') };
   }
 
   async delete(key: BlobKey): Promise<void> {

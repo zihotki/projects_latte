@@ -35,6 +35,7 @@ export class BackgroundProcessing {
   private readonly thumbnailRequestKeys = new Map<string, string>();
   private closeJobEvents: (() => void) | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private pollInFlight = false;
   private disposed = false;
 
   constructor(
@@ -224,21 +225,32 @@ export class BackgroundProcessing {
   }
 
   private schedulePoll(): void {
-    if (this.disposed || this.api.loadWorkspace === undefined) return;
-    if (this.pollTimer !== null) clearTimeout(this.pollTimer);
+    if (
+      this.disposed ||
+      this.api.loadWorkspace === undefined ||
+      this.pollTimer !== null ||
+      this.pollInFlight
+    ) {
+      return;
+    }
     this.pollTimer = setTimeout(async () => {
       this.pollTimer = null;
+      this.pollInFlight = true;
+      let processing = true;
       try {
         const workspace = await this.api.loadWorkspace!();
-        this.api.onWorkspace?.(workspace);
-        const processing = workspace.library.some((video) =>
+        if (this.disposed) return;
+        processing = workspace.library.some((video) =>
           ['receiving', 'queued', 'processing', 'deleting'].includes(
             video.status ?? '',
           ),
         );
-        if (processing) this.schedulePoll();
+        this.api.onWorkspace?.(workspace);
       } catch {
-        this.schedulePoll();
+        // Keep polling after a transient local backend failure.
+      } finally {
+        this.pollInFlight = false;
+        if (!this.disposed && processing) this.schedulePoll();
       }
     }, 1_000);
   }

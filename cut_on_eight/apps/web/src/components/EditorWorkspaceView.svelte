@@ -4,6 +4,7 @@
   import type { UiPreferences } from '../app/ui-preferences.svelte.js';
   import type { WorkspaceSession } from '../app/workspace-session.svelte.js';
   import ProjectStrip from './ProjectStrip.svelte';
+  import UndoToast from './UndoToast.svelte';
   import VideoEditor from './VideoEditor.svelte';
 
   let {
@@ -26,6 +27,19 @@
       ? null
       : background.thumbnailJobFor(activeProject.id),
   );
+  let undoError = $state<string | null>(null);
+
+  async function undoDelete(): Promise<void> {
+    undoError = null;
+    try {
+      await fragments.restoreLastDeletedFragment();
+    } catch (error) {
+      undoError =
+        error instanceof Error
+          ? error.message
+          : 'Fragment could not be restored.';
+    }
+  }
 </script>
 
 {#if workspace.loading}
@@ -76,6 +90,9 @@
             preferences.setBoundaryMode(projectId, focused)}
           tags={fragments.tags}
           onCreateTag={(name) => fragments.createTag(name)}
+          onDeleteFragment={async (projectId, fragmentId) => {
+            await fragments.removeFragment(projectId, fragmentId);
+          }}
         />
       {/key}
     {:else}
@@ -88,3 +105,13 @@
     {/if}
   </section>
 {/if}
+
+<UndoToast
+  visible={fragments.deletedFragment !== null}
+  message={undoError ?? 'Fragment deleted'}
+  onUndo={() => void undoDelete()}
+  onDismiss={() => {
+    undoError = null;
+    fragments.dismissDeletedFragment();
+  }}
+/>

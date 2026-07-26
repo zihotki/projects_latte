@@ -38,6 +38,30 @@ export function registerAssetRoutes(
         .where('kind', 'in', ['source', 'fragment_preview'])
         .executeTakeFirst();
       if (row === undefined) throw new CatalogNotFound();
+      const visible =
+        row.owner_kind === 'video'
+          ? await runtime.db
+              .selectFrom('videos')
+              .select('id')
+              .where('id', '=', row.owner_id)
+              .where('source_asset_id', '=', row.id)
+              .where('status', '!=', 'deleting')
+              .executeTakeFirst()
+          : await runtime.db
+              .selectFrom('fragments')
+              .innerJoin('videos', 'videos.id', 'fragments.video_id')
+              .innerJoin(
+                'fragment_previews',
+                'fragment_previews.fragment_id',
+                'fragments.id',
+              )
+              .select('fragments.id')
+              .where('fragments.id', '=', row.owner_id)
+              .where('fragments.deleted_at', 'is', null)
+              .where('videos.status', '!=', 'deleting')
+              .where('fragment_previews.asset_id', '=', row.id)
+              .executeTakeFirst();
+      if (visible === undefined) throw new CatalogNotFound();
       const size = Number(row.size_bytes);
       const parsed = parseRange(request.headers.range, size);
       if (parsed === 'invalid') {

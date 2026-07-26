@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createSegment,
-  deleteMostRecentSegment,
-  deleteSelectedSegment,
+  fragmentForDeletionKey,
   sortSegmentsByStart,
   type SegmentState,
 } from './segments.js';
@@ -90,32 +89,22 @@ describe('segment operations', () => {
     expect(state[0]?.id).toBe(segmentIds[3]);
   });
 
-  it('deletes the selected segment and clears the selection without mutation', () => {
+  it('routes Delete to the selected fragment without mutating the editor', () => {
     const state = [segment(segmentIds[0], 1, 2), segment(segmentIds[1], 3, 4)];
     const input = { segments: state, selectedSegmentId: segmentIds[0] };
 
-    const result = deleteSelectedSegment(input);
-
-    expect(result.segments.map((segment) => segment.id)).toEqual([
-      segmentIds[1],
-    ]);
-    expect(result.selectedSegmentId).toBeNull();
+    expect(fragmentForDeletionKey(input, 'Delete')?.id).toBe(segmentIds[0]);
     expect(input.segments).toBe(state);
     expect(input.segments).toHaveLength(2);
   });
 
-  it('deletes the most recently created segment rather than the latest by time', () => {
+  it('routes Backspace to the most recently created fragment', () => {
     const input = {
       segments: [segment(segmentIds[0], 10, 12), segment(segmentIds[1], 2, 4)],
       selectedSegmentId: segmentIds[0],
     };
 
-    const result = deleteMostRecentSegment(input);
-
-    expect(result.segments.map((segment) => segment.id)).toEqual([
-      segmentIds[0],
-    ]);
-    expect(result.selectedSegmentId).toBe(segmentIds[0]);
+    expect(fragmentForDeletionKey(input, 'Backspace')?.id).toBe(segmentIds[1]);
     expect(input.segments).toHaveLength(2);
   });
 
@@ -145,17 +134,5 @@ describe('segment operations', () => {
 
     expect(result).toMatchObject({ ok: false, code: 'triple_overlap' });
     expect(result.state).toBe(input);
-  });
-
-  it('clears selection when deleting the most recent selected segment', () => {
-    const input = {
-      segments: [segment(segmentIds[0], 1, 2)],
-      selectedSegmentId: segmentIds[0],
-    };
-
-    expect(deleteMostRecentSegment(input)).toEqual({
-      segments: [],
-      selectedSegmentId: null,
-    });
   });
 });

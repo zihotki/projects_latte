@@ -12,11 +12,7 @@
     shouldDelegateSegmentSurfaceActivation,
     shouldRouteEditorKeyboard,
   } from '../lib/editor-keyboard-context.js';
-  import {
-    createSegment,
-    deleteMostRecentSegment,
-    deleteSelectedSegment,
-  } from '../lib/segments.js';
+  import { createSegment, fragmentForDeletionKey } from '../lib/segments.js';
   import {
     beginContextPreview,
     clearSelection,
@@ -58,6 +54,7 @@
     onThumbnailLoadError,
     tags,
     onCreateTag,
+    onDeleteFragment,
   }: {
     project: ProjectDocument;
     onChange: (
@@ -77,6 +74,7 @@
     onThumbnailLoadError: () => void;
     tags: TagDefinition[];
     onCreateTag: (name: string) => Promise<TagDefinition>;
+    onDeleteFragment: (projectId: string, fragmentId: string) => Promise<void>;
   } = $props();
 
   let editor = $state<HTMLElement>();
@@ -103,6 +101,7 @@
   let viewportPersistenceTimer: ReturnType<typeof setTimeout> | null = null;
   let playbackCommandSequence = 0;
   let lastPublishedSeconds = untrack(() => project.playbackPositionSeconds);
+  let deletingFragmentId = $state<string | null>(null);
 
   const attachEditor: Attachment<HTMLElement> = (element) => {
     editor = element;
@@ -636,29 +635,44 @@
       return;
     }
 
-    if (event.key === 'Delete' && project.selectedSegmentId !== null) {
+    if (
+      event.key === 'Delete' &&
+      project.selectedSegmentId !== null &&
+      deletingFragmentId === null
+    ) {
       event.preventDefault();
-      const decision = clearSelection(
-        playbackState,
-        displayDuration,
-        currentSeconds,
-      );
-      setBoundaryFocus(null);
-      updateProject(deleteSelectedSegment);
-      void applyPlaybackDecision(decision);
+      void removeFragment(fragmentForDeletionKey(project, 'Delete'));
       return;
     }
 
-    if (event.key === 'Backspace' && project.segments.length > 0) {
+    if (
+      event.key === 'Backspace' &&
+      project.segments.length > 0 &&
+      deletingFragmentId === null
+    ) {
       event.preventDefault();
-      const mostRecent = project.segments.at(-1);
-      if (mostRecent?.id === project.selectedSegmentId) {
+      void removeFragment(fragmentForDeletionKey(project, 'Backspace'));
+    }
+  }
+
+  async function removeFragment(segment: Segment | null): Promise<void> {
+    if (segment === null || deletingFragmentId !== null) return;
+    deletingFragmentId = segment.id;
+    segmentError = null;
+    const wasSelected = project.selectedSegmentId === segment.id;
+    try {
+      await onDeleteFragment(project.id, segment.id);
+      if (wasSelected) {
         setBoundaryFocus(null);
-        void applyPlaybackDecision(
+        await applyPlaybackDecision(
           clearSelection(playbackState, displayDuration, currentSeconds),
         );
       }
-      updateProject(deleteMostRecentSegment);
+    } catch (error) {
+      segmentError =
+        error instanceof Error ? error.message : 'Fragment deletion failed.';
+    } finally {
+      deletingFragmentId = null;
     }
   }
 

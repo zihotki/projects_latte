@@ -1,7 +1,8 @@
 import { readFile, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
+import type { PgBoss } from 'pg-boss';
 import type { Kysely } from 'kysely';
 import { previewBlobKey, sourceBlobKey } from '../src/blobs/blob-key.js';
 import { LocalBlobStore } from '../src/blobs/local-blob-store.js';
@@ -13,6 +14,8 @@ import type { CatalogDatabase } from '../src/catalog/database-types.js';
 import { migrateCatalog } from '../src/catalog/migrations/index.js';
 import { createGeneratePreviewProcessor } from '../src/jobs/processors/generate-preview.js';
 import { createInspectVideoProcessor } from '../src/jobs/processors/inspect-video.js';
+import { createPurgeFragmentProcessor } from '../src/jobs/processors/purge-fragment.js';
+import { createDeleteAssetProcessor } from '../src/jobs/processors/delete-asset.js';
 import { FragmentPreviewGenerator } from '../src/media/fragment-preview-generator.js';
 
 const databaseUrl = process.env.CUT_ON_EIGHT_TEST_DATABASE_URL;
@@ -68,6 +71,7 @@ integration('media workers', () => {
   const videoId = randomUUID();
   const assetId = randomUUID();
   const fragmentId = randomUUID();
+  const sourceKey = sourceBlobKey(videoId, 'tiny.mp4');
 
   beforeAll(async () => {
     database = createCatalogDatabase({ databaseUrl: databaseUrl! });
@@ -78,13 +82,12 @@ integration('media workers', () => {
         yield bytes;
       })(),
     );
-    const key = sourceBlobKey(videoId, 'tiny.mp4');
-    await blobs.publish(staged, key);
+    await blobs.publish(staged, sourceKey);
     await database
       .insertInto('assets')
       .values({
         id: assetId,
-        storage_key: key,
+        storage_key: sourceKey,
         owner_kind: 'video',
         owner_id: videoId,
         kind: 'source',
@@ -120,15 +123,22 @@ integration('media workers', () => {
 
   test('inspects and generates an idempotent five-frame WebP', async () => {
     const inspect = createInspectVideoProcessor(database, blobs);
-    await inspect({ videoId, expectedRevision: 1 });
-    await inspect({ videoId, expectedRevision: 1 });
+    await database
+      .updateTable('videos')
+      .set({ title: 'Edited while queued', revision: 2 })
+      .where('id', '=', videoId)
+      .execute();
+    await inspect({ videoId, sourceAssetId: assetId });
+    await inspect({ videoId, sourceAssetId: assetId });
     const video = await database
       .selectFrom('videos')
-      .select(['status', 'duration_us'])
+      .select(['status', 'duration_us', 'revision', 'title'])
       .where('id', '=', videoId)
       .executeTakeFirstOrThrow();
     expect(video.status).toBe('ready');
     expect(Number(video.duration_us)).toBeGreaterThan(1_000_000);
+    expect(video.revision).toBe(3);
+    expect(video.title).toBe('Edited while queued');
 
     await database
       .insertInto('fragments')
@@ -158,6 +168,15 @@ integration('media workers', () => {
         failure_code: null,
       })
       .execute();
+    const orphan = await blobs.withLocalPath(sourceKey, (sourcePath) =>
+      new FragmentPreviewGenerator(blobs).generate({
+        sourcePath,
+        startUs: 100_000,
+        endUs: 1_900_000,
+      }),
+    );
+    const previewKey = previewBlobKey(videoId, fragmentId, 1);
+    await blobs.publish(orphan.staged, previewKey);
     const generate = createGeneratePreviewProcessor(database, blobs);
     await generate({ videoId, fragmentId, expectedRevision: 1 });
     await generate({ videoId, fragmentId, expectedRevision: 0 });
@@ -169,5 +188,70 @@ integration('media workers', () => {
     expect(preview.status).toBe('ready');
     expect(preview.sample_us).toHaveLength(5);
     expect(preview.columns).toBe(5);
+
+    const asset = await database
+      .selectFrom('assets')
+      .select(['id', 'storage_key'])
+      .where('owner_id', '=', fragmentId)
+      .executeTakeFirstOrThrow();
+    const send = vi.fn().mockResolvedValue(randomUUID());
+    const boss = { send } as unknown as PgBoss;
+    const deletedAt = new Date(Date.now() - 2_000);
+    await database
+      .updateTable('fragments')
+      .set({
+        deleted_at: deletedAt,
+        purge_after: new Date(deletedAt.getTime() + 1_000),
+        undo_token_hash: 'a'.repeat(64),
+      })
+      .where('id', '=', fragmentId)
+      .execute();
+    await createPurgeFragmentProcessor(database, boss)({ fragmentId });
+    expect(
+      await database
+        .selectFrom('fragments')
+        .select('id')
+        .where('id', '=', fragmentId)
+        .executeTakeFirst(),
+    ).toBeUndefined();
+    const deleteEnvelope = vi
+      .mocked(send)
+      .mock.calls.find(([name]) => name === 'asset.delete.v1')?.[1] as {
+      payload: { assetId: string; storageKey: string };
+    };
+    await createDeleteAssetProcessor(database, blobs)(deleteEnvelope.payload);
+    expect(
+      await database
+        .selectFrom('assets')
+        .select('id')
+        .where('id', '=', asset.id)
+        .executeTakeFirst(),
+    ).toBeUndefined();
+    await expect(blobs.stat(previewKey)).rejects.toThrow();
+
+    const probe = { inspect: vi.fn() };
+    await database
+      .updateTable('videos')
+      .set({ status: 'deleting', revision: 4 })
+      .where('id', '=', videoId)
+      .execute();
+    await createInspectVideoProcessor(
+      database,
+      blobs,
+      probe,
+    )({
+      videoId,
+      sourceAssetId: assetId,
+    });
+    expect(probe.inspect).not.toHaveBeenCalled();
+    expect(
+      (
+        await database
+          .selectFrom('videos')
+          .select('status')
+          .where('id', '=', videoId)
+          .executeTakeFirstOrThrow()
+      ).status,
+    ).toBe('deleting');
   });
 });

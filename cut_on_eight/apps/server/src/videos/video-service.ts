@@ -74,11 +74,13 @@ export class VideoService {
       .execute();
 
     let staged: StagedBlob | undefined;
+    let published = false;
     try {
       staged = await this.blobs.writeStaged(source.bytes);
       const destination = sourceBlobKey(videoId, source.fileName);
       await this.blobs.publish(staged, destination);
-      const published = staged;
+      published = true;
+      const publishedBlob = staged;
       await this.database.transaction().execute(async (transaction) => {
         await transaction
           .insertInto('assets')
@@ -89,8 +91,8 @@ export class VideoService {
             owner_id: videoId,
             kind: 'source',
             mime_type: source.mimeType || 'video/mp4',
-            size_bytes: published.size,
-            sha256: published.sha256,
+            size_bytes: publishedBlob.size,
+            sha256: publishedBlob.sha256,
             state: 'ready',
           })
           .execute();
@@ -106,28 +108,30 @@ export class VideoService {
         await new WorkspaceRepository(transaction).open(videoId);
         await this.boss.send(
           jobNames.inspectVideo,
-          envelope({ videoId, expectedRevision: 1 }),
+          envelope({ videoId, sourceAssetId: assetId }),
           {
             db: fromKysely(transaction),
             retryLimit: 3,
-            singletonKey: `${videoId}:1`,
+            singletonKey: `${videoId}:${assetId}`,
           },
         );
       });
     } catch (error) {
-      if (staged !== undefined) await this.blobs.delete(staged.key);
-      await this.database
-        .updateTable('videos')
-        .set({
-          status: 'failed',
-          processing_failure_code: 'upload_failed',
-          processing_failure_retryable: true,
-          processing_failure_at: new Date(),
-          updated_at: new Date(),
-        })
-        .where('id', '=', videoId)
-        .where('status', '=', 'receiving')
-        .execute();
+      if (!published) {
+        if (staged !== undefined) await this.blobs.delete(staged.key);
+        await this.database
+          .updateTable('videos')
+          .set({
+            status: 'failed',
+            processing_failure_code: 'upload_failed',
+            processing_failure_retryable: true,
+            processing_failure_at: new Date(),
+            updated_at: new Date(),
+          })
+          .where('id', '=', videoId)
+          .where('status', '=', 'receiving')
+          .execute();
+      }
       throw error;
     }
     return {

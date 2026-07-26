@@ -1,6 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
+import type { PgBoss } from 'pg-boss';
 import { uploadAcceptedSchema } from '@cut-on-eight/api-contracts';
 import type { CutOnEightApp } from '../src/app.js';
 import { createApp } from '../src/app.js';
@@ -11,6 +12,9 @@ import {
 import { migrateCatalog } from '../src/catalog/migrations/index.js';
 import type { ServerConfig } from '../src/config.js';
 import { createRuntime } from '../src/runtime.js';
+import type { ApiRuntime } from '../src/runtime.js';
+import { VideoService } from '../src/videos/video-service.js';
+import { sourceBlobKey } from '../src/blobs/blob-key.js';
 
 const databaseUrl = process.env.CUT_ON_EIGHT_TEST_DATABASE_URL;
 const integration = databaseUrl === undefined ? describe.skip : describe;
@@ -24,6 +28,7 @@ if (databaseUrl === undefined) {
 
 integration('video and workspace API', () => {
   let app: CutOnEightApp;
+  let runtime: ApiRuntime;
   let videoId: string | undefined;
   const config: ServerConfig = {
     dataRoot,
@@ -39,7 +44,7 @@ integration('video and workspace API', () => {
     const database = createCatalogDatabase(config);
     await migrateCatalog(database);
     await closeCatalogDatabase(database);
-    const runtime = await createRuntime(config);
+    runtime = await createRuntime(config);
     app = createApp({ config, runtime });
     await app.ready();
   });
@@ -88,5 +93,45 @@ integration('video and workspace API', () => {
     });
     expect(range.statusCode).toBe(206);
     expect(range.body).toBe('video');
+  });
+
+  test('keeps a published source receiving when catalog finalization rolls back', async () => {
+    const sourceName = `rollback-${Date.now()}.mp4`;
+    const failingBoss = {
+      send: vi.fn().mockRejectedValue(new Error('catalog finalization failed')),
+    } as unknown as PgBoss;
+    const service = new VideoService(
+      runtime.db,
+      failingBoss,
+      runtime.blobs,
+      runtime.workspace,
+    );
+    await expect(
+      service.import({
+        fileName: sourceName,
+        mimeType: 'video/mp4',
+        bytes: (async function* () {
+          yield Buffer.from('already-published');
+        })(),
+      }),
+    ).rejects.toThrow('catalog finalization failed');
+    const receiving = await runtime.db
+      .selectFrom('videos')
+      .select(['id', 'status', 'source_asset_id'])
+      .where('original_file_name', '=', sourceName)
+      .executeTakeFirstOrThrow();
+    expect(receiving).toMatchObject({
+      status: 'receiving',
+      source_asset_id: null,
+    });
+    const key = sourceBlobKey(receiving.id, sourceName);
+    await expect(runtime.blobs.stat(key)).resolves.toMatchObject({
+      size: 17,
+    });
+    await runtime.blobs.delete(key);
+    await runtime.db
+      .deleteFrom('videos')
+      .where('id', '=', receiving.id)
+      .execute();
   });
 });

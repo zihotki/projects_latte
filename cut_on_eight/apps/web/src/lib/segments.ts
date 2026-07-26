@@ -68,41 +68,15 @@ export function createSegment<T extends SegmentState>(
   };
 }
 
-export function deleteSelectedSegment<T extends SegmentState>(
-  state: T,
-): UpdatedSegmentState<T> {
-  if (
-    state.selectedSegmentId === null ||
-    !state.segments.some((segment) => segment.id === state.selectedSegmentId)
-  ) {
-    return state;
-  }
-
-  return {
-    ...state,
-    segments: state.segments.filter(
-      (segment) => segment.id !== state.selectedSegmentId,
-    ),
-    selectedSegmentId: null,
-  };
-}
-
-export function deleteMostRecentSegment<T extends SegmentState>(
-  state: T,
-): UpdatedSegmentState<T> {
-  const mostRecentSegment = state.segments.at(-1);
-  if (mostRecentSegment === undefined) {
-    return state;
-  }
-
-  return {
-    ...state,
-    segments: state.segments.slice(0, -1),
-    selectedSegmentId:
-      state.selectedSegmentId === mostRecentSegment.id
-        ? null
-        : state.selectedSegmentId,
-  };
+export function fragmentForDeletionKey(
+  state: SegmentState,
+  key: 'Delete' | 'Backspace',
+): Segment | null {
+  if (key === 'Backspace') return state.segments.at(-1) ?? null;
+  return (
+    state.segments.find((segment) => segment.id === state.selectedSegmentId) ??
+    null
+  );
 }
 
 export function sortSegmentsByStart(segments: readonly Segment[]): Segment[] {

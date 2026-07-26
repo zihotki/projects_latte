@@ -34,6 +34,10 @@ export interface WorkspaceApi {
 export interface WorkspacePort {
   hasOpenProject(projectId: string): boolean;
   flushProject(projectId: string): Promise<void>;
+  fragmentFor(
+    projectId: string,
+    fragmentId: string,
+  ): { segment: Segment; index: number } | null;
   patchSegment(projectId: string, segment: Segment): void;
   removeSegment(projectId: string, fragmentId: string): void;
   restoreSegment(projectId: string, segment: Segment, index: number): void;
@@ -290,6 +294,19 @@ export class WorkspaceSession implements WorkspacePort {
     await this.controllers.get(projectId)?.flush();
   }
 
+  fragmentFor(
+    projectId: string,
+    fragmentId: string,
+  ): { segment: Segment; index: number } | null {
+    const project = this.workspace?.openProjects.find(
+      (candidate) => candidate.id === projectId,
+    );
+    const index =
+      project?.segments.findIndex((segment) => segment.id === fragmentId) ?? -1;
+    const segment = project?.segments[index];
+    return segment === undefined ? null : { segment, index };
+  }
+
   patchSegment(projectId: string, segment: Segment): void {
     this.patchOpenProject(projectId, (project) => ({
       ...project,
@@ -353,9 +370,16 @@ export class WorkspaceSession implements WorkspacePort {
     );
     this.workspace = {
       ...snapshot,
-      openProjects: snapshot.openProjects.map(
-        (project) => currentProjects.get(project.id) ?? project,
-      ),
+      openProjects: snapshot.openProjects.map((project) => {
+        const current = currentProjects.get(project.id);
+        if (
+          current === undefined ||
+          this.saveStateFor(project.id) === 'saved'
+        ) {
+          return project;
+        }
+        return mergeUnsavedEditor(current, project);
+      }),
     };
     this.ensureControllers();
     this.callbacks.onWorkspaceApplied?.(this.workspace);
@@ -455,6 +479,33 @@ export class WorkspaceSession implements WorkspacePort {
       ? null
       : { projectId, control: this.prepareProjectForSave(projectId) };
   }
+}
+
+function mergeUnsavedEditor(
+  local: ProjectDocument,
+  authoritative: ProjectDocument,
+): ProjectDocument {
+  const remoteSegments = new Map(
+    authoritative.segments.map((segment) => [segment.id, segment]),
+  );
+  return {
+    ...authoritative,
+    revision: Math.max(authoritative.revision ?? 0, local.revision ?? 0),
+    playbackPositionSeconds: local.playbackPositionSeconds,
+    selectedSegmentId: local.selectedSegmentId,
+    settings: local.settings,
+    metadata: local.metadata,
+    editor: local.editor,
+    segments: local.segments.map((segment) => {
+      const remote = remoteSegments.get(segment.id);
+      return remote === undefined
+        ? segment
+        : {
+            ...segment,
+            revision: Math.max(remote.revision ?? 0, segment.revision ?? 0),
+          };
+    }),
+  };
 }
 
 function describeError(error: unknown, action: string): string {

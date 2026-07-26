@@ -19,7 +19,11 @@ describe('LocalBlobStore', () => {
     );
     const destination = blobKey('videos/video/source/demo.mp4');
     await store.publish(staged, destination);
-    expect(await store.stat(destination)).toEqual({ size: 11 });
+    expect(await store.stat(destination)).toEqual({
+      size: 11,
+      sha256:
+        'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088' + 'f7ace2efcde9',
+    });
     expect(await readFile(resolve(root, destination), 'utf8')).toBe(
       'hello world',
     );
