@@ -13,6 +13,7 @@ type NullableTimestamp = ColumnType<
   Date | string | null
 >;
 type BigIntText = ColumnType<string, string | number, string | number>;
+type NullableColumn<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
 export interface AssetTable {
   id: string;
@@ -38,7 +39,15 @@ export interface VideoTable {
   duration_us: BigIntText | null;
   width: number | null;
   height: number | null;
+  frame_rate_numerator: NullableColumn<number>;
+  frame_rate_denominator: NullableColumn<number>;
+  frame_rate_reliability: Generated<'reliable' | 'approximate'>;
   has_audio: boolean | null;
+  inspected_at: NullableTimestamp;
+  inspector_version: NullableColumn<string>;
+  processing_failure_code: NullableColumn<string>;
+  processing_failure_retryable: NullableColumn<boolean>;
+  processing_failure_at: NullableTimestamp;
   status:
     'receiving' | 'queued' | 'processing' | 'ready' | 'failed' | 'deleting';
   revision: Generated<number>;
@@ -56,6 +65,8 @@ export interface FragmentTable {
   export_selected: boolean;
   revision: Generated<number>;
   deleted_at: NullableTimestamp;
+  undo_token_hash: NullableColumn<string>;
+  purge_after: NullableTimestamp;
   created_at: Timestamp;
   updated_at: Timestamp;
 }

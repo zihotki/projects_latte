@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import {
   closeCatalogDatabase,
   createCatalogDatabase,
@@ -111,5 +111,50 @@ databaseDescribe('catalog database migration', () => {
         .values({ id: randomUUID(), name: 'Dance' })
         .execute(),
     ).rejects.toThrow();
+  });
+
+  it('installs inspection, failure, and fragment lifecycle columns', async () => {
+    const result = await sql<{ column_name: string }>`
+      select column_name
+      from information_schema.columns
+      where table_schema = current_schema()
+        and table_name in ('videos', 'fragments')
+    `.execute(database);
+
+    expect(result.rows.map(({ column_name }) => column_name)).toEqual(
+      expect.arrayContaining([
+        'frame_rate_numerator',
+        'frame_rate_denominator',
+        'frame_rate_reliability',
+        'inspected_at',
+        'inspector_version',
+        'processing_failure_code',
+        'processing_failure_retryable',
+        'processing_failure_at',
+        'undo_token_hash',
+        'purge_after',
+      ]),
+    );
+  });
+
+  it('requires complete soft-delete lifecycle metadata', async () => {
+    await expect(
+      database
+        .updateTable('fragments')
+        .set({ deleted_at: new Date() })
+        .where('id', '=', fragmentId)
+        .execute(),
+    ).rejects.toThrow();
+
+    const deletedAt = new Date();
+    await database
+      .updateTable('fragments')
+      .set({
+        deleted_at: deletedAt,
+        undo_token_hash: 'a'.repeat(64),
+        purge_after: new Date(deletedAt.getTime() + 60_000),
+      })
+      .where('id', '=', fragmentId)
+      .execute();
   });
 });

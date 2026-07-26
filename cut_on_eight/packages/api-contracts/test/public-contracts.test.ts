@@ -20,6 +20,9 @@ const validVideo: VideoSummaryDto = {
   durationUs: 10_000_000,
   width: 1920,
   height: 1080,
+  frameRateNumerator: 30_000,
+  frameRateDenominator: 1_001,
+  frameRateReliability: 'reliable',
   hasAudio: true,
   status: 'ready',
   revision: 1,
@@ -46,6 +49,26 @@ describe('public API contracts', () => {
       videoSummarySchema.safeParse({
         ...validVideo,
         sourceBlobKey: 'videos/private/source.mp4',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('carries a complete rational frame rate without private processing state', () => {
+    expect(videoSummarySchema.parse(validVideo)).toMatchObject({
+      frameRateNumerator: 30_000,
+      frameRateDenominator: 1_001,
+      frameRateReliability: 'reliable',
+    });
+    expect(
+      videoSummarySchema.safeParse({
+        ...validVideo,
+        frameRateDenominator: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      videoSummarySchema.safeParse({
+        ...validVideo,
+        processingFailureCode: 'ffprobe_failed',
       }).success,
     ).toBe(false);
   });

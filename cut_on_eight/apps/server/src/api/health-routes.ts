@@ -2,7 +2,6 @@ import {
   healthLiveSchema,
   problemDetailsSchema,
 } from '@cut-on-eight/api-contracts';
-import { QdrantClient } from '@qdrant/js-client-rest';
 import { sql, type Kysely } from 'kysely';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { CatalogDatabase } from '../catalog/database-types.js';
@@ -11,25 +10,35 @@ import { toReadyDto } from './public-mappers.js';
 
 export interface HealthProbes {
   postgres(): Promise<void>;
-  qdrant: (() => Promise<void>) | null;
+  qdrant: ((signal: AbortSignal) => Promise<void>) | null;
   worker(): Promise<boolean>;
 }
+
+export const qdrantReadinessDeadlineMs = 500;
 
 export function createHealthProbes(
   database: Kysely<CatalogDatabase>,
   config: Pick<ServerConfig, 'qdrantHttpUrl' | 'qdrantApiKey'>,
-  qdrantProbe?: () => Promise<void>,
+  qdrantProbe?: (signal: AbortSignal) => Promise<void>,
 ): HealthProbes {
   const qdrant =
     qdrantProbe ??
     (config.qdrantHttpUrl === null
       ? null
-      : async () => {
-          const client = new QdrantClient({
-            url: config.qdrantHttpUrl!,
-            apiKey: config.qdrantApiKey ?? undefined,
-          });
-          await client.getCollections();
+      : async (signal) => {
+          const response = await fetch(
+            new URL('/healthz', config.qdrantHttpUrl!).href,
+            {
+              signal,
+              headers:
+                config.qdrantApiKey === null
+                  ? undefined
+                  : { 'api-key': config.qdrantApiKey },
+            },
+          );
+          if (!response.ok) {
+            throw new Error(`Qdrant health returned ${response.status}`);
+          }
         });
 
   return {
@@ -86,16 +95,30 @@ export function registerHealthRoutes(
 }
 
 async function checkQdrant(
-  probe: (() => Promise<void>) | null,
+  probe: ((signal: AbortSignal) => Promise<void>) | null,
 ): Promise<'ready' | 'degraded' | 'not-configured'> {
   if (probe === null) {
     return 'not-configured';
   }
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
   try {
-    await probe();
+    await Promise.race([
+      probe(controller.signal),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error('Qdrant readiness deadline exceeded'));
+        }, qdrantReadinessDeadlineMs);
+      }),
+    ]);
     return 'ready';
   } catch {
     return 'degraded';
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
   }
 }
 

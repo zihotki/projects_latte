@@ -30,13 +30,53 @@ export const coreCatalogMigration: Migration = {
         duration_us bigint check (duration_us is null or duration_us >= 0),
         width integer check (width is null or width > 0),
         height integer check (height is null or height > 0),
+        frame_rate_numerator integer check (
+          frame_rate_numerator is null or frame_rate_numerator > 0
+        ),
+        frame_rate_denominator integer check (
+          frame_rate_denominator is null or frame_rate_denominator > 0
+        ),
+        frame_rate_reliability text not null default 'approximate' check (
+          frame_rate_reliability in ('reliable', 'approximate')
+        ),
         has_audio boolean,
+        inspected_at timestamptz,
+        inspector_version text,
+        processing_failure_code text,
+        processing_failure_retryable boolean,
+        processing_failure_at timestamptz,
         status text not null check (
           status in ('receiving', 'queued', 'processing', 'ready', 'failed', 'deleting')
         ),
         revision integer not null default 1 check (revision >= 1),
         created_at timestamptz not null default now(),
-        updated_at timestamptz not null default now()
+        updated_at timestamptz not null default now(),
+        check (
+          (frame_rate_numerator is null) =
+          (frame_rate_denominator is null)
+        ),
+        check (
+          frame_rate_reliability = 'approximate' or
+          frame_rate_numerator is not null
+        ),
+        check (
+          (inspected_at is null and inspector_version is null) or
+          (inspected_at is not null and inspector_version is not null)
+        ),
+        check (
+          (
+            status <> 'failed' and
+            processing_failure_code is null and
+            processing_failure_retryable is null and
+            processing_failure_at is null
+          ) or (
+            status = 'failed' and
+            processing_failure_code is not null and
+            processing_failure_code ~ '^[a-z][a-z0-9_]*$' and
+            processing_failure_retryable is not null and
+            processing_failure_at is not null
+          )
+        )
       )
     `.execute(database);
 
@@ -51,9 +91,25 @@ export const coreCatalogMigration: Migration = {
         export_selected boolean not null default false,
         revision integer not null default 1 check (revision >= 1),
         deleted_at timestamptz,
+        undo_token_hash text check (
+          undo_token_hash is null or undo_token_hash ~ '^[0-9a-f]{64}$'
+        ),
+        purge_after timestamptz,
         created_at timestamptz not null default now(),
         updated_at timestamptz not null default now(),
-        check (end_us > start_us)
+        check (end_us > start_us),
+        check (
+          (
+            deleted_at is null and
+            undo_token_hash is null and
+            purge_after is null
+          ) or (
+            deleted_at is not null and
+            undo_token_hash is not null and
+            purge_after is not null and
+            purge_after > deleted_at
+          )
+        )
       )
     `.execute(database);
 

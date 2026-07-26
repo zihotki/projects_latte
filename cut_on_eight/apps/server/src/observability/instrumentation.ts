@@ -9,6 +9,11 @@ const fastifyInstrumentation = new FastifyOtelInstrumentation({
   registerOnInitialization: true,
   instrumentHooks: false,
 });
+const autoInstrumentations = getNodeAutoInstrumentations().filter(
+  (instrumentation) =>
+    instrumentation.instrumentationName !==
+    '@opentelemetry/instrumentation-fastify',
+);
 
 export const telemetrySdk = new NodeSDK({
   traceExporter: new OTLPTraceExporter(),
@@ -17,7 +22,7 @@ export const telemetrySdk = new NodeSDK({
       exporter: new OTLPMetricExporter(),
     }),
   ],
-  instrumentations: [getNodeAutoInstrumentations(), fastifyInstrumentation],
+  instrumentations: [autoInstrumentations, fastifyInstrumentation],
 });
 
 telemetrySdk.start();

@@ -27,14 +27,38 @@ export const videoSummarySchema = z
     durationUs: microsecondsSchema.nullable(),
     width: z.number().int().positive().nullable(),
     height: z.number().int().positive().nullable(),
+    frameRateNumerator: z.number().int().positive().nullable(),
+    frameRateDenominator: z.number().int().positive().nullable(),
+    frameRateReliability: z.enum(['reliable', 'approximate']),
     hasAudio: z.boolean().nullable(),
     status: videoStatusSchema,
     revision: revisionSchema,
     tags: z.array(tagSchema),
   })
-  .refine(({ tags }) => hasUniqueIds(tags), {
-    message: 'Tag IDs must be unique',
-    path: ['tags'],
+  .superRefine((video, context) => {
+    if (!hasUniqueIds(video.tags)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Tag IDs must be unique',
+        path: ['tags'],
+      });
+    }
+    const hasNumerator = video.frameRateNumerator !== null;
+    const hasDenominator = video.frameRateDenominator !== null;
+    if (hasNumerator !== hasDenominator) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Frame-rate numerator and denominator must be paired',
+        path: ['frameRateNumerator'],
+      });
+    }
+    if (video.frameRateReliability === 'reliable' && !hasNumerator) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Reliable frame rate requires a rational value',
+        path: ['frameRateReliability'],
+      });
+    }
   });
 
 export type VideoSummaryDto = z.infer<typeof videoSummarySchema>;
