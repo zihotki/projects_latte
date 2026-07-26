@@ -12,6 +12,8 @@ export interface PreviewJob {
   readonly expectedRevision: number;
 }
 
+const previewFailureCode = 'fragment_preview_generation_failed';
+
 export function createGeneratePreviewProcessor(
   database: Kysely<CatalogDatabase>,
   blobs: BlobStore & LocalMediaFiles,
@@ -53,21 +55,36 @@ export function createGeneratePreviewProcessor(
     ) {
       return;
     }
-    const generated = await blobs.withLocalPath(
-      blobKey(row.storage_key),
-      (sourcePath) =>
-        generator.generate({
-          sourcePath,
-          startUs: safeMicroseconds(row.start_us),
-          endUs: safeMicroseconds(row.end_us),
-        }),
-    );
-    const destination = previewBlobKey(
-      job.videoId,
-      job.fragmentId,
-      job.expectedRevision,
-    );
+    const attempt = await database
+      .updateTable('fragment_previews')
+      .set({
+        status: 'pending',
+        failure_code: null,
+        updated_at: new Date(),
+      })
+      .where('fragment_id', '=', job.fragmentId)
+      .where('fragment_revision', '=', job.expectedRevision)
+      .where('status', 'in', ['pending', 'failed'])
+      .returning('fragment_id')
+      .executeTakeFirst();
+    if (attempt === undefined) return;
+    let stagedKey: ReturnType<typeof blobKey> | null = null;
     try {
+      const generated = await blobs.withLocalPath(
+        blobKey(row.storage_key),
+        (sourcePath) =>
+          generator.generate({
+            sourcePath,
+            startUs: safeMicroseconds(row.start_us),
+            endUs: safeMicroseconds(row.end_us),
+          }),
+      );
+      stagedKey = generated.staged.key;
+      const destination = previewBlobKey(
+        job.videoId,
+        job.fragmentId,
+        job.expectedRevision,
+      );
       await publishOrReconcile(blobs, generated.staged, destination);
       const assetId = uuidv7();
       let keep = false;
@@ -130,10 +147,38 @@ export function createGeneratePreviewProcessor(
       });
       if (!keep) await blobs.delete(destination);
     } catch (error) {
-      await blobs.delete(generated.staged.key);
+      if (stagedKey !== null) await blobs.delete(stagedKey);
+      await markPreviewFailed(database, job);
       throw error;
     }
   };
+}
+
+async function markPreviewFailed(
+  database: Kysely<CatalogDatabase>,
+  job: PreviewJob,
+): Promise<void> {
+  await database
+    .updateTable('fragment_previews')
+    .set({
+      status: 'failed',
+      failure_code: previewFailureCode,
+      updated_at: new Date(),
+    })
+    .where('fragment_id', '=', job.fragmentId)
+    .where('fragment_revision', '=', job.expectedRevision)
+    .where(
+      'fragment_id',
+      'in',
+      database
+        .selectFrom('fragments')
+        .select('id')
+        .where('id', '=', job.fragmentId)
+        .where('revision', '=', job.expectedRevision)
+        .where('deleted_at', 'is', null),
+    )
+    .execute()
+    .catch(() => undefined);
 }
 
 async function publishOrReconcile(

@@ -14,6 +14,12 @@ export class VideoRepository {
       .selectFrom('videos')
       .selectAll()
       .where('status', '!=', 'deleting')
+      .where((builder) =>
+        builder.or([
+          builder('status', '!=', 'receiving'),
+          builder('source_asset_id', 'is not', null),
+        ]),
+      )
       .orderBy('created_at', 'desc')
       .execute();
     return rows.map(toVideoRecord);

@@ -13,6 +13,10 @@ import type { CatalogDatabase } from '../src/catalog/database-types.js';
 import { migrateCatalog } from '../src/catalog/migrations/index.js';
 import { createHealthProbes } from '../src/api/health-routes.js';
 import type { ServerConfig } from '../src/config.js';
+import {
+  acquireDatabaseSuiteLock,
+  resetCatalogTestState,
+} from './database-test-harness.js';
 
 const databaseUrl = process.env.CUT_ON_EIGHT_TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl === undefined ? describe.skip : describe;
@@ -25,6 +29,7 @@ if (databaseUrl === undefined) {
 
 databaseDescribe('catalog health routes', () => {
   let database: Kysely<CatalogDatabase>;
+  let releaseSuiteLock: (() => Promise<void>) | undefined;
   const config: ServerConfig = {
     dataRoot: '/tmp/cut-on-eight-health-integration',
     databaseUrl: databaseUrl!,
@@ -35,12 +40,18 @@ databaseDescribe('catalog health routes', () => {
   };
 
   beforeAll(async () => {
+    releaseSuiteLock = await acquireDatabaseSuiteLock(databaseUrl!);
     database = createCatalogDatabase(config);
     await migrateCatalog(database);
+    await resetCatalogTestState(database);
   });
 
   afterAll(async () => {
-    await closeCatalogDatabase(database).catch(() => undefined);
+    try {
+      await closeCatalogDatabase(database).catch(() => undefined);
+    } finally {
+      await releaseSuiteLock?.();
+    }
   });
 
   it('reports real PostgreSQL readiness and optional dependency state', async () => {

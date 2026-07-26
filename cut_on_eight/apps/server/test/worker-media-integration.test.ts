@@ -17,6 +17,10 @@ import { createInspectVideoProcessor } from '../src/jobs/processors/inspect-vide
 import { createPurgeFragmentProcessor } from '../src/jobs/processors/purge-fragment.js';
 import { createDeleteAssetProcessor } from '../src/jobs/processors/delete-asset.js';
 import { FragmentPreviewGenerator } from '../src/media/fragment-preview-generator.js';
+import {
+  acquireDatabaseSuiteLock,
+  resetCatalogTestState,
+} from './database-test-harness.js';
 
 const databaseUrl = process.env.CUT_ON_EIGHT_TEST_DATABASE_URL;
 const integration = databaseUrl === undefined ? describe.skip : describe;
@@ -67,6 +71,7 @@ describe('fragment preview generator', () => {
 
 integration('media workers', () => {
   let database: Kysely<CatalogDatabase>;
+  let releaseSuiteLock: (() => Promise<void>) | undefined;
   const blobs = new LocalBlobStore(dataRoot);
   const videoId = randomUUID();
   const assetId = randomUUID();
@@ -74,8 +79,10 @@ integration('media workers', () => {
   const sourceKey = sourceBlobKey(videoId, 'tiny.mp4');
 
   beforeAll(async () => {
+    releaseSuiteLock = await acquireDatabaseSuiteLock(databaseUrl!);
     database = createCatalogDatabase({ databaseUrl: databaseUrl! });
     await migrateCatalog(database);
+    await resetCatalogTestState(database);
     const bytes = await readFile(resolve('test/fixtures/tiny.mp4'));
     const staged = await blobs.writeStaged(
       (async function* () {
@@ -112,13 +119,17 @@ integration('media workers', () => {
   });
 
   afterAll(async () => {
-    await database?.deleteFrom('videos').where('id', '=', videoId).execute();
-    await database
-      ?.deleteFrom('assets')
-      .where('owner_id', '=', videoId)
-      .execute();
-    if (database !== undefined) await closeCatalogDatabase(database);
-    await rm(dataRoot, { recursive: true, force: true });
+    try {
+      await database?.deleteFrom('videos').where('id', '=', videoId).execute();
+      await database
+        ?.deleteFrom('assets')
+        .where('owner_id', '=', videoId)
+        .execute();
+      if (database !== undefined) await closeCatalogDatabase(database);
+      await rm(dataRoot, { recursive: true, force: true });
+    } finally {
+      await releaseSuiteLock?.();
+    }
   });
 
   test('inspects and generates an idempotent five-frame WebP', async () => {
@@ -168,6 +179,24 @@ integration('media workers', () => {
         failure_code: null,
       })
       .execute();
+    const failedGenerate = createGeneratePreviewProcessor(database, blobs, {
+      generate: vi
+        .fn()
+        .mockRejectedValue(new Error('preview generation failed')),
+    } as unknown as FragmentPreviewGenerator);
+    await expect(
+      failedGenerate({ videoId, fragmentId, expectedRevision: 1 }),
+    ).rejects.toThrow('preview generation failed');
+    expect(
+      await database
+        .selectFrom('fragment_previews')
+        .select(['status', 'failure_code'])
+        .where('fragment_id', '=', fragmentId)
+        .executeTakeFirstOrThrow(),
+    ).toMatchObject({
+      status: 'failed',
+      failure_code: 'fragment_preview_generation_failed',
+    });
     const orphan = await blobs.withLocalPath(sourceKey, (sourcePath) =>
       new FragmentPreviewGenerator(blobs).generate({
         sourcePath,
@@ -177,8 +206,30 @@ integration('media workers', () => {
     );
     const previewKey = previewBlobKey(videoId, fragmentId, 1);
     await blobs.publish(orphan.staged, previewKey);
-    const generate = createGeneratePreviewProcessor(database, blobs);
-    await generate({ videoId, fragmentId, expectedRevision: 1 });
+    let releaseRetry!: () => void;
+    const retryGate = new Promise<void>((resolveRetry) => {
+      releaseRetry = resolveRetry;
+    });
+    const generate = createGeneratePreviewProcessor(database, blobs, {
+      async generate() {
+        await retryGate;
+        return orphan;
+      },
+    } as unknown as FragmentPreviewGenerator);
+    const retry = generate({ videoId, fragmentId, expectedRevision: 1 });
+    await vi.waitFor(async () => {
+      expect(
+        (
+          await database
+            .selectFrom('fragment_previews')
+            .select('status')
+            .where('fragment_id', '=', fragmentId)
+            .executeTakeFirstOrThrow()
+        ).status,
+      ).toBe('pending');
+    });
+    releaseRetry();
+    await retry;
     await generate({ videoId, fragmentId, expectedRevision: 0 });
     const preview = await database
       .selectFrom('fragment_previews')

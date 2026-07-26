@@ -15,6 +15,10 @@ import { createRuntime } from '../src/runtime.js';
 import type { ApiRuntime } from '../src/runtime.js';
 import { VideoService } from '../src/videos/video-service.js';
 import { sourceBlobKey } from '../src/blobs/blob-key.js';
+import {
+  acquireDatabaseSuiteLock,
+  resetCatalogTestState,
+} from './database-test-harness.js';
 
 const databaseUrl = process.env.CUT_ON_EIGHT_TEST_DATABASE_URL;
 const integration = databaseUrl === undefined ? describe.skip : describe;
@@ -30,6 +34,7 @@ integration('video and workspace API', () => {
   let app: CutOnEightApp;
   let runtime: ApiRuntime;
   let videoId: string | undefined;
+  let releaseSuiteLock: (() => Promise<void>) | undefined;
   const config: ServerConfig = {
     dataRoot,
     databaseUrl: databaseUrl!,
@@ -41,8 +46,10 @@ integration('video and workspace API', () => {
   };
 
   beforeAll(async () => {
+    releaseSuiteLock = await acquireDatabaseSuiteLock(databaseUrl!);
     const database = createCatalogDatabase(config);
     await migrateCatalog(database);
+    await resetCatalogTestState(database);
     await closeCatalogDatabase(database);
     runtime = await createRuntime(config);
     app = createApp({ config, runtime });
@@ -50,17 +57,21 @@ integration('video and workspace API', () => {
   });
 
   afterAll(async () => {
-    await app?.close();
-    if (videoId !== undefined) {
-      const database = createCatalogDatabase(config);
-      await database.deleteFrom('videos').where('id', '=', videoId).execute();
-      await database
-        .deleteFrom('assets')
-        .where('owner_id', '=', videoId)
-        .execute();
-      await closeCatalogDatabase(database);
+    try {
+      await app?.close();
+      if (videoId !== undefined) {
+        const database = createCatalogDatabase(config);
+        await database.deleteFrom('videos').where('id', '=', videoId).execute();
+        await database
+          .deleteFrom('assets')
+          .where('owner_id', '=', videoId)
+          .execute();
+        await closeCatalogDatabase(database);
+      }
+      await rm(dataRoot, { recursive: true, force: true });
+    } finally {
+      await releaseSuiteLock?.();
     }
-    await rm(dataRoot, { recursive: true, force: true });
   });
 
   test('publishes upload, opens it and serves ranges', async () => {
@@ -84,7 +95,12 @@ integration('video and workspace API', () => {
     videoId = accepted.video.id;
     expect(accepted.workspace.activeVideoId).toBe(videoId);
     expect(accepted.video.status).toBe('queued');
-    const source = accepted.workspace.openVideos[0]?.source;
+    expect(accepted.workspace.library.some(({ id }) => id === videoId)).toBe(
+      true,
+    );
+    const source = accepted.workspace.openVideos.find(
+      ({ video }) => video.id === videoId,
+    )?.source;
     expect(source).not.toBeNull();
     const range = await app.inject({
       method: 'GET',
@@ -124,6 +140,14 @@ integration('video and workspace API', () => {
       status: 'receiving',
       source_asset_id: null,
     });
+    expect((await service.list()).some(({ id }) => id === receiving.id)).toBe(
+      false,
+    );
+    expect(
+      (await runtime.workspace.snapshot()).library.some(
+        ({ id }) => id === receiving.id,
+      ),
+    ).toBe(false);
     const key = sourceBlobKey(receiving.id, sourceName);
     await expect(runtime.blobs.stat(key)).resolves.toMatchObject({
       size: 17,

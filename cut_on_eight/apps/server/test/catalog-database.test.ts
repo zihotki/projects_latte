@@ -7,6 +7,10 @@ import {
 } from '../src/catalog/database.js';
 import type { CatalogDatabase } from '../src/catalog/database-types.js';
 import { migrateCatalog } from '../src/catalog/migrations/index.js';
+import {
+  acquireDatabaseSuiteLock,
+  resetCatalogTestState,
+} from './database-test-harness.js';
 
 const databaseUrl = process.env.CUT_ON_EIGHT_TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl === undefined ? describe.skip : describe;
@@ -19,30 +23,35 @@ if (databaseUrl === undefined) {
 
 databaseDescribe('catalog database migration', () => {
   let database: Kysely<CatalogDatabase>;
+  let releaseSuiteLock: (() => Promise<void>) | undefined;
   const videoId = randomUUID();
   const fragmentId = randomUUID();
   const tagId = randomUUID();
 
   beforeAll(async () => {
+    releaseSuiteLock = await acquireDatabaseSuiteLock(databaseUrl!);
     database = createCatalogDatabase({ databaseUrl: databaseUrl! });
     await migrateCatalog(database);
+    await resetCatalogTestState(database);
   });
 
   afterAll(async () => {
-    if (database === undefined) {
-      return;
+    try {
+      if (database === undefined) return;
+      await database
+        .deleteFrom('tags')
+        .where('id', '=', tagId)
+        .execute()
+        .catch(() => undefined);
+      await database
+        .deleteFrom('videos')
+        .where('id', '=', videoId)
+        .execute()
+        .catch(() => undefined);
+      await closeCatalogDatabase(database);
+    } finally {
+      await releaseSuiteLock?.();
     }
-    await database
-      .deleteFrom('tags')
-      .where('id', '=', tagId)
-      .execute()
-      .catch(() => undefined);
-    await database
-      .deleteFrom('videos')
-      .where('id', '=', videoId)
-      .execute()
-      .catch(() => undefined);
-    await closeCatalogDatabase(database);
   });
 
   it('enforces fragment timing and canonical tag uniqueness', async () => {

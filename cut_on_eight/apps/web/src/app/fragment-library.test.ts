@@ -114,6 +114,35 @@ describe('FragmentLibrary', () => {
     expect(library.catalogue?.fragments[0]?.segment.title).toBe('final');
   });
 
+  it('uses the fragment revision produced by the flush for focused mutation', async () => {
+    const apiClient = api();
+    const workspacePort = workspace();
+    let revision = 1;
+    vi.mocked(workspacePort.flushProject).mockImplementation(async () => {
+      revision = 8;
+    });
+    vi.mocked(workspacePort.fragmentFor).mockImplementation(() => ({
+      segment: { ...segment, revision },
+      index: 0,
+    }));
+    const library = new FragmentLibrary(apiClient, workspacePort, jobs());
+    await library.refresh();
+    const mutation = {
+      startSeconds: 3,
+      endSeconds: 7,
+      exportSelected: true,
+      title: 'current revision',
+      tagIds: [],
+    };
+    await library.mutateFragment(projectId, fragmentId, mutation);
+    expect(apiClient.updateFragment).toHaveBeenCalledWith(
+      projectId,
+      fragmentId,
+      mutation,
+      8,
+    );
+  });
+
   it('removes and restores through the workspace port', async () => {
     const workspacePort = workspace();
     const library = new FragmentLibrary(api(), workspacePort, jobs());
@@ -225,6 +254,24 @@ describe('FragmentLibrary', () => {
       await library.refresh();
       await vi.advanceTimersByTimeAsync(1_000);
       expect(apiClient.loadFragments).toHaveBeenCalledTimes(2);
+      library.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not poll after preview generation reaches failed', async () => {
+    vi.useFakeTimers();
+    try {
+      const apiClient = api();
+      vi.mocked(apiClient.loadFragments).mockResolvedValue({
+        ...catalogue(),
+        fragments: [{ ...catalogue().fragments[0]!, thumbnailState: 'failed' }],
+      });
+      const library = new FragmentLibrary(apiClient, workspace(), jobs());
+      await library.refresh();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(apiClient.loadFragments).toHaveBeenCalledTimes(1);
       library.dispose();
     } finally {
       vi.useRealTimers();

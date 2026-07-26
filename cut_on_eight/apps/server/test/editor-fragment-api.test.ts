@@ -25,6 +25,10 @@ import type { ApiRuntime } from '../src/runtime.js';
 import { VideoService } from '../src/videos/video-service.js';
 import { WorkspaceRepository } from '../src/workspace/workspace-repository.js';
 import { WorkspaceService } from '../src/workspace/workspace-service.js';
+import {
+  acquireDatabaseSuiteLock,
+  resetCatalogTestState,
+} from './database-test-harness.js';
 
 const databaseUrl = process.env.CUT_ON_EIGHT_TEST_DATABASE_URL;
 const integration = databaseUrl === undefined ? describe.skip : describe;
@@ -39,6 +43,7 @@ integration('editor and fragment API', () => {
   let database: Kysely<CatalogDatabase>;
   let app: CutOnEightApp;
   let blobs: LocalBlobStore;
+  let releaseSuiteLock: (() => Promise<void>) | undefined;
   const videoId = randomUUID();
   const firstId = randomUUID();
   const secondId = randomUUID();
@@ -54,8 +59,10 @@ integration('editor and fragment API', () => {
   };
 
   beforeAll(async () => {
+    releaseSuiteLock = await acquireDatabaseSuiteLock(databaseUrl!);
     database = createCatalogDatabase(config);
     await migrateCatalog(database);
+    await resetCatalogTestState(database);
     await database
       .insertInto('videos')
       .values({
@@ -92,15 +99,19 @@ integration('editor and fragment API', () => {
   });
 
   afterAll(async () => {
-    await app?.close();
-    await database?.deleteFrom('videos').where('id', '=', videoId).execute();
-    await database
-      ?.deleteFrom('assets')
-      .where('owner_kind', '=', 'fragment')
-      .where('owner_id', 'in', [firstId, secondId, thirdId])
-      .execute();
-    if (database !== undefined) await closeCatalogDatabase(database);
-    await rm(config.dataRoot, { recursive: true, force: true });
+    try {
+      await app?.close();
+      await database?.deleteFrom('videos').where('id', '=', videoId).execute();
+      await database
+        ?.deleteFrom('assets')
+        .where('owner_kind', '=', 'fragment')
+        .where('owner_id', 'in', [firstId, secondId, thirdId])
+        .execute();
+      if (database !== undefined) await closeCatalogDatabase(database);
+      await rm(config.dataRoot, { recursive: true, force: true });
+    } finally {
+      await releaseSuiteLock?.();
+    }
   });
 
   test('enforces overlaps and revisions, then deletes and restores with Undo', async () => {

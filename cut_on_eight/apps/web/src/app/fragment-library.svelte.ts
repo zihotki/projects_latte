@@ -98,9 +98,10 @@ export class FragmentLibrary {
     mutation: FragmentMutation,
   ): Promise<Segment> {
     await this.workspace.flushProject(projectId);
-    const current = this.catalogue?.fragments.find(
-      ({ segment }) => segment.id === fragmentId,
-    )?.segment;
+    const current =
+      this.workspace.fragmentFor(projectId, fragmentId)?.segment ??
+      this.catalogue?.fragments.find(({ segment }) => segment.id === fragmentId)
+        ?.segment;
     const segment = await this.api.updateFragment(
       projectId,
       fragmentId,
