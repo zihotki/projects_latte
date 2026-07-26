@@ -26,7 +26,7 @@ The repository keeps tool caches under `.local/`; nothing is installed globally.
 pnpm -C cut_on_eight install --frozen-lockfile
 ./scripts/check.sh       # TypeScript build/type/lint/format and Python static checks
 ./scripts/test.sh        # Unit tests
-./scripts/integration.sh # Docker PostgreSQL and media integration tests
+./scripts/integration.sh # Docker PostgreSQL, Qdrant, and media integration tests
 ./scripts/verify.sh      # Full local CI suite
 ```
 

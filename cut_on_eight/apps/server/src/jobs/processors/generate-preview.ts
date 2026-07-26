@@ -105,7 +105,7 @@ export function createGeneratePreviewProcessor(
             'fragments.deleted_at',
             'videos.status',
           ])
-          .where('id', '=', job.fragmentId)
+          .where('fragments.id', '=', job.fragmentId)
           .forUpdate()
           .executeTakeFirst();
         if (

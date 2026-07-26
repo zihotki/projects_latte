@@ -2,6 +2,8 @@ import { sql, type Kysely } from 'kysely';
 import { blobKey } from '../../blobs/blob-key.js';
 import type { LocalMediaFiles } from '../../blobs/blob-store.js';
 import type { CatalogDatabase } from '../../catalog/database-types.js';
+import { appendEvent } from '../../events/event-store.js';
+import { videoThumbnailProfileVersion } from '../../thumbnails/video-thumbnail-manifest.js';
 import { FfprobeRunner, type ProbeRunner } from '../ffprobe-runner.js';
 
 export interface InspectVideoJob {
@@ -81,26 +83,42 @@ async function inspectClaimedSource(
     if (!Number.isSafeInteger(durationUs) || durationUs <= 0) {
       throw new Error('Inspected duration is outside the supported range');
     }
-    await database
-      .updateTable('videos')
-      .set({
-        duration_us: durationUs,
-        width: result.width,
-        height: result.height,
-        frame_rate_numerator: result.frameRateNumerator,
-        frame_rate_denominator: result.frameRateDenominator,
-        frame_rate_reliability: result.frameRateReliability,
-        has_audio: result.hasAudio,
-        inspected_at: new Date(),
-        inspector_version: 'ffprobe-v1',
-        status: 'ready',
-        revision: sql`revision + 1`,
-        updated_at: new Date(),
-      })
-      .where('id', '=', videoId)
-      .where('source_asset_id', '=', sourceAssetId)
-      .where('status', '=', 'processing')
-      .execute();
+    await database.transaction().execute(async (transaction) => {
+      const video = await transaction
+        .updateTable('videos')
+        .set({
+          duration_us: durationUs,
+          width: result.width,
+          height: result.height,
+          frame_rate_numerator: result.frameRateNumerator,
+          frame_rate_denominator: result.frameRateDenominator,
+          frame_rate_reliability: result.frameRateReliability,
+          has_audio: result.hasAudio,
+          inspected_at: new Date(),
+          inspector_version: 'ffprobe-v1',
+          status: 'ready',
+          revision: sql`revision + 1`,
+          updated_at: new Date(),
+        })
+        .where('id', '=', videoId)
+        .where('source_asset_id', '=', sourceAssetId)
+        .where('status', '=', 'processing')
+        .returning('revision')
+        .executeTakeFirst();
+      if (video === undefined) return;
+      await appendEvent(transaction, {
+        type: 'video.thumbnails.requested.v1',
+        schemaVersion: 1,
+        aggregate: { type: 'video', id: videoId, revision: video.revision },
+        correlationId: null,
+        causationId: null,
+        payload: {
+          videoId,
+          sourceAssetId,
+          thumbnailProfileVersion: videoThumbnailProfileVersion,
+        },
+      });
+    });
   } catch (error) {
     await failInspection(database, videoId, sourceAssetId);
     throw error;

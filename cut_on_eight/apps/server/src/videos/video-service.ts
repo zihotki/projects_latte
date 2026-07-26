@@ -15,6 +15,7 @@ import { toVideoSummaryDto } from '../api/public-mappers.js';
 import { WorkspaceRepository } from '../workspace/workspace-repository.js';
 import { WorkspaceService } from '../workspace/workspace-service.js';
 import { VideoRepository } from './video-repository.js';
+import { appendFragmentProjectionEvent } from '../search/fragment-projection.js';
 
 export interface UploadedSource {
   readonly fileName: string;
@@ -158,6 +159,15 @@ export class VideoService {
         .where('id', '=', videoId)
         .execute();
       await new WorkspaceRepository(transaction).close(videoId);
+      const fragmentIds = await transaction
+        .selectFrom('fragments')
+        .select('id')
+        .where('video_id', '=', videoId)
+        .where('deleted_at', 'is', null)
+        .execute();
+      for (const { id } of fragmentIds) {
+        await appendFragmentProjectionEvent(transaction, id);
+      }
       await this.boss.send(
         jobNames.deleteVideo,
         envelope({ videoId, expectedRevision: video.revision + 1 }),

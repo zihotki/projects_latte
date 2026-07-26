@@ -1,7 +1,6 @@
 export const jobNames = {
   inspectVideo: 'video.inspect.v1',
   generateFragmentPreview: 'fragment.preview.v1',
-  projectFragment: 'fragment.project.v1',
   purgeFragment: 'fragment.purge.v1',
   deleteVideo: 'video.delete.v1',
   deleteAsset: 'asset.delete.v1',

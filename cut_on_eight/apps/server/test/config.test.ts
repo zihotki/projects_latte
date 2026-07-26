@@ -12,9 +12,19 @@ describe('getServerConfig', () => {
       }),
     ).toEqual({
       dataRoot: join(homedir(), 'cut-on-eight_data'),
+      thumbnailRoot: join(homedir(), 'cut-on-eight_thumbnails'),
+      thumbnailOriginUrl: 'http://127.0.0.1:4320',
+      thumbnailOriginPort: 4320,
       databaseUrl: 'postgres://localhost/catalog',
+      natsUrl: 'nats://127.0.0.1:4222',
       qdrantHttpUrl: null,
       qdrantApiKey: null,
+      embeddingProfile: {
+        id: 'embeddinggemma-v1',
+        model: 'google/embeddinggemma-300M',
+        dimensions: 768,
+        baseUrl: null,
+      },
       maxUploadBytes: 20 * 1024 ** 3,
       host: '127.0.0.1',
       port: 4320,
@@ -73,5 +83,25 @@ describe('getServerConfig', () => {
     expect(() =>
       getServerConfig({ DATABASE_URL: 'not a url:with-secret' }),
     ).toThrow('Configured database URL is not a valid URL');
+  });
+
+  it('uses the default EmbeddingGemma profile without an endpoint', () => {
+    expect(
+      getServerConfig({ DATABASE_URL: 'postgres://catalog' }).embeddingProfile,
+    ).toEqual({
+      id: 'embeddinggemma-v1',
+      model: 'google/embeddinggemma-300M',
+      dimensions: 768,
+      baseUrl: null,
+    });
+  });
+
+  it('rejects embedding URLs with unsupported protocols', () => {
+    expect(() =>
+      getServerConfig({
+        DATABASE_URL: 'postgres://catalog',
+        CUT_ON_EIGHT_EMBEDDINGS_URL: 'ftp://localhost/v1',
+      }),
+    ).toThrow('embedding URL uses an unsupported protocol');
   });
 });

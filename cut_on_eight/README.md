@@ -1,125 +1,105 @@
 # Cut on Eight
 
-Local browser-based dance-video segmentation and cataloguing for macOS.
+Cut on Eight is a local macOS app for importing dance videos, marking precise
+fragments, editing their timing and metadata, and browsing the resulting video
+and fragment library. It is in active development: the PostgreSQL catalog,
+durable media-processing worker, fragment library, tags, previews, and
+event-driven Qdrant projection are working. Collections and user-facing
+server-side/semantic search are next.
 
-## Prerequisites
+## Install
 
-- macOS (the importer uses the native file picker)
-- Node.js 24 or newer
-- pnpm 11.9.0 (`corepack enable` can provide the pinned version)
-- Docker Desktop, running
-- Aspire CLI 13.4 or newer
-- `ffprobe` and `ffmpeg` on `PATH` for source inspection and timeline thumbnails
-
-Missing `ffprobe` does not block importing, playback, marking, or saving. The
-inspection fails visibly and can be retried after `ffprobe` is installed.
-Missing or failed `ffmpeg` does not block editing; thumbnail generation fails
-visibly and can be retried after FFmpeg is available.
-
-## Start
+Prerequisites: macOS, Node.js 24+, pnpm 11.13 (via Corepack), Docker Desktop,
+the Aspire CLI, and `ffmpeg`/`ffprobe` on `PATH`.
 
 ```bash
+corepack enable
 pnpm install
+```
+
+## Run locally
+
+From this directory:
+
+```bash
 pnpm dev
 ```
 
-Open <http://127.0.0.1:5173>. `pnpm dev` starts the Fastify API on
-<http://127.0.0.1:4318>, starts Vite on <http://127.0.0.1:5173>, and normally
-opens the browser. Set `CI=1` to suppress automatic browser opening.
+Aspire starts Docker-backed PostgreSQL, Qdrant, and NATS JetStream, runs
+migrations, then starts the Fastify API, pg-boss worker, outbox relay, Qdrant
+projector, `thumbnails-service`, and Svelte app. Open the Vite URL shown by Aspire
+(normally <http://127.0.0.1:5173>); its dashboard URL is printed too.
 
-Projects are stored outside the repository in `~/cut-on-eight_data`. To use a
-different location, pass an absolute path when starting the app:
+From the repository root, use `pnpm -C cut_on_eight dev` instead.
+
+### Default data locations
+
+The application-owned media directory is `~/cut-on-eight_data`. Imported files
+are copied there before processing, and source videos plus generated fragment
+previews remain there. Do not edit or remove its contents while the app is
+using them.
+
+The authoritative catalog and durable job queue are in Docker's named volume
+`cut-on-eight-postgres-data`. Qdrant uses the separate, rebuildable
+`cut-on-eight-qdrant-data` volume; NATS JetStream retains operational events in
+`cut-on-eight-nats-data`. Reusable video thumbnail bundles live in
+`~/cut-on-eight_thumbnails`, outside the source-media root. To override either
+local media directory, provide
+an absolute path:
 
 ```bash
-CUT_ON_EIGHT_DATA_ROOT=/absolute/path/to/data pnpm dev
+CUT_ON_EIGHT_DATA_ROOT=/absolute/path/to/cut-on-eight-data pnpm dev
+CUT_ON_EIGHT_THUMBNAIL_ROOT=/absolute/path/to/cut-on-eight-thumbnails pnpm dev
 ```
 
-`CUT_ON_EIGHT_PORT` can override the API port; the development proxy uses the
-same value.
+## Current functionality
 
-## Phase 1 workflow
+- Import a video through the browser, then work from the managed copy.
+- Keep several videos open, switch between them, save-and-close safely, and
+  return to them from the library.
+- Create fragments while watching, loop a selected fragment, nudge its start
+  and end with clicks or the keyboard, and edit its title, description, and
+  lower-case tags.
+- Browse a standalone fragment library with five-frame previews; delete and
+  restore fragments, or delete videos with confirmation.
+- Run inspection and preview generation as durable background work. Saves do
+  not wait for that work, and the worker resumes queued work after restart.
 
-Choose **Import MP4** to open the native macOS picker. The backend validates the
-selection, creates a project under the managed data root, and attempts an APFS
-copy-on-write clone before falling back to a full copy. Editing always uses this
-managed copy, not the external file.
+## Search and consistency
 
-Several projects can remain open. The project strip identifies the active one
-and shows save and inspection state. Switching projects saves the current
-playback position before activating the next project. Closing a project saves
-it and removes it from the open workspace without waiting for background jobs;
-it does not delete the managed project. Closed projects remain in the library
-and can be reopened without copying the video again.
+The current Fragments view is a fast local filter over the loaded catalog. It
+matches fragment titles and source-video names, and filters by video and tags.
+It is immediately consistent with the catalog once the view refreshes; there
+is no server-side ranking or semantic retrieval yet.
 
-### Keyboard controls
+Every visible fragment is also projected asynchronously to Qdrant. A save
+commits PostgreSQL state and an immutable outbox event in one transaction. The
+outbox relay publishes that event to NATS JetStream, and the Qdrant projector
+applies it idempotently; a new edit or deletion can therefore take a moment to
+appear in Qdrant.
+The projection contains only search metadata (titles, descriptions, tags,
+timing, and source context), uses no embeddings, and never blocks editing.
+`search:rebuild` recreates it from PostgreSQL if needed. JetStream is bounded
+operational delivery; PostgreSQL remains the durable replay source.
 
-Shortcuts are ignored while typing in a form control.
+For an audit or a clean projection run, `pnpm events:replay` copies the archived
+events into a new, isolated JetStream replay stream and records the run in
+PostgreSQL. It never rewinds the live consumers or republishes into the live
+stream.
 
-| Key            | Action                                                                    |
-| -------------- | ------------------------------------------------------------------------- |
-| `Space`        | Play or pause                                                             |
-| `I`            | Set or replace the pending in-point at the current time                   |
-| `O`            | Create and select a segment from the pending in-point to the current time |
-| `Escape`       | Cancel the pending in-point                                               |
-| `Delete`       | Delete the selected segment                                               |
-| `Backspace`    | Delete the most recently created segment                                  |
-| `Cmd/Ctrl + S` | Save the active project immediately                                       |
+## Architecture
 
-When the timeline is focused, `Left` and `Right` seek by one second,
-`Shift + Left/Right` seek by ten seconds, and `Home`/`End` seek to the start/end.
-Creating a segment continues playback unless **Pause after creating a segment**
-is enabled.
+The Svelte 5 SPA runs in the browser. A local Fastify API and a separate worker
+run on the host; PostgreSQL is the source of truth, while the external media
+directory is the blob store. Aspire coordinates those processes with PostgreSQL
+and Qdrant containers in Docker Desktop. See [the architecture note](docs/architecture.md)
+for boundaries, data ownership, and the planned search model.
 
-### Saving and background work
-
-Edits autosave after one second. **Cmd/Ctrl + S** saves immediately. Project
-switching flushes pending changes. Close also saves first; if saving fails, the
-project stays open so it can be retried.
-
-Source inspection jobs are persisted in each project directory. Work continues
-after a project is closed, and queued or interrupted work resumes when the
-backend restarts. Failed retryable jobs expose a **Retry** action. Missing or
-failed `ffprobe` affects metadata inspection only and never blocks editing.
-
-## Phase 2 precision editor
-
-The Editor keeps the video, zoomable thumbnail timeline, and segments dominant;
-Library is a separate top-level view and the segment panel can be collapsed.
-Selecting a segment seeks to it without playing. Press **Space** to loop that
-segment, **Enter** for contextual preview, or click outside segments to return
-to the full video. Use the Start/End controls and arrow keys for click-or-keyboard
-boundary nudging; the editor prevents more than two simultaneous overlaps and
-explains rejected edits. The central help popover shows the active shortcuts.
-
-Thumbnail work is durably queued after inspection and stored as bounded WebP
-sprite pages with one compact manifest per video. Editing remains available
-while generation is queued, running, failed, or being retried.
-
-Phase 2 implementation and automated browser acceptance are complete. Manual
-macOS acceptance remains for the native picker, trackpad interaction feel,
-representative real-video precision, and native Play-control looping feel.
-
-> [!WARNING]
-> Treat the managed data root as application-owned storage. Deleting or editing
-> files there can remove the managed video, sidecar, catalogue, workspace, or
-> durable jobs and may make projects impossible to reopen. Closing a project in
-> the UI is safe and does not delete these files.
-
-## Verify
+## Verification
 
 ```bash
 pnpm verify
 ```
 
-From the repository root, `./scripts/verify.sh` additionally runs the
-containerized PostgreSQL integration suite.
-
-## Workspace
-
-- `apps/web`: Svelte 5 client-only SPA
-- `apps/server`: local Fastify backend
-- `packages/contracts`: shared runtime schemas and TypeScript types
-- `.agents` and `.codex`: repository-scoped Svelte agent tooling
-- `plans`: approved designs and implementation plans
-
-Start future Codex tasks with this `cut_on_eight` folder as the working directory so its nested skills, MCP configuration, and `AGENTS.md` are discovered.
+From the repository root, `./scripts/verify.sh` adds the Docker PostgreSQL
+integration suite.

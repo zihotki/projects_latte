@@ -24,6 +24,7 @@ import { toFragmentDto, toTagDto } from '../api/public-mappers.js';
 import { VideoRepository } from '../videos/video-repository.js';
 import { WorkspaceService } from '../workspace/workspace-service.js';
 import { FragmentRepository } from './fragment-repository.js';
+import { appendFragmentProjectionEvent } from '../search/fragment-projection.js';
 
 export class FragmentRestoreExpired extends DomainConflict {
   constructor() {
@@ -196,6 +197,9 @@ export class FragmentService {
           );
         }
       }
+      for (const fragmentId of merged.keys()) {
+        await appendFragmentProjectionEvent(transaction, fragmentId);
+      }
       await transaction
         .insertInto('editor_state')
         .values({
@@ -271,6 +275,7 @@ export class FragmentService {
         .where('id', '=', fragmentId)
         .execute();
       await replaceFragmentTags(transaction, fragmentId, request.tagIds);
+      await appendFragmentProjectionEvent(transaction, fragmentId);
       if (changed) {
         await upsertPendingPreview(
           transaction,
@@ -320,6 +325,7 @@ export class FragmentService {
         })
         .where('id', '=', fragmentId)
         .execute();
+      await appendFragmentProjectionEvent(transaction, fragmentId);
       await this.boss.send(jobNames.purgeFragment, envelope({ fragmentId }), {
         db: fromKysely(transaction),
         startAfter: 8,
@@ -359,6 +365,7 @@ export class FragmentService {
         })
         .where('id', '=', fragmentId)
         .execute();
+      await appendFragmentProjectionEvent(transaction, fragmentId);
     });
     return this.get(fragmentId);
   }

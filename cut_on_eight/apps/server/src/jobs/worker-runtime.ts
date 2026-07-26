@@ -16,16 +16,24 @@ import { createPurgeFragmentProcessor } from './processors/purge-fragment.js';
 import { createDeleteVideoProcessor } from './processors/delete-video.js';
 import { createDeleteAssetProcessor } from './processors/delete-asset.js';
 import type { DeleteAssetJob } from './processors/asset-deletion.js';
+import { ThumbnailBundleStore } from '../thumbnails/thumbnail-bundle-store.js';
 
 export async function registerWorkerHandlers(input: {
   database: Kysely<CatalogDatabase>;
   boss: PgBoss;
   blobs: BlobStore & LocalMediaFiles;
+  thumbnailRoot?: string;
 }): Promise<void> {
   const inspect = createInspectVideoProcessor(input.database, input.blobs);
   const preview = createGeneratePreviewProcessor(input.database, input.blobs);
   const purge = createPurgeFragmentProcessor(input.database, input.boss);
-  const deleteVideo = createDeleteVideoProcessor(input.database, input.blobs);
+  const deleteVideo = createDeleteVideoProcessor(
+    input.database,
+    input.blobs,
+    input.thumbnailRoot === undefined
+      ? undefined
+      : new ThumbnailBundleStore(input.thumbnailRoot),
+  );
   const deleteAsset = createDeleteAssetProcessor(input.database, input.blobs);
 
   await input.boss.work<JobEnvelope<InspectVideoJob>>(

@@ -26,6 +26,8 @@
     "test:contracts": "pnpm --filter @cut-on-eight/legacy-contracts test && pnpm --filter @cut-on-eight/api-contracts test",
     "check:web": "pnpm --filter @cut-on-eight/legacy-contracts build && pnpm --filter @cut-on-eight/api-contracts build && pnpm --filter @cut-on-eight/web check",
     "db:migrate": "pnpm --filter @cut-on-eight/server db:migrate",
+    "search:rebuild": "pnpm --filter @cut-on-eight/server search:rebuild",
+    "search:smoke": "pnpm --filter @cut-on-eight/server search:smoke",
     "aspire:start": "pnpm --dir aspire-apphost run aspire:start",
     "aspire:check": "pnpm --dir aspire-apphost run aspire:build",
     "format:file": "prettier --write",

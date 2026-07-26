@@ -14,6 +14,7 @@ type NullableTimestamp = ColumnType<
 >;
 type BigIntText = ColumnType<string, string | number, string | number>;
 type NullableColumn<T> = ColumnType<T | null, T | null | undefined, T | null>;
+type JsonObject = Record<string, unknown>;
 
 export interface AssetTable {
   id: string;
@@ -105,6 +106,93 @@ export interface FragmentPreviewTable {
   updated_at: Timestamp;
 }
 
+export interface SearchProjectionStateTable {
+  fragment_id: string;
+  projection_revision: number;
+  projection_version: number;
+  status: 'pending' | 'ready' | 'failed';
+  last_failure_code: string | null;
+  last_event_id: string | null;
+  last_aggregate_revision: number | null;
+  last_source_position: BigIntText | null;
+  updated_at: Timestamp;
+}
+
+export interface IntegrationEventTable {
+  position: Generated<BigIntText>;
+  event_id: string;
+  event_type: string;
+  schema_version: number;
+  aggregate_type: 'fragment' | 'video';
+  aggregate_id: string;
+  aggregate_revision: number;
+  occurred_at: Timestamp;
+  correlation_id: string | null;
+  causation_id: string | null;
+  payload: ColumnType<JsonObject, JsonObject, JsonObject>;
+}
+
+export interface EventPublicationTable {
+  event_id: string;
+  destination: 'jetstream-primary';
+  status: 'pending' | 'leased' | 'published' | 'failed';
+  attempts: number;
+  available_at: Timestamp;
+  locked_until: NullableTimestamp;
+  published_at: NullableTimestamp;
+  broker_stream: string | null;
+  broker_sequence: BigIntText | null;
+  last_error: string | null;
+}
+
+export interface EventReplayRunTable {
+  id: string;
+  start_position: BigIntText;
+  end_position: BigIntText;
+  destination_stream: string;
+  purpose: string;
+  status: 'running' | 'completed' | 'failed';
+  published_through_position: BigIntText | null;
+  last_error: string | null;
+  created_at: Timestamp;
+  completed_at: NullableTimestamp;
+}
+
+export interface VideoThumbnailStateTable {
+  video_id: string;
+  source_asset_id: string;
+  profile_version: string;
+  storage_key: string | null;
+  status: 'pending' | 'generating' | 'ready' | 'failed';
+  manifest: NullableColumn<JsonObject>;
+  failure_code: string | null;
+  updated_at: Timestamp;
+}
+
+export interface SemanticSearchIndexStateTable {
+  profile_id: string;
+  fragment_id: string;
+  collection_name: string;
+  fragment_revision: number;
+  text_hash: string;
+  status: 'pending' | 'ready' | 'failed';
+  last_event_id: string | null;
+  last_source_position: BigIntText | null;
+  failure_code: string | null;
+  updated_at: Timestamp;
+}
+
+export interface SemanticSearchRebuildTable {
+  id: string;
+  profile_id: string;
+  target_collection_name: string;
+  snapshot_high_water_position: BigIntText;
+  status: 'running' | 'ready' | 'failed';
+  error_text: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
 export interface WorkspaceStateTable {
   id: boolean;
   active_video_id: string | null;
@@ -140,6 +228,13 @@ export interface CatalogDatabase {
   video_tags: VideoTagTable;
   fragment_tags: FragmentTagTable;
   fragment_previews: FragmentPreviewTable;
+  search_projection_state: SearchProjectionStateTable;
+  integration_events: IntegrationEventTable;
+  event_publications: EventPublicationTable;
+  event_replay_runs: EventReplayRunTable;
+  video_thumbnail_state: VideoThumbnailStateTable;
+  semantic_search_index_state: SemanticSearchIndexStateTable;
+  semantic_search_rebuilds: SemanticSearchRebuildTable;
   workspace_state: WorkspaceStateTable;
   workspace_videos: WorkspaceVideoTable;
   editor_state: EditorStateTable;

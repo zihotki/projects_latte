@@ -206,6 +206,7 @@ export const coreCatalogMigration: Migration = {
       'editor_state',
       'workspace_videos',
       'workspace_state',
+      'search_projection_state',
       'fragment_previews',
       'fragment_tags',
       'video_tags',

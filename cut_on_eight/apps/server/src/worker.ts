@@ -51,7 +51,12 @@ process.once('SIGTERM', () => void shutdown());
 try {
   await boss.start();
   await createPhase4Queues(boss);
-  await registerWorkerHandlers({ database, boss, blobs });
+  await registerWorkerHandlers({
+    database,
+    boss,
+    blobs,
+    thumbnailRoot: config.thumbnailRoot,
+  });
   await heartbeat();
   console.info('Phase 4 worker ready');
   heartbeatTimer = setInterval(() => {

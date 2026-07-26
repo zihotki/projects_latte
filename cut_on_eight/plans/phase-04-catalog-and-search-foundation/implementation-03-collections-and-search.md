@@ -8,7 +8,7 @@
 
 **Architecture:** Collection and search capabilities are vertical server modules with public DTOs and focused Svelte models/views. `PostgresSearchProvider` is the only user-facing search implementation in Phase 4. Qdrant is asynchronously projected through `pg-boss`; its availability never blocks editing or PostgreSQL search.
 
-**Tech Stack:** Slice 2 stack plus PostgreSQL relational search, `@qdrant/js-client-rest`, Cockatiel-wrapped Qdrant calls, Svelte 5.
+**Tech Stack:** Slice 2 stack plus PostgreSQL relational search, a small Cockatiel-wrapped Qdrant REST adapter, Svelte 5.
 
 **Depends on:** [Slice 2 — Video and Fragment Vertical Slice](implementation-02-video-and-fragment-vertical-slice.md)
 

@@ -3,12 +3,24 @@ import { isAbsolute, join } from 'node:path';
 
 export interface ServerConfig {
   dataRoot: string;
+  thumbnailRoot: string;
+  thumbnailOriginUrl: string;
+  thumbnailOriginPort: number;
   databaseUrl: string;
+  natsUrl: string;
   qdrantHttpUrl: string | null;
   qdrantApiKey: string | null;
+  embeddingProfile: EmbeddingProfile;
   maxUploadBytes: number;
   host: '127.0.0.1';
   port: number;
+}
+
+export interface EmbeddingProfile {
+  readonly id: string;
+  readonly model: string;
+  readonly dimensions: number;
+  readonly baseUrl: string | null;
 }
 
 export function getServerConfig(
@@ -31,6 +43,30 @@ export function getServerConfig(
   if (!isAbsolute(dataRoot)) {
     throw new Error('CUT_ON_EIGHT_DATA_ROOT must be an absolute path');
   }
+  const thumbnailRoot =
+    environment.CUT_ON_EIGHT_THUMBNAIL_ROOT ??
+    join(homedir(), 'cut-on-eight_thumbnails');
+  if (!isAbsolute(thumbnailRoot)) {
+    throw new Error('CUT_ON_EIGHT_THUMBNAIL_ROOT must be an absolute path');
+  }
+  const thumbnailOriginPortText =
+    environment.CUT_ON_EIGHT_THUMBNAIL_ORIGIN_PORT ?? '4320';
+  const thumbnailOriginPort = Number(thumbnailOriginPortText);
+  if (
+    !/^[1-9]\d*$/.test(thumbnailOriginPortText) ||
+    !Number.isInteger(thumbnailOriginPort) ||
+    thumbnailOriginPort > 65_535
+  ) {
+    throw new Error(
+      'CUT_ON_EIGHT_THUMBNAIL_ORIGIN_PORT must be an integer from 1 to 65535',
+    );
+  }
+  const thumbnailOriginUrl =
+    environment.CUT_ON_EIGHT_THUMBNAIL_ORIGIN_URL ??
+    `http://127.0.0.1:${thumbnailOriginPort}`;
+  assertUrl(thumbnailOriginUrl, ['http:', 'https:'], 'thumbnail origin URL');
+  const natsUrl = environment.NATS_URL ?? 'nats://127.0.0.1:4222';
+  assertUrl(natsUrl, ['nats:', 'tls:'], 'NATS URL');
 
   const databaseUrl =
     environment.ConnectionStrings__catalog ?? environment.DATABASE_URL;
@@ -46,6 +82,7 @@ export function getServerConfig(
   if (qdrantHttpUrl !== null) {
     assertUrl(qdrantHttpUrl, ['http:', 'https:'], 'Qdrant URL');
   }
+  const embeddingProfile = getEmbeddingProfile(environment);
   const maxUploadBytes = Number(
     environment.CUT_ON_EIGHT_MAX_UPLOAD_BYTES ?? 20 * 1024 ** 3,
   );
@@ -55,13 +92,59 @@ export function getServerConfig(
 
   return {
     dataRoot,
+    thumbnailRoot,
+    thumbnailOriginUrl,
+    thumbnailOriginPort,
     databaseUrl,
+    natsUrl,
     qdrantHttpUrl,
     qdrantApiKey: environment.QDRANT_APIKEY ?? null,
+    embeddingProfile,
     maxUploadBytes,
     host: '127.0.0.1',
     port,
   };
+}
+
+function getEmbeddingProfile(
+  environment: NodeJS.ProcessEnv,
+): EmbeddingProfile {
+  const id = environment.CUT_ON_EIGHT_EMBEDDING_PROFILE ?? 'embeddinggemma-v1';
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) {
+    throw new Error(
+      'CUT_ON_EIGHT_EMBEDDING_PROFILE must be a lowercase identifier up to 64 characters',
+    );
+  }
+
+  const model = (
+    environment.CUT_ON_EIGHT_EMBEDDING_MODEL ?? 'google/embeddinggemma-300M'
+  ).trim();
+  if (model === '') {
+    throw new Error('CUT_ON_EIGHT_EMBEDDING_MODEL must not be empty');
+  }
+
+  const dimensionsText = environment.CUT_ON_EIGHT_EMBEDDING_DIMENSIONS ?? '768';
+  const dimensions = Number(dimensionsText);
+  if (
+    !/^[1-9]\d*$/.test(dimensionsText) ||
+    !Number.isSafeInteger(dimensions) ||
+    dimensions > 8_192
+  ) {
+    throw new Error(
+      'CUT_ON_EIGHT_EMBEDDING_DIMENSIONS must be an integer from 1 to 8192',
+    );
+  }
+
+  const baseUrl = environment.CUT_ON_EIGHT_EMBEDDINGS_URL ?? null;
+  if (baseUrl !== null) {
+    assertUrl(baseUrl, ['http:', 'https:'], 'embedding URL');
+    const url = new URL(baseUrl);
+    if (!url.pathname.endsWith('/v1') || url.search !== '' || url.hash !== '') {
+      throw new Error('Configured embedding URL must end in /v1');
+    }
+  }
+
+  return { id, model, dimensions, baseUrl };
 }
 
 function assertUrl(value: string, protocols: string[], label: string): void {

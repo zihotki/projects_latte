@@ -2,10 +2,12 @@ import type { Kysely } from 'kysely';
 import { blobKey } from '../../blobs/blob-key.js';
 import type { BlobStore } from '../../blobs/blob-store.js';
 import type { CatalogDatabase } from '../../catalog/database-types.js';
+import { ThumbnailBundleStore } from '../../thumbnails/thumbnail-bundle-store.js';
 
 export function createDeleteVideoProcessor(
   database: Kysely<CatalogDatabase>,
   blobs: BlobStore,
+  thumbnails?: ThumbnailBundleStore,
 ) {
   return async ({
     videoId,
@@ -49,6 +51,11 @@ export function createDeleteVideoProcessor(
         ]),
       )
       .execute();
+    const thumbnail = await database
+      .selectFrom('video_thumbnail_state')
+      .select('storage_key')
+      .where('video_id', '=', videoId)
+      .executeTakeFirst();
     for (const asset of assets) await blobs.delete(blobKey(asset.storage_key));
     await database.transaction().execute(async (transaction) => {
       const tombstone = await transaction
@@ -89,5 +96,11 @@ export function createDeleteVideoProcessor(
         )
         .execute();
     });
+    if (
+      thumbnail?.storage_key !== null &&
+      thumbnail?.storage_key !== undefined
+    ) {
+      thumbnails?.deleteLater(thumbnail.storage_key, 0);
+    }
   };
 }

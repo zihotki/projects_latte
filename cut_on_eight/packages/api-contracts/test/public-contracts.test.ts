@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  fragmentSearchQuerySchema,
+  fragmentSearchResponseSchema,
   fragmentSchema,
   videoSummarySchema,
   type FragmentDto,
@@ -40,6 +42,21 @@ const validFragment: FragmentDto = {
   revision: 1,
   tags: [],
   previewState: 'pending',
+  preview: null,
+};
+
+const validSearchResult = {
+  id: fragmentId,
+  title: 'Turn',
+  description: 'A slow turn',
+  tags: [],
+  startUs: 1_000_000,
+  endUs: 2_000_000,
+  videoId,
+  sourceTitle: 'Example',
+  collections: [],
+  score: 0.5,
+  previewState: 'pending' as const,
   preview: null,
 };
 
@@ -100,6 +117,31 @@ describe('public API contracts', () => {
           frameWidth: 320,
           frameHeight: 180,
         },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('parses bounded search query filters with defaults', () => {
+    expect(fragmentSearchQuerySchema.parse({ q: '  slow turn  ' })).toEqual({
+      q: 'slow turn',
+      tagIds: [],
+      collectionIds: [],
+      videoIds: [],
+      limit: 20,
+    });
+  });
+
+  it('does not expose persistence details in fragment search results', () => {
+    expect(
+      fragmentSearchResponseSchema.safeParse({
+        mode: 'lexical',
+        indexing: { pending: 1 },
+        results: [
+          {
+            ...validSearchResult,
+            storageKey: 'private/fragments/turn.webm',
+          },
+        ],
       }).success,
     ).toBe(false);
   });
