@@ -1,8 +1,6 @@
 <script lang="ts">
-  import type {
-    JobRecord,
-    ProjectDocument,
-  } from '@cut-on-eight/legacy-contracts';
+  import type { JobRecord } from '@cut-on-eight/legacy-contracts';
+  import type { ProjectDocument } from '../domain/editor-model.js';
   import type { SaveState } from '../lib/save-controller.js';
 
   let {

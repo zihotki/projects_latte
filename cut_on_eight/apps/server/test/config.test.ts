@@ -15,6 +15,7 @@ describe('getServerConfig', () => {
       databaseUrl: 'postgres://localhost/catalog',
       qdrantHttpUrl: null,
       qdrantApiKey: null,
+      maxUploadBytes: 20 * 1024 ** 3,
       host: '127.0.0.1',
       port: 4320,
     });

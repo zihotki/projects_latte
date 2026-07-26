@@ -1,9 +1,8 @@
 import type {
-  ImportSelectionResponse,
   ProjectDocument,
   Segment,
   WorkspaceSnapshot,
-} from '@cut-on-eight/legacy-contracts';
+} from '../domain/editor-model.js';
 import { SvelteMap } from 'svelte/reactivity';
 import type {
   RegisterVideoEditorControl,
@@ -17,12 +16,19 @@ import {
 
 export interface WorkspaceApi {
   loadWorkspace(): Promise<WorkspaceSnapshot>;
-  selectImport(): Promise<ImportSelectionResponse>;
+  importVideo?(file: File): Promise<WorkspaceSnapshot>;
+  selectImport?(): Promise<{
+    outcome: 'cancelled' | 'imported' | 'already-open';
+    workspace: WorkspaceSnapshot;
+  }>;
   openProject(projectId: string): Promise<WorkspaceSnapshot>;
   activateProject(projectId: string): Promise<WorkspaceSnapshot>;
   saveProject(project: ProjectDocument): Promise<ProjectDocument>;
   closeProject(project: ProjectDocument): Promise<WorkspaceSnapshot>;
-  deleteProject(projectId: string): Promise<WorkspaceSnapshot>;
+  deleteProject(
+    projectId: string,
+    expectedRevision: number,
+  ): Promise<WorkspaceSnapshot>;
 }
 
 export interface WorkspacePort {
@@ -37,8 +43,9 @@ export interface WorkspacePort {
 export interface WorkspaceSessionCallbacks {
   readonly onWorkspaceApplied?: (snapshot: WorkspaceSnapshot) => void;
   readonly onProjectOpened?: (projectId: string) => void;
+  readonly onImported?: () => void;
   readonly onImportOutcome?: (
-    outcome: ImportSelectionResponse['outcome'],
+    outcome: 'cancelled' | 'imported' | 'already-open',
   ) => void;
 }
 
@@ -92,7 +99,7 @@ export class WorkspaceSession implements WorkspacePort {
     }
   }
 
-  async importMp4(): Promise<ImportSelectionResponse['outcome'] | null> {
+  async importMp4(file?: File): Promise<boolean> {
     this.importing = true;
     this.errorMessage = null;
     const prepared = this.prepareActiveProject();
@@ -100,17 +107,26 @@ export class WorkspaceSession implements WorkspacePort {
       if (prepared !== null) {
         await this.controllers.get(prepared.projectId)?.flush();
       }
-      const result = await this.api.selectImport();
-      this.applyWorkspace(result.workspace);
-      if (result.workspace.activeProjectId === prepared?.projectId) {
+      const legacy =
+        file === undefined ? await this.api.selectImport?.() : undefined;
+      const snapshot =
+        legacy?.workspace ??
+        (file === undefined || this.api.importVideo === undefined
+          ? null
+          : await this.api.importVideo(file));
+      if (snapshot === null || snapshot === undefined) return false;
+      this.applyWorkspace(snapshot);
+      if (snapshot.activeProjectId === prepared?.projectId) {
         prepared.control?.releaseAfterSave();
       }
-      this.callbacks.onImportOutcome?.(result.outcome);
-      return result.outcome;
+      this.callbacks.onImported?.();
+      if (legacy !== undefined)
+        this.callbacks.onImportOutcome?.(legacy.outcome);
+      return legacy?.outcome !== 'cancelled';
     } catch (error) {
       prepared?.control?.releaseAfterSave();
       this.errorMessage = describeError(error, 'Import failed');
-      return null;
+      return false;
     } finally {
       this.importing = false;
     }
@@ -185,7 +201,16 @@ export class WorkspaceSession implements WorkspacePort {
 
   async deleteManagedVideo(projectId: string): Promise<void> {
     await this.flushProject(projectId);
-    this.applyWorkspace(await this.api.deleteProject(projectId), false);
+    const revision =
+      this.workspace?.openProjects.find((project) => project.id === projectId)
+        ?.revision ??
+      this.workspace?.library.find((project) => project.id === projectId)
+        ?.revision ??
+      0;
+    this.applyWorkspace(
+      await this.api.deleteProject(projectId, revision),
+      false,
+    );
   }
 
   updateProject(projectId: string, mutate: ProjectMutation): void {
@@ -391,7 +416,21 @@ export class WorkspaceSession implements WorkspacePort {
         projectId,
         new SaveController({
           save: async () => {
-            await this.api.saveProject(this.documentFor(projectId));
+            const saved = await this.api.saveProject(
+              this.documentFor(projectId),
+            );
+            this.patchOpenProject(projectId, (current) => ({
+              ...current,
+              revision: saved.revision,
+              segments: current.segments.map((segment) => {
+                const synchronized = saved.segments.find(
+                  ({ id }) => id === segment.id,
+                );
+                return synchronized === undefined
+                  ? segment
+                  : { ...segment, revision: synchronized.revision };
+              }),
+            }));
           },
           onStatusChange: (status) => this.updateSaveStatus(projectId, status),
         }),

@@ -62,3 +62,9 @@ export const videoSummarySchema = z
   });
 
 export type VideoSummaryDto = z.infer<typeof videoSummarySchema>;
+
+export const deleteVideoRequestSchema = z.strictObject({
+  expectedRevision: revisionSchema,
+});
+
+export const videoListSchema = z.array(videoSummarySchema);

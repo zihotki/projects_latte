@@ -1,4 +1,4 @@
-import type { WorkspaceSnapshot } from '@cut-on-eight/legacy-contracts';
+import type { WorkspaceSnapshot } from '../domain/editor-model.js';
 import { describe, expect, it } from 'vitest';
 import {
   UiPreferences,

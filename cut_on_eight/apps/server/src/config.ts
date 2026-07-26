@@ -6,6 +6,7 @@ export interface ServerConfig {
   databaseUrl: string;
   qdrantHttpUrl: string | null;
   qdrantApiKey: string | null;
+  maxUploadBytes: number;
   host: '127.0.0.1';
   port: number;
 }
@@ -45,12 +46,19 @@ export function getServerConfig(
   if (qdrantHttpUrl !== null) {
     assertUrl(qdrantHttpUrl, ['http:', 'https:'], 'Qdrant URL');
   }
+  const maxUploadBytes = Number(
+    environment.CUT_ON_EIGHT_MAX_UPLOAD_BYTES ?? 20 * 1024 ** 3,
+  );
+  if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes <= 0) {
+    throw new Error('CUT_ON_EIGHT_MAX_UPLOAD_BYTES must be a positive integer');
+  }
 
   return {
     dataRoot,
     databaseUrl,
     qdrantHttpUrl,
     qdrantApiKey: environment.QDRANT_APIKEY ?? null,
+    maxUploadBytes,
     host: '127.0.0.1',
     port,
   };

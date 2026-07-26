@@ -1,4 +1,4 @@
-import type { Segment } from '@cut-on-eight/legacy-contracts';
+import type { Segment } from '../domain/editor-model.js';
 import { sortSegmentsByStart } from './segments.js';
 
 export type SegmentRow = {

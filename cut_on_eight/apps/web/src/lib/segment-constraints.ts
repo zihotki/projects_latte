@@ -1,4 +1,4 @@
-import type { Segment } from '@cut-on-eight/legacy-contracts';
+import type { Segment } from '../domain/editor-model.js';
 
 export type SegmentConstraintCode =
   'invalid_range' | 'outside_source' | 'triple_overlap';

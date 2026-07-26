@@ -1,6 +1,7 @@
 <script lang="ts">
-  import type { ProjectSummary } from '@cut-on-eight/legacy-contracts';
+  import type { ProjectSummary } from '../domain/editor-model.js';
   import ConfirmDialog from './ConfirmDialog.svelte';
+  import ImportVideoButton from './ImportVideoButton.svelte';
 
   let {
     projects,
@@ -15,7 +16,7 @@
     openProjectIds: ReadonlySet<string>;
     openingProjectId: string | null;
     importing: boolean;
-    onImport: () => void;
+    onImport: (file: File) => void | Promise<void>;
     onOpen: (projectId: string) => void;
     onDelete: (projectId: string) => Promise<void>;
   } = $props();
@@ -48,14 +49,7 @@
     </div>
     <div class="library-actions">
       <span class="item-count">{projects.length}</span>
-      <button
-        class="primary-action"
-        type="button"
-        onclick={onImport}
-        disabled={importing}
-      >
-        {importing ? 'Selecting…' : 'Import MP4'}
-      </button>
+      <ImportVideoButton {importing} {onImport} />
     </div>
   </div>
 

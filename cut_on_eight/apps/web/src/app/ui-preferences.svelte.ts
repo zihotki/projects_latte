@@ -1,7 +1,7 @@
 import type {
   ProjectDocument,
   WorkspaceSnapshot,
-} from '@cut-on-eight/legacy-contracts';
+} from '../domain/editor-model.js';
 import type { ActiveView, EditorMode } from '../components/EditorShell.svelte';
 
 const ACTIVE_VIEW_KEY = 'cut-on-eight.active-view';

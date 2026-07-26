@@ -3,7 +3,7 @@ import {
   type FrameStep,
   type ProjectDocument,
   type Segment,
-} from '@cut-on-eight/legacy-contracts';
+} from '../domain/editor-model.js';
 import {
   validateSegmentMutation,
   type SegmentConstraintCode,

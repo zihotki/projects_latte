@@ -5,6 +5,7 @@ import type {
   ThumbnailManifestV1,
 } from '@cut-on-eight/legacy-contracts';
 import type { BackendState } from './app-status.js';
+import type { WorkspaceSnapshot } from '../domain/editor-model.js';
 import {
   mergeJobRecord,
   mergeJobSnapshot,
@@ -14,10 +15,12 @@ import {
 } from '../lib/job-events.js';
 
 export interface BackgroundApi {
-  loadCapabilities(): Promise<Capabilities>;
-  loadThumbnailManifest(projectId: string): Promise<ThumbnailManifestV1>;
-  retryJob(jobId: string): Promise<JobRecord>;
+  loadCapabilities?(): Promise<Capabilities>;
+  loadThumbnailManifest?(projectId: string): Promise<ThumbnailManifestV1>;
+  retryJob?(jobId: string): Promise<JobRecord>;
   connectJobEvents(options: JobEventConnectionOptions): () => void;
+  loadWorkspace?(): Promise<WorkspaceSnapshot>;
+  onWorkspace?(snapshot: WorkspaceSnapshot): void;
 }
 
 export class BackgroundProcessing {
@@ -31,6 +34,7 @@ export class BackgroundProcessing {
 
   private readonly thumbnailRequestKeys = new Map<string, string>();
   private closeJobEvents: (() => void) | null = null;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
 
   constructor(
@@ -40,6 +44,10 @@ export class BackgroundProcessing {
 
   start(): void {
     if (this.disposed) return;
+    if (this.api.loadWorkspace !== undefined) {
+      this.schedulePoll();
+      return;
+    }
     this.closeJobEvents?.();
     this.closeJobEvents = this.api.connectJobEvents({
       onSnapshot: (snapshot) => {
@@ -55,6 +63,10 @@ export class BackgroundProcessing {
 
   async loadToolCapabilities(): Promise<void> {
     try {
+      if (this.api.loadCapabilities === undefined) {
+        this.ffprobeState = 'ready';
+        return;
+      }
       const capabilities = await this.api.loadCapabilities();
       if (!this.disposed) {
         this.ffprobeState = capabilities.ffprobeAvailable
@@ -105,6 +117,7 @@ export class BackgroundProcessing {
     if (this.thumbnailRequestKeys.get(projectId) === requestKey) return;
     this.thumbnailRequestKeys.set(projectId, requestKey);
     try {
+      if (this.api.loadThumbnailManifest === undefined) return;
       const manifest = await this.api.loadThumbnailManifest(projectId);
       if (
         this.disposed ||
@@ -152,6 +165,7 @@ export class BackgroundProcessing {
     this.retryingJobId = job.id;
     this.errorMessage = null;
     try {
+      if (this.api.retryJob === undefined) return;
       const updated = await this.api.retryJob(job.id);
       this.mergeRetriedJob(updated);
     } catch (error) {
@@ -165,6 +179,7 @@ export class BackgroundProcessing {
     if (this.retryingJobId !== null) return;
     this.retryingJobId = jobId;
     try {
+      if (this.api.retryJob === undefined) return;
       this.mergeRetriedJob(await this.api.retryJob(jobId));
     } finally {
       this.retryingJobId = null;
@@ -190,6 +205,8 @@ export class BackgroundProcessing {
     this.disposed = true;
     this.closeJobEvents?.();
     this.closeJobEvents = null;
+    if (this.pollTimer !== null) clearTimeout(this.pollTimer);
+    this.pollTimer = null;
     this.thumbnailRequestKeys.clear();
   }
 
@@ -204,6 +221,26 @@ export class BackgroundProcessing {
     const next = { ...this.thumbnailLoadErrors };
     delete next[projectId];
     this.thumbnailLoadErrors = next;
+  }
+
+  private schedulePoll(): void {
+    if (this.disposed || this.api.loadWorkspace === undefined) return;
+    if (this.pollTimer !== null) clearTimeout(this.pollTimer);
+    this.pollTimer = setTimeout(async () => {
+      this.pollTimer = null;
+      try {
+        const workspace = await this.api.loadWorkspace!();
+        this.api.onWorkspace?.(workspace);
+        const processing = workspace.library.some((video) =>
+          ['receiving', 'queued', 'processing', 'deleting'].includes(
+            video.status ?? '',
+          ),
+        );
+        if (processing) this.schedulePoll();
+      } catch {
+        this.schedulePoll();
+      }
+    }, 1_000);
   }
 }
 

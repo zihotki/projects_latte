@@ -1,12 +1,8 @@
 <script lang="ts">
-  import type { FragmentPreview } from '@cut-on-eight/legacy-contracts';
+  import type { FragmentPreview } from '../domain/catalogue-model.js';
   import type { Attachment } from 'svelte/attachments';
-  import { thumbnailPageUrl } from '../lib/api.js';
 
-  let {
-    projectId,
-    previews,
-  }: { projectId: string; previews: FragmentPreview[] } = $props();
+  let { previews }: { previews: FragmentPreview[] } = $props();
   let visible = $state(false);
 
   const observeVisibility: Attachment<HTMLElement> = (element) => {
@@ -40,11 +36,7 @@
       <div class="fragment-preview-frame">
         {#if visible}
           <img
-            src={thumbnailPageUrl(
-              projectId,
-              preview.pageFileName,
-              preview.identity,
-            )}
+            src={preview.href ?? ''}
             alt=""
             loading="lazy"
             style:width={`${(preview.pageWidth / preview.width) * 100}%`}

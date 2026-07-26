@@ -1,4 +1,4 @@
-import type { Segment } from '@cut-on-eight/legacy-contracts';
+import type { Segment } from '../domain/editor-model.js';
 import { describe, expect, it } from 'vitest';
 import { assignSegmentRows } from './two-row-layout.js';
 

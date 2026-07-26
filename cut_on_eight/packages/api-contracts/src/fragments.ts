@@ -59,6 +59,7 @@ export const fragmentSchema = z
   });
 
 export type FragmentDto = z.infer<typeof fragmentSchema>;
+export const fragmentListSchema = z.array(fragmentSchema);
 
 const fragmentMutationFields = {
   startUs: microsecondsSchema,

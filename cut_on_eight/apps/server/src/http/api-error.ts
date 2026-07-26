@@ -5,6 +5,11 @@ import { UnsafeStoragePathError } from '../storage/layout.js';
 import { InvalidRepositoryDocumentError } from '../storage/repository-errors.js';
 import { InvalidMp4SourceError } from '../imports/source-validator.js';
 import { NativePickerError } from '../imports/source-picker.js';
+import {
+  CatalogNotFound,
+  DomainConflict,
+  StaleRevision,
+} from '../domain/models.js';
 
 export class ApiRouteError extends Error {
   constructor(
@@ -115,6 +120,28 @@ export function installApiErrorHandling(app: FastifyInstance): void {
   );
 
   app.setErrorHandler((error, request, reply) => {
+    if (
+      error instanceof CatalogNotFound ||
+      error instanceof DomainConflict ||
+      error instanceof StaleRevision
+    ) {
+      const status =
+        error instanceof CatalogNotFound
+          ? 404
+          : error.code === 'validation_failed'
+            ? 422
+            : 409;
+      const code = error instanceof CatalogNotFound ? error.code : error.code;
+      return reply.code(status).send({
+        type: `https://cut-on-eight.local/problems/${code}`,
+        title: status === 404 ? 'Catalog item not found' : 'Catalog conflict',
+        status,
+        detail:
+          error.message || 'The catalog operation could not be completed.',
+        code,
+        instance: request.url,
+      });
+    }
     const safeError = toRouteError(error);
 
     if (safeError.statusCode >= 500) {

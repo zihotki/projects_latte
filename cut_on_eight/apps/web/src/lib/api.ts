@@ -1,45 +1,59 @@
 import {
-  apiErrorSchema,
-  capabilitiesSchema,
-  importSelectionResponseSchema,
   createTagRequestSchema,
   deletedFragmentSchema,
-  fragmentCatalogueSchema,
-  fragmentMutationSchema,
-  segmentSchema,
-  tagDefinitionSchema,
-  tagDefinitionsSchema,
-  jobRecordSchema,
+  editorVideoSchema,
+  fragmentListSchema,
+  fragmentPatchRequestSchema,
+  fragmentSchema,
+  problemDetailsSchema,
+  restoreFragmentRequestSchema,
+  tagListSchema,
+  tagSchema,
+  uploadAcceptedSchema,
+  videoListSchema,
+  workspaceSchema,
+  type FragmentDto,
+  type VideoSummaryDto,
+} from '@cut-on-eight/api-contracts';
+import {
   jobSnapshotSchema,
-  projectDocumentSchema,
-  thumbnailManifestV1Schema,
-  workspaceSnapshotSchema,
-  type ApiError,
-  type Capabilities,
-  type ImportSelectionResponse,
-  type DeletedFragment,
-  type FragmentCatalogue,
-  type FragmentMutation,
-  type JobRecord,
   type JobSnapshot,
-  type ProjectDocument,
-  type Segment,
-  type TagDefinition,
-  type ThumbnailManifestV1,
-  type WorkspaceSnapshot,
 } from '@cut-on-eight/legacy-contracts';
+import type {
+  DeletedFragment,
+  FragmentCatalogue,
+  FragmentMutation,
+  FragmentSummary,
+  TagDefinition,
+} from '../domain/catalogue-model.js';
+import type {
+  ProjectDocument,
+  Segment,
+  WorkspaceSnapshot,
+} from '../domain/editor-model.js';
+import {
+  toEditorSaveRequest,
+  toProjectDocument,
+  toSeconds,
+  toWorkspaceSnapshot,
+} from '../domain/editor-mappers.js';
 
 export class ApiFailure extends Error {
+  readonly status: number;
   readonly code: string;
-  readonly retryable: boolean;
-  readonly details?: Readonly<Record<string, unknown>>;
+  readonly errors?: Record<string, string[]>;
 
-  constructor(error: ApiError['error']) {
-    super(error.message);
+  constructor(input: {
+    status: number;
+    code: string;
+    message: string;
+    errors?: Record<string, string[]>;
+  }) {
+    super(input.message);
     this.name = 'ApiFailure';
-    this.code = error.code;
-    this.retryable = error.retryable;
-    this.details = error.details;
+    this.status = input.status;
+    this.code = input.code;
+    this.errors = input.errors;
   }
 }
 
@@ -53,196 +67,223 @@ async function request<T>(
   init?: RequestInit,
 ): Promise<T> {
   let response: Response;
-
   try {
     response = await fetch(path, init);
   } catch {
     throw new ApiFailure({
+      status: 503,
       code: 'backend_unavailable',
       message: 'The local backend is unavailable.',
-      retryable: true,
     });
   }
-
   let body: unknown;
-
   try {
-    body = await response.json();
+    body = response.status === 204 ? null : await response.json();
   } catch {
     throw invalidResponse();
   }
-
   if (!response.ok) {
-    const parsedError = apiErrorSchema.safeParse(body);
-    throw parsedError.success
-      ? new ApiFailure(parsedError.data.error)
-      : invalidResponse();
-  }
-
-  const parsed = schema.safeParse(body);
-  if (!parsed.success) {
+    const problem = problemDetailsSchema.safeParse(body);
+    if (problem.success) {
+      throw new ApiFailure({
+        status: problem.data.status,
+        code: problem.data.code,
+        message: problem.data.detail,
+        errors: problem.data.errors,
+      });
+    }
     throw invalidResponse();
   }
-
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) throw invalidResponse();
   return parsed.data;
 }
 
 function invalidResponse(): ApiFailure {
   return new ApiFailure({
+    status: 502,
     code: 'invalid_server_response',
     message: 'The local backend returned an invalid response.',
-    retryable: true,
   });
 }
 
 const jsonHeaders = { 'content-type': 'application/json' };
 
-export function loadWorkspace(): Promise<WorkspaceSnapshot> {
-  return request('/api/workspace', workspaceSnapshotSchema);
+export async function loadWorkspace(): Promise<WorkspaceSnapshot> {
+  return toWorkspaceSnapshot(await request('/api/workspace', workspaceSchema));
 }
 
-export function selectImport(): Promise<ImportSelectionResponse> {
-  return request('/api/imports/select', importSelectionResponseSchema, {
+export async function importVideo(file: File): Promise<WorkspaceSnapshot> {
+  const form = new FormData();
+  form.set('source', file, file.name);
+  const accepted = await request('/api/videos', uploadAcceptedSchema, {
     method: 'POST',
+    body: form,
   });
+  return toWorkspaceSnapshot(accepted.workspace);
 }
 
-export function openProject(projectId: string): Promise<WorkspaceSnapshot> {
-  return request(
-    `/api/projects/${encodeURIComponent(projectId)}/open`,
-    workspaceSnapshotSchema,
-    { method: 'POST' },
+export async function openProject(
+  projectId: string,
+): Promise<WorkspaceSnapshot> {
+  return toWorkspaceSnapshot(
+    await request(
+      `/api/videos/${encodeURIComponent(projectId)}/open`,
+      workspaceSchema,
+      { method: 'POST' },
+    ),
   );
 }
 
-export function activateProject(projectId: string): Promise<WorkspaceSnapshot> {
-  return request(
-    `/api/projects/${encodeURIComponent(projectId)}/activate`,
-    workspaceSnapshotSchema,
-    { method: 'POST' },
+export async function activateProject(
+  projectId: string,
+): Promise<WorkspaceSnapshot> {
+  return toWorkspaceSnapshot(
+    await request(
+      `/api/videos/${encodeURIComponent(projectId)}/activate`,
+      workspaceSchema,
+      { method: 'POST' },
+    ),
   );
 }
 
-export function saveProject(
+export async function saveProject(
   project: ProjectDocument,
 ): Promise<ProjectDocument> {
-  return request(
-    `/api/projects/${encodeURIComponent(project.id)}`,
-    projectDocumentSchema,
+  const dto = await request(
+    `/api/videos/${encodeURIComponent(project.id)}/editor`,
+    editorVideoSchema,
     {
-      method: 'PUT',
+      method: 'PATCH',
       headers: jsonHeaders,
-      body: JSON.stringify(project),
+      body: JSON.stringify(toEditorSaveRequest(project)),
     },
   );
+  return toProjectDocument(dto);
 }
 
-export function closeProject(
+export async function closeProject(
   project: ProjectDocument,
 ): Promise<WorkspaceSnapshot> {
-  return request(
-    `/api/projects/${encodeURIComponent(project.id)}/close`,
-    workspaceSnapshotSchema,
-    {
-      method: 'POST',
-      headers: jsonHeaders,
-      body: JSON.stringify(project),
-    },
+  return toWorkspaceSnapshot(
+    await request(
+      `/api/videos/${encodeURIComponent(project.id)}/close`,
+      workspaceSchema,
+      { method: 'POST' },
+    ),
   );
 }
 
-export function loadJobs(): Promise<JobSnapshot> {
-  return request('/api/jobs', jobSnapshotSchema);
-}
-
-export function loadCapabilities(): Promise<Capabilities> {
-  return request('/api/capabilities', capabilitiesSchema);
-}
-
-export function retryJob(jobId: string): Promise<JobRecord> {
-  return request(
-    `/api/jobs/${encodeURIComponent(jobId)}/retry`,
-    jobRecordSchema,
-    {
-      method: 'POST',
-    },
+export async function deleteProject(
+  projectId: string,
+  expectedRevision: number,
+): Promise<WorkspaceSnapshot> {
+  return toWorkspaceSnapshot(
+    await request(
+      `/api/videos/${encodeURIComponent(projectId)}`,
+      workspaceSchema,
+      {
+        method: 'DELETE',
+        headers: jsonHeaders,
+        body: JSON.stringify({ expectedRevision }),
+      },
+    ),
   );
 }
 
-export function loadFragments(): Promise<FragmentCatalogue> {
-  return request('/api/fragments', fragmentCatalogueSchema);
+export async function loadFragments(): Promise<FragmentCatalogue> {
+  const [fragments, videos, tags] = await Promise.all([
+    request('/api/fragments', fragmentListSchema),
+    request('/api/videos', videoListSchema),
+    request('/api/tags', tagListSchema),
+  ]);
+  return {
+    fragments: fragments.map((fragment, index) =>
+      toFragmentSummary(fragment, videos, index + 1),
+    ),
+    tags,
+    diagnostics: [],
+  };
 }
 
 export function loadTags(): Promise<TagDefinition[]> {
-  return request('/api/tags', tagDefinitionsSchema);
+  return request('/api/tags', tagListSchema);
 }
 
 export function createTag(name: string): Promise<TagDefinition> {
-  const body = createTagRequestSchema.parse({ name });
-  return request('/api/tags', tagDefinitionSchema, {
+  return request('/api/tags', tagSchema, {
     method: 'POST',
     headers: jsonHeaders,
-    body: JSON.stringify(body),
+    body: JSON.stringify(createTagRequestSchema.parse({ name })),
   });
 }
 
-export function updateFragment(
-  projectId: string,
+export async function updateFragment(
+  _projectId: string,
   fragmentId: string,
   mutation: FragmentMutation,
+  expectedRevision: number,
 ): Promise<Segment> {
-  return request(
-    `/api/projects/${encodeURIComponent(projectId)}/fragments/${encodeURIComponent(fragmentId)}`,
-    segmentSchema,
+  const dto = await request(
+    `/api/fragments/${encodeURIComponent(fragmentId)}`,
+    fragmentSchema,
     {
-      method: 'PUT',
+      method: 'PATCH',
       headers: jsonHeaders,
-      body: JSON.stringify(fragmentMutationSchema.parse(mutation)),
+      body: JSON.stringify(
+        fragmentPatchRequestSchema.parse({
+          expectedRevision,
+          startUs: Math.round(mutation.startSeconds * 1_000_000),
+          endUs: Math.round(mutation.endSeconds * 1_000_000),
+          title: mutation.title,
+          description: mutation.description ?? null,
+          exportSelected: mutation.exportSelected,
+          tagIds: mutation.tagIds,
+        }),
+      ),
     },
   );
+  return toSegment(dto);
 }
 
-export function deleteFragment(
+export async function deleteFragment(
   projectId: string,
-  fragmentId: string,
+  fragment: Segment,
+  index: number,
 ): Promise<DeletedFragment> {
-  return request(
-    `/api/projects/${encodeURIComponent(projectId)}/fragments/${encodeURIComponent(fragmentId)}`,
+  const dto = await request(
+    `/api/fragments/${encodeURIComponent(fragment.id)}`,
     deletedFragmentSchema,
-    { method: 'DELETE' },
-  );
-}
-
-export function restoreFragment(deleted: DeletedFragment): Promise<Segment> {
-  return request(
-    `/api/projects/${encodeURIComponent(deleted.projectId)}/fragments/${encodeURIComponent(deleted.fragment.id)}/restore`,
-    segmentSchema,
     {
-      method: 'POST',
+      method: 'DELETE',
       headers: jsonHeaders,
-      body: JSON.stringify(deleted),
+      body: JSON.stringify({ expectedRevision: fragment.revision ?? 0 }),
     },
   );
+  return {
+    projectId,
+    index,
+    fragment: toSegment(dto.fragment),
+    undoToken: dto.undoToken,
+    undoUntil: dto.undoUntil,
+  };
 }
 
-export function deleteProject(projectId: string): Promise<WorkspaceSnapshot> {
-  return request(
-    `/api/projects/${encodeURIComponent(projectId)}`,
-    workspaceSnapshotSchema,
-    { method: 'DELETE' },
-  );
-}
-
-export function sourceUrl(projectId: string): string {
-  return `/api/sources/${encodeURIComponent(projectId)}/content`;
-}
-
-export function loadThumbnailManifest(
-  projectId: string,
-): Promise<ThumbnailManifestV1> {
-  return request(
-    `/api/projects/${encodeURIComponent(projectId)}/thumbnails/manifest`,
-    thumbnailManifestV1Schema,
+export async function restoreFragment(
+  deleted: DeletedFragment,
+): Promise<Segment> {
+  return toSegment(
+    await request(
+      `/api/fragments/${encodeURIComponent(deleted.fragment.id)}/restore`,
+      fragmentSchema,
+      {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify(
+          restoreFragmentRequestSchema.parse({ undoToken: deleted.undoToken }),
+        ),
+      },
+    ),
   );
 }
 
@@ -252,4 +293,69 @@ export function thumbnailPageUrl(
   immutableIdentity: string,
 ): string {
   return `/api/projects/${encodeURIComponent(projectId)}/thumbnails/${encodeURIComponent(fileName)}?identity=${encodeURIComponent(immutableIdentity)}`;
+}
+
+/** Legacy event client compatibility; Phase 4 uses processing-record polling. */
+export function loadJobs(): Promise<JobSnapshot> {
+  return request('/api/jobs', jobSnapshotSchema);
+}
+
+function toSegment(fragment: FragmentDto): Segment {
+  return {
+    id: fragment.id,
+    startSeconds: toSeconds(fragment.startUs),
+    endSeconds: toSeconds(fragment.endUs),
+    exportSelected: fragment.exportSelected,
+    title: fragment.title,
+    description: fragment.description,
+    tagIds: fragment.tags.map(({ id }) => id),
+    revision: fragment.revision,
+  };
+}
+
+function toFragmentSummary(
+  fragment: FragmentDto,
+  videos: readonly VideoSummaryDto[],
+  ordinal: number,
+): FragmentSummary {
+  const video = videos.find(({ id }) => id === fragment.videoId);
+  const preview = fragment.preview;
+  return {
+    projectId: fragment.videoId,
+    sourceFileName: video?.originalFileName ?? 'Video',
+    sourceHref: `/api/videos/${encodeURIComponent(fragment.videoId)}/source`,
+    sourceDurationSeconds:
+      video?.durationUs === null || video?.durationUs === undefined
+        ? null
+        : toSeconds(video.durationUs),
+    ordinal,
+    segment: toSegment(fragment),
+    previews:
+      preview === null
+        ? []
+        : preview.sampleUs.map((sampleUs, index) => ({
+            href: preview.href,
+            sampleSeconds: toSeconds(sampleUs),
+            pageFileName: `preview-r${preview.revision}.webp`,
+            pageWidth: preview.frameWidth * preview.columns,
+            pageHeight: preview.frameHeight * preview.rows,
+            x: preview.frameWidth * index,
+            y: 0,
+            width: preview.frameWidth,
+            height: preview.frameHeight,
+            identity: `${preview.assetId}:${preview.revision}`,
+          })),
+    thumbnailState:
+      fragment.previewState === 'ready'
+        ? 'ready'
+        : fragment.previewState === 'failed'
+          ? 'failed'
+          : 'generating',
+    thumbnailJobId: null,
+    frameStepSeconds:
+      video?.frameRateNumerator && video.frameRateDenominator
+        ? video.frameRateDenominator / video.frameRateNumerator
+        : 1 / 30,
+    frameStepApproximate: video?.frameRateReliability !== 'reliable',
+  };
 }

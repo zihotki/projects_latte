@@ -1,4 +1,4 @@
-import type { ProjectDocument, Segment } from '@cut-on-eight/legacy-contracts';
+import type { ProjectDocument, Segment } from '../domain/editor-model.js';
 import { describe, expect, it } from 'vitest';
 import {
   adjacentSegment,

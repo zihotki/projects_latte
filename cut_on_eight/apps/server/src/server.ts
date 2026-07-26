@@ -1,17 +1,15 @@
 import { getServerConfig } from './config.js';
 import { createApp } from './app.js';
-import {
-  closeCatalogDatabase,
-  createCatalogDatabase,
-} from './catalog/database.js';
 import { createHealthProbes } from './api/health-routes.js';
 import { shutdownTelemetry } from './observability/telemetry.js';
+import { createRuntime } from './runtime.js';
 
 const config = getServerConfig();
-const database = createCatalogDatabase(config);
+const runtime = await createRuntime(config);
 const app = createApp({
   config,
-  healthProbes: createHealthProbes(database, config),
+  runtime,
+  healthProbes: createHealthProbes(runtime.db, config),
 });
 let shuttingDown = false;
 
@@ -22,7 +20,6 @@ const shutdown = async (): Promise<void> => {
   shuttingDown = true;
   try {
     await app.close();
-    await closeCatalogDatabase(database);
     await shutdownTelemetry();
     process.exitCode = 0;
   } catch (error) {
@@ -39,7 +36,7 @@ try {
   await app.listen({ host: config.host, port: config.port });
 } catch (error) {
   app.log.error(error);
-  await closeCatalogDatabase(database).catch(() => undefined);
+  await runtime.close().catch(() => undefined);
   await shutdownTelemetry().catch(() => undefined);
   process.exitCode = 1;
 }

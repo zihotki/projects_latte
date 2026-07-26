@@ -1,6 +1,5 @@
 <script lang="ts">
-  import type { FragmentSummary } from '@cut-on-eight/legacy-contracts';
-  import { sourceUrl } from '../lib/api.js';
+  import type { FragmentSummary } from '../domain/catalogue-model.js';
   import { fragmentLabel } from '../lib/fragment-catalogue.js';
   import type { Attachment } from 'svelte/attachments';
 
@@ -105,7 +104,7 @@
         <!-- svelte-ignore a11y_media_has_caption -->
         <video
           {@attach attachVideo}
-          src={sourceUrl(fragment.projectId)}
+          src={fragment.sourceHref ?? ''}
           controls
           preload="metadata"
           onloadedmetadata={() => void start()}

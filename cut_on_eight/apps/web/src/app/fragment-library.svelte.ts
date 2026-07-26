@@ -2,9 +2,9 @@ import type {
   DeletedFragment,
   FragmentCatalogue,
   FragmentMutation,
-  Segment,
   TagDefinition,
-} from '@cut-on-eight/legacy-contracts';
+} from '../domain/catalogue-model.js';
+import type { Segment } from '../domain/editor-model.js';
 import type { WorkspacePort } from './workspace-session.svelte.js';
 
 export interface FragmentApi {
@@ -15,10 +15,12 @@ export interface FragmentApi {
     projectId: string,
     fragmentId: string,
     mutation: FragmentMutation,
+    expectedRevision: number,
   ): Promise<Segment>;
   deleteFragment(
     projectId: string,
-    fragmentId: string,
+    fragment: Segment,
+    index: number,
   ): Promise<DeletedFragment>;
   restoreFragment(deleted: DeletedFragment): Promise<Segment>;
 }
@@ -36,6 +38,7 @@ export class FragmentLibrary {
   retryingJobId = $state<string | null>(null);
 
   private requestRevision = 0;
+  private previewPollTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
 
   constructor(
@@ -46,6 +49,7 @@ export class FragmentLibrary {
 
   async refresh(): Promise<void> {
     if (this.disposed) return;
+    this.clearPreviewPoll();
     const revision = ++this.requestRevision;
     this.loading = true;
     this.error = null;
@@ -54,6 +58,7 @@ export class FragmentLibrary {
       if (!this.isCurrent(revision)) return;
       this.catalogue = catalogue;
       this.tags = catalogue.tags;
+      this.schedulePreviewPoll(catalogue);
     } catch (error) {
       if (!this.isCurrent(revision)) return;
       this.error = describeError(error, 'Could not load fragments');
@@ -91,10 +96,14 @@ export class FragmentLibrary {
     mutation: FragmentMutation,
   ): Promise<Segment> {
     await this.workspace.flushProject(projectId);
+    const current = this.catalogue?.fragments.find(
+      ({ segment }) => segment.id === fragmentId,
+    )?.segment;
     const segment = await this.api.updateFragment(
       projectId,
       fragmentId,
       mutation,
+      current?.revision ?? 0,
     );
     this.workspace.patchSegment(projectId, segment);
     this.replaceCatalogueSegment(projectId, segment);
@@ -106,7 +115,17 @@ export class FragmentLibrary {
     fragmentId: string,
   ): Promise<DeletedFragment> {
     await this.workspace.flushProject(projectId);
-    const deleted = await this.api.deleteFragment(projectId, fragmentId);
+    const index =
+      this.catalogue?.fragments.findIndex(
+        ({ segment }) => segment.id === fragmentId,
+      ) ?? -1;
+    const fragment = this.catalogue?.fragments[index]?.segment;
+    if (fragment === undefined) throw new Error('Fragment is unavailable.');
+    const deleted = await this.api.deleteFragment(
+      projectId,
+      fragment,
+      Math.max(0, index),
+    );
     this.workspace.removeSegment(projectId, fragmentId);
     if (this.catalogue !== null) {
       this.catalogue = {
@@ -148,6 +167,7 @@ export class FragmentLibrary {
     if (this.disposed) return;
     this.disposed = true;
     this.requestRevision += 1;
+    this.clearPreviewPoll();
   }
 
   private replaceCatalogueSegment(projectId: string, segment: Segment): void {
@@ -164,6 +184,26 @@ export class FragmentLibrary {
 
   private isCurrent(revision: number): boolean {
     return !this.disposed && revision === this.requestRevision;
+  }
+
+  private schedulePreviewPoll(catalogue: FragmentCatalogue): void {
+    if (
+      !catalogue.fragments.some(
+        ({ thumbnailState }) => thumbnailState === 'generating',
+      )
+    ) {
+      return;
+    }
+    this.previewPollTimer = setTimeout(() => {
+      this.previewPollTimer = null;
+      void this.refresh();
+    }, 1_000);
+  }
+
+  private clearPreviewPoll(): void {
+    if (this.previewPollTimer === null) return;
+    clearTimeout(this.previewPollTimer);
+    this.previewPollTimer = null;
   }
 }
 

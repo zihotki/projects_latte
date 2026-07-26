@@ -19,7 +19,9 @@
     openProjectIds={workspace.openProjectIds}
     openingProjectId={workspace.openingProjectId}
     importing={workspace.importing}
-    onImport={() => void workspace.importMp4()}
+    onImport={async (file) => {
+      await workspace.importMp4(file);
+    }}
     onOpen={(projectId) => void workspace.reopenProject(projectId)}
     onDelete={(projectId) => fragments.removeManagedVideo(projectId)}
   />

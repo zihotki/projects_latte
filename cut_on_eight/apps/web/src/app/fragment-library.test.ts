@@ -1,7 +1,5 @@
-import type {
-  FragmentCatalogue,
-  Segment,
-} from '@cut-on-eight/legacy-contracts';
+import type { FragmentCatalogue } from '../domain/catalogue-model.js';
+import type { Segment } from '../domain/editor-model.js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   FragmentLibrary,
@@ -167,5 +165,27 @@ describe('FragmentLibrary', () => {
     pending.resolve(catalogue());
     await refresh;
     expect(library.catalogue).toBeNull();
+  });
+
+  it('polls while fragment previews are being generated', async () => {
+    vi.useFakeTimers();
+    try {
+      const apiClient = api();
+      vi.mocked(apiClient.loadFragments)
+        .mockResolvedValueOnce({
+          ...catalogue(),
+          fragments: [
+            { ...catalogue().fragments[0]!, thumbnailState: 'generating' },
+          ],
+        })
+        .mockResolvedValueOnce(catalogue());
+      const library = new FragmentLibrary(apiClient, workspace(), jobs());
+      await library.refresh();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(apiClient.loadFragments).toHaveBeenCalledTimes(2);
+      library.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { FragmentSummary } from '@cut-on-eight/legacy-contracts';
+import type { FragmentSummary } from '../domain/catalogue-model.js';
 import { filterFragments, fragmentLabel } from './fragment-catalogue.js';
 
 const fragment = {

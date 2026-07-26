@@ -1,5 +1,6 @@
 import { healthResponseSchema } from '@cut-on-eight/legacy-contracts';
 import Fastify, { type FastifyInstance } from 'fastify';
+import multipart from '@fastify/multipart';
 import { getServerConfig, type ServerConfig } from './config.js';
 import { installApiErrorHandling } from './http/api-error.js';
 import { installApiRequestProtection } from './http/request-protection.js';
@@ -18,6 +19,12 @@ import {
   type HealthProbes,
 } from './api/health-routes.js';
 import { createServices, type AppServices } from './services.js';
+import type { ApiRuntime } from './runtime.js';
+import { registerVideoRoutes } from './api/video-routes.js';
+import { registerWorkspaceCatalogRoutes } from './api/workspace-routes.js';
+import { registerAssetRoutes } from './api/asset-routes.js';
+import { registerCatalogFragmentRoutes } from './api/fragment-routes.js';
+import { registerCatalogTagRoutes } from './api/tag-routes.js';
 
 export interface CreateAppOptions {
   readonly config?: ServerConfig;
@@ -26,6 +33,7 @@ export interface CreateAppOptions {
   readonly thumbnailGenerator?: import('./thumbnails/thumbnail-worker.js').ThumbnailGenerator;
   readonly services?: AppServices;
   readonly healthProbes?: HealthProbes;
+  readonly runtime?: ApiRuntime;
 }
 
 export type CutOnEightApp = FastifyInstance & {
@@ -33,14 +41,21 @@ export type CutOnEightApp = FastifyInstance & {
 };
 
 export function createApp(options: CreateAppOptions = {}): CutOnEightApp {
+  const config =
+    options.config ??
+    (options.runtime === undefined && options.services === undefined
+      ? getServerConfig()
+      : undefined);
   const services =
-    options.services ??
-    createServices({
-      config: options.config ?? getServerConfig(),
-      picker: options.picker ?? new MacOsSourcePicker(),
-      probeRunner: options.probeRunner,
-      thumbnailGenerator: options.thumbnailGenerator,
-    });
+    options.runtime === undefined
+      ? (options.services ??
+        createServices({
+          config: config!,
+          picker: options.picker ?? new MacOsSourcePicker(),
+          probeRunner: options.probeRunner,
+          thumbnailGenerator: options.thumbnailGenerator,
+        }))
+      : undefined;
   const app = Fastify({ logger: true });
 
   installApiErrorHandling(app);
@@ -54,16 +69,30 @@ export function createApp(options: CreateAppOptions = {}): CutOnEightApp {
   );
   registerHealthRoutes(app, options.healthProbes);
 
-  registerWorkspaceRoutes(app, services);
-  registerProjectRoutes(app, services);
-  registerFragmentRoutes(app, services);
-  registerSourceRoutes(app, services);
-  registerThumbnailRoutes(app, services);
-  registerJobRoutes(app, services);
-
-  app.addHook('onClose', async () => services.shutdown?.());
+  if (options.runtime !== undefined) {
+    void app.register(multipart, {
+      limits: {
+        files: 1,
+        fileSize: options.config?.maxUploadBytes ?? 20 * 1024 ** 3,
+      },
+    });
+    registerWorkspaceCatalogRoutes(app, options.runtime);
+    registerVideoRoutes(app, options.runtime);
+    registerAssetRoutes(app, options.runtime);
+    registerCatalogFragmentRoutes(app, options.runtime);
+    registerCatalogTagRoutes(app, options.runtime);
+    app.addHook('onClose', async () => options.runtime?.close());
+  } else {
+    registerWorkspaceRoutes(app, services!);
+    registerProjectRoutes(app, services!);
+    registerFragmentRoutes(app, services!);
+    registerSourceRoutes(app, services!);
+    registerThumbnailRoutes(app, services!);
+    registerJobRoutes(app, services!);
+    app.addHook('onClose', async () => services?.shutdown?.());
+  }
 
   return Object.assign(app, {
-    recover: () => services.recover(),
+    recover: () => services?.recover() ?? Promise.resolve(),
   });
 }

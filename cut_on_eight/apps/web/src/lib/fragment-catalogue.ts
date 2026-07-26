@@ -1,4 +1,4 @@
-import type { FragmentSummary } from '@cut-on-eight/legacy-contracts';
+import type { FragmentSummary } from '../domain/catalogue-model.js';
 
 export interface FragmentFilters {
   readonly query: string;

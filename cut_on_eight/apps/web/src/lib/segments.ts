@@ -1,4 +1,5 @@
-import type { Segment } from '@cut-on-eight/legacy-contracts';
+import type { Segment } from '../domain/editor-model.js';
+import { v7 as uuidv7 } from 'uuid';
 import {
   validateSegmentMutation,
   type SegmentConstraintCode,
@@ -30,7 +31,7 @@ export function createSegment<T extends SegmentState>(
   startSeconds: number | null,
   endSeconds: number,
   durationSeconds: number,
-  createId: SegmentIdFactory = () => crypto.randomUUID(),
+  createId: SegmentIdFactory = uuidv7,
 ): CreateSegmentResult<T> {
   if (startSeconds === null || endSeconds <= startSeconds) {
     return {

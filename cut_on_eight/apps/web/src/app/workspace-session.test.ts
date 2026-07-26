@@ -1,7 +1,7 @@
 import type {
   ProjectDocument,
   WorkspaceSnapshot,
-} from '@cut-on-eight/legacy-contracts';
+} from '../domain/editor-model.js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   WorkspaceSession,
@@ -90,6 +90,28 @@ describe('WorkspaceSession', () => {
     expect(session.activeProject?.segments).toEqual([segment]);
     session.removeSegment(projectId, segment.id);
     expect(session.activeProject?.segments).toEqual([]);
+  });
+
+  it('deletes a closed video using the library revision', async () => {
+    const apiClient = api();
+    const session = new WorkspaceSession(apiClient);
+    session.applyWorkspace(
+      {
+        activeProjectId: null,
+        openProjects: [],
+        library: [
+          {
+            id: projectId,
+            fileName: 'video.mp4',
+            durationSeconds: 100,
+            revision: 7,
+          },
+        ],
+      },
+      false,
+    );
+    await session.deleteManagedVideo(projectId);
+    expect(apiClient.deleteProject).toHaveBeenCalledWith(projectId, 7);
   });
 
   it('cancels late workspace writes after disposal', () => {

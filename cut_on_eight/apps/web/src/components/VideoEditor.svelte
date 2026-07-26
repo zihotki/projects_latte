@@ -1,13 +1,11 @@
 <script lang="ts">
   import type {
-    ProjectDocument,
-    Segment,
     TagDefinition,
     ThumbnailManifestV1,
   } from '@cut-on-eight/legacy-contracts';
+  import type { ProjectDocument, Segment } from '../domain/editor-model.js';
   import { onDestroy, onMount, untrack } from 'svelte';
   import type { Attachment } from 'svelte/attachments';
-  import { sourceUrl } from '../lib/api.js';
   import type { RegisterVideoEditorControl } from '../lib/editor-control.js';
   import {
     resolveEditorKeyboardContext,
@@ -743,7 +741,7 @@
       <!-- svelte-ignore a11y_media_has_caption -->
       <video
         {@attach attachVideo}
-        src={sourceUrl(project.id)}
+        src={project.sourceHref ?? ''}
         controls={!interactionLocked}
         preload="metadata"
         onloadedmetadata={restorePosition}

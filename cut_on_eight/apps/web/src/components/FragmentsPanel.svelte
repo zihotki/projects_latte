@@ -4,9 +4,9 @@
     FragmentCatalogue,
     FragmentMutation,
     FragmentSummary,
-    Segment,
     TagDefinition,
-  } from '@cut-on-eight/legacy-contracts';
+  } from '../domain/catalogue-model.js';
+  import type { Segment } from '../domain/editor-model.js';
   import { filterFragments, fragmentLabel } from '../lib/fragment-catalogue.js';
   import type { BoundaryFocus } from '../lib/trim-controller.js';
   import { onDestroy, onMount } from 'svelte';
@@ -197,10 +197,13 @@
     try {
       deleted = await onDelete(fragment.projectId, fragment.segment.id);
       if (undoTimer !== null) clearTimeout(undoTimer);
-      undoTimer = setTimeout(() => {
-        deleted = null;
-        undoTimer = null;
-      }, 8_000);
+      undoTimer = setTimeout(
+        () => {
+          deleted = null;
+          undoTimer = null;
+        },
+        Math.max(0, Date.parse(deleted.undoUntil) - Date.now()),
+      );
       if (activeFragmentId === fragment.segment.id) activeFragmentId = null;
       if (editingFragmentId === fragment.segment.id) editingFragmentId = null;
     } catch (nextError) {
@@ -298,10 +301,7 @@
             ? 'active-fragment'
             : undefined}
         >
-          <FragmentPreviewStrip
-            projectId={fragment.projectId}
-            previews={fragment.previews}
-          />
+          <FragmentPreviewStrip previews={fragment.previews} />
           {#if fragment.thumbnailState !== 'ready'}
             <p class="thumbnail-status">
               Thumbnails: {fragment.thumbnailState}

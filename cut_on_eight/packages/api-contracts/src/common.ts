@@ -20,6 +20,7 @@ export const tagSchema = z.strictObject({
 });
 
 export type TagDto = z.infer<typeof tagSchema>;
+export const tagListSchema = z.array(tagSchema);
 
 export const createTagRequestSchema = z.strictObject({
   name: z.string().trim().min(1).max(80),

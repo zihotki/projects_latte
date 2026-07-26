@@ -4,19 +4,15 @@ import {
   createTag,
   deleteFragment,
   deleteProject,
-  loadCapabilities,
   loadFragments,
   loadTags,
-  loadThumbnailManifest,
   loadWorkspace,
   openProject,
   restoreFragment,
-  retryJob,
   saveProject,
-  selectImport,
+  importVideo,
   updateFragment,
 } from '../lib/api.js';
-import { connectJobEvents } from '../lib/job-events.js';
 import {
   deriveAppStatus,
   type AppStatusSnapshot,
@@ -122,7 +118,7 @@ export function createAppModel(): AppModel {
   };
   const workspaceApi: WorkspaceApi = {
     loadWorkspace,
-    selectImport,
+    importVideo,
     openProject,
     activateProject,
     saveProject,
@@ -130,19 +126,20 @@ export function createAppModel(): AppModel {
     deleteProject,
   };
   const workspace = new WorkspaceSession(workspaceApi, {
-    onWorkspaceApplied: (snapshot) =>
-      collaboration.background?.requestThumbnails(snapshot.activeProjectId),
-    onImportOutcome: (outcome) => {
-      if (outcome !== 'cancelled') preferences.changeView('editor');
-      void collaboration.background?.loadToolCapabilities();
+    onWorkspaceApplied: (snapshot) => {
+      collaboration.background?.requestThumbnails(snapshot.activeProjectId);
+      collaboration.background?.start();
+    },
+    onImported: () => {
+      preferences.changeView('editor');
+      collaboration.background?.start();
     },
     onProjectOpened: () => preferences.changeView('editor'),
   });
   const backgroundApi: BackgroundApi = {
-    loadCapabilities,
-    loadThumbnailManifest,
-    retryJob,
-    connectJobEvents,
+    loadWorkspace,
+    onWorkspace: (snapshot) => workspace.applyWorkspace(snapshot),
+    connectJobEvents: () => () => undefined,
   };
   const background = new BackgroundProcessing(
     backgroundApi,
