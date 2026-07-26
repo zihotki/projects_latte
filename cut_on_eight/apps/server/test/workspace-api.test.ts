@@ -1,4 +1,4 @@
-import type { ProjectDocument } from '@cut-on-eight/contracts';
+import type { ProjectDocument } from '@cut-on-eight/legacy-contracts';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -97,7 +97,14 @@ async function fixture(): Promise<{
   });
 
   return {
-    config: { dataRoot, host: '127.0.0.1', port: 4318 },
+    config: {
+      dataRoot,
+      databaseUrl: 'postgres://localhost/cut_on_eight_test',
+      qdrantHttpUrl: null,
+      qdrantApiKey: null,
+      host: '127.0.0.1',
+      port: 4318,
+    },
     first,
     layout,
     second,

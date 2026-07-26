@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Segment, TagDefinition } from '@cut-on-eight/contracts';
+  import type { Segment, TagDefinition } from '@cut-on-eight/legacy-contracts';
   import type { BoundaryFocus } from '../lib/trim-controller.js';
   import BoundaryEditor from './BoundaryEditor.svelte';
 

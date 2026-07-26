@@ -10,7 +10,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@cut-on-eight/contracts": "workspace:*",
+    "@cut-on-eight/api-contracts": "workspace:*",
+    "@cut-on-eight/legacy-contracts": "workspace:*",
     "svelte": "^5.56.6"
   },
   "devDependencies": {

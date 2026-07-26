@@ -1,4 +1,4 @@
-import type { ProjectDocument } from '@cut-on-eight/contracts';
+import type { ProjectDocument } from '@cut-on-eight/legacy-contracts';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -682,6 +682,9 @@ describe('durable inspection queue', () => {
     };
     const config: ServerConfig = {
       dataRoot: layout.dataRoot,
+      databaseUrl: 'postgres://localhost/cut_on_eight_test',
+      qdrantHttpUrl: null,
+      qdrantApiKey: null,
       host: '127.0.0.1',
       port: 4318,
     };

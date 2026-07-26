@@ -4,17 +4,34 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "db:migrate": "tsx src/catalog/migrate.ts",
+    "dev": "tsx watch --import ./src/observability/instrumentation.ts src/server.ts",
+    "dev:worker": "tsx watch --import ./src/observability/instrumentation.ts src/worker.ts",
     "build": "tsc",
     "check": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
-    "@cut-on-eight/contracts": "workspace:*",
-    "fastify": "^5.10.0"
+    "@cut-on-eight/api-contracts": "workspace:*",
+    "@cut-on-eight/legacy-contracts": "workspace:*",
+    "@fastify/otel": "^0.20.1",
+    "@opentelemetry/api": "latest",
+    "@opentelemetry/auto-instrumentations-node": "latest",
+    "@opentelemetry/exporter-metrics-otlp-proto": "latest",
+    "@opentelemetry/exporter-trace-otlp-proto": "latest",
+    "@opentelemetry/sdk-metrics": "latest",
+    "@opentelemetry/sdk-node": "latest",
+    "@qdrant/js-client-rest": "latest",
+    "cockatiel": "^4.0.0",
+    "fastify": "^5.10.0",
+    "kysely": "latest",
+    "pg": "latest",
+    "pg-boss": "latest",
+    "uuid": "latest"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
+    "@types/pg": "latest",
     "tsx": "^4.23.1"
   }
 }

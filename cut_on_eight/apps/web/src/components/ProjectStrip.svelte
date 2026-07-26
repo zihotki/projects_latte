@@ -1,5 +1,8 @@
 <script lang="ts">
-  import type { JobRecord, ProjectDocument } from '@cut-on-eight/contracts';
+  import type {
+    JobRecord,
+    ProjectDocument,
+  } from '@cut-on-eight/legacy-contracts';
   import type { SaveState } from '../lib/save-controller.js';
 
   let {

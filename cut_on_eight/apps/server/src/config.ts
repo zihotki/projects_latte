@@ -3,6 +3,9 @@ import { isAbsolute, join } from 'node:path';
 
 export interface ServerConfig {
   dataRoot: string;
+  databaseUrl: string;
+  qdrantHttpUrl: string | null;
+  qdrantApiKey: string | null;
   host: '127.0.0.1';
   port: number;
 }
@@ -28,5 +31,39 @@ export function getServerConfig(
     throw new Error('CUT_ON_EIGHT_DATA_ROOT must be an absolute path');
   }
 
-  return { dataRoot, host: '127.0.0.1', port };
+  const databaseUrl =
+    environment.ConnectionStrings__catalog ?? environment.DATABASE_URL;
+  if (databaseUrl === undefined || databaseUrl.trim() === '') {
+    throw new Error(
+      'ConnectionStrings__catalog or DATABASE_URL must be configured',
+    );
+  }
+  assertUrl(databaseUrl, ['postgres:', 'postgresql:'], 'database URL');
+
+  const qdrantHttpUrl =
+    environment.QDRANT_HTTPURI ?? environment.QDRANT_HTTP_URL ?? null;
+  if (qdrantHttpUrl !== null) {
+    assertUrl(qdrantHttpUrl, ['http:', 'https:'], 'Qdrant URL');
+  }
+
+  return {
+    dataRoot,
+    databaseUrl,
+    qdrantHttpUrl,
+    qdrantApiKey: environment.QDRANT_APIKEY ?? null,
+    host: '127.0.0.1',
+    port,
+  };
+}
+
+function assertUrl(value: string, protocols: string[], label: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`Configured ${label} is not a valid URL`);
+  }
+  if (!protocols.includes(url.protocol)) {
+    throw new Error(`Configured ${label} uses an unsupported protocol`);
+  }
 }

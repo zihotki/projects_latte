@@ -1,4 +1,7 @@
-import type { JobRecord, ThumbnailManifestV1 } from '@cut-on-eight/contracts';
+import type {
+  JobRecord,
+  ThumbnailManifestV1,
+} from '@cut-on-eight/legacy-contracts';
 import { describe, expect, it, vi } from 'vitest';
 import {
   BackgroundProcessing,

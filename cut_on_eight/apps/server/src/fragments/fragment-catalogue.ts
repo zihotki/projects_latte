@@ -5,7 +5,7 @@ import {
   type ProjectDocument,
   type Segment,
   type ThumbnailManifestV1,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 
 const targets = [0.1, 0.3, 0.5, 0.7, 0.9] as const;
 

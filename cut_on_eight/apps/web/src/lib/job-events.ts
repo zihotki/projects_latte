@@ -2,7 +2,7 @@ import {
   jobSnapshotSchema,
   type JobRecord,
   type JobSnapshot,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import { loadJobs } from './api.js';
 
 export interface JobCounts {

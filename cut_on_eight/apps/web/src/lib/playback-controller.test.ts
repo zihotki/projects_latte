@@ -1,4 +1,4 @@
-import type { Segment } from '@cut-on-eight/contracts';
+import type { Segment } from '@cut-on-eight/legacy-contracts';
 import { describe, expect, it } from 'vitest';
 import {
   beginContextPreview,

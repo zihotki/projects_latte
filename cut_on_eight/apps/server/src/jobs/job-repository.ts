@@ -6,7 +6,7 @@ import {
   type JobRecord,
   type JobType,
   type ThumbnailJobRecord,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import {
   CorruptPersistedDataError,
   readJsonValidated,

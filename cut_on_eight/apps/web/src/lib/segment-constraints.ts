@@ -1,4 +1,4 @@
-import type { Segment } from '@cut-on-eight/contracts';
+import type { Segment } from '@cut-on-eight/legacy-contracts';
 
 export type SegmentConstraintCode =
   'invalid_range' | 'outside_source' | 'triple_overlap';

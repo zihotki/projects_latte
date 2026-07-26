@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Segment } from '@cut-on-eight/contracts';
+  import type { Segment } from '@cut-on-eight/legacy-contracts';
   import { segmentDurationStatus } from '../lib/segment-constraints.js';
   import { sortSegmentsByStart } from '../lib/segments.js';
 

@@ -1,4 +1,4 @@
-import type { WorkspaceSnapshot } from '@cut-on-eight/contracts';
+import type { WorkspaceSnapshot } from '@cut-on-eight/legacy-contracts';
 import { describe, expect, it, vi } from 'vitest';
 import { AppModel } from './app-model.svelte.js';
 import { BackgroundProcessing } from './background-processing.svelte.js';

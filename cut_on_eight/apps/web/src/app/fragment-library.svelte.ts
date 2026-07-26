@@ -4,7 +4,7 @@ import type {
   FragmentMutation,
   Segment,
   TagDefinition,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import type { WorkspacePort } from './workspace-session.svelte.js';
 
 export interface FragmentApi {

@@ -1,4 +1,4 @@
-import type { ThumbnailManifestV1 } from '@cut-on-eight/contracts';
+import type { ThumbnailManifestV1 } from '@cut-on-eight/legacy-contracts';
 import { describe, expect, it, vi } from 'vitest';
 import { thumbnailPageUrl } from './api.js';
 import {

@@ -1,7 +1,7 @@
 import {
   thumbnailManifestV1Schema,
   type ThumbnailManifestV1,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import { lstat, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 

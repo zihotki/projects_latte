@@ -1,4 +1,4 @@
-import { thumbnailManifestV1Schema } from '@cut-on-eight/contracts';
+import { thumbnailManifestV1Schema } from '@cut-on-eight/legacy-contracts';
 import type { FastifyInstance } from 'fastify';
 import type { AppServices } from '../services.js';
 import { ApiRouteError } from './api-error.js';

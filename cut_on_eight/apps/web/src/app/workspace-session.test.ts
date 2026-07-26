@@ -1,7 +1,7 @@
 import type {
   ProjectDocument,
   WorkspaceSnapshot,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import { describe, expect, it, vi } from 'vitest';
 import {
   WorkspaceSession,

@@ -4,7 +4,7 @@
     Segment,
     TagDefinition,
     ThumbnailManifestV1,
-  } from '@cut-on-eight/contracts';
+  } from '@cut-on-eight/legacy-contracts';
   import { onDestroy, onMount, untrack } from 'svelte';
   import type { Attachment } from 'svelte/attachments';
   import { sourceUrl } from '../lib/api.js';

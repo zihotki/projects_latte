@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { FragmentSummary } from '@cut-on-eight/contracts';
+  import type { FragmentSummary } from '@cut-on-eight/legacy-contracts';
   import { sourceUrl } from '../lib/api.js';
   import { fragmentLabel } from '../lib/fragment-catalogue.js';
   import type { Attachment } from 'svelte/attachments';

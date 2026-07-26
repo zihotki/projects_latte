@@ -2,7 +2,7 @@ import {
   migrateProjectDocument,
   projectDocumentSchema,
   type ProjectDocument,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import { posix } from 'node:path';
 import { readJsonValidated, writeJsonAtomic } from './atomic-json.js';
 import type { StorageLayout } from './layout.js';

@@ -1,5 +1,8 @@
 <script lang="ts">
-  import type { Segment, ThumbnailManifestV1 } from '@cut-on-eight/contracts';
+  import type {
+    Segment,
+    ThumbnailManifestV1,
+  } from '@cut-on-eight/legacy-contracts';
   import { thumbnailPageUrl } from '../lib/api.js';
   import { segmentDurationStatus } from '../lib/segment-constraints.js';
   import { TimeScale } from '../lib/timeline-geometry.js';

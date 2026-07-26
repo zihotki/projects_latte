@@ -1,4 +1,4 @@
-import { healthResponseSchema } from '@cut-on-eight/contracts';
+import { healthResponseSchema } from '@cut-on-eight/legacy-contracts';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { getServerConfig, type ServerConfig } from './config.js';
 import { installApiErrorHandling } from './http/api-error.js';
@@ -13,6 +13,10 @@ import {
   MacOsSourcePicker,
   type SourcePicker,
 } from './imports/source-picker.js';
+import {
+  registerHealthRoutes,
+  type HealthProbes,
+} from './api/health-routes.js';
 import { createServices, type AppServices } from './services.js';
 
 export interface CreateAppOptions {
@@ -21,6 +25,7 @@ export interface CreateAppOptions {
   readonly probeRunner?: import('./jobs/ffprobe-runner.js').ProbeRunner;
   readonly thumbnailGenerator?: import('./thumbnails/thumbnail-worker.js').ThumbnailGenerator;
   readonly services?: AppServices;
+  readonly healthProbes?: HealthProbes;
 }
 
 export type CutOnEightApp = FastifyInstance & {
@@ -47,6 +52,7 @@ export function createApp(options: CreateAppOptions = {}): CutOnEightApp {
       service: 'cut-on-eight-server',
     }),
   );
+  registerHealthRoutes(app, options.healthProbes);
 
   registerWorkspaceRoutes(app, services);
   registerProjectRoutes(app, services);

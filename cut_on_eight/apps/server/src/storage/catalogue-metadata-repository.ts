@@ -1,7 +1,7 @@
 import {
   catalogueMetadataSchema,
   type CatalogueMetadata,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import { readJsonValidated, writeJsonAtomic } from './atomic-json.js';
 import type { StorageLayout } from './layout.js';
 import { InvalidRepositoryDocumentError } from './repository-errors.js';

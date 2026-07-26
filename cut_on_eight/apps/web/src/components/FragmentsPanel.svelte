@@ -6,7 +6,7 @@
     FragmentSummary,
     Segment,
     TagDefinition,
-  } from '@cut-on-eight/contracts';
+  } from '@cut-on-eight/legacy-contracts';
   import { filterFragments, fragmentLabel } from '../lib/fragment-catalogue.js';
   import type { BoundaryFocus } from '../lib/trim-controller.js';
   import { onDestroy, onMount } from 'svelte';

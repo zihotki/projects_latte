@@ -1,7 +1,9 @@
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig } from 'vite';
 
-const backendPort = process.env.CUT_ON_EIGHT_PORT ?? '4318';
+const backendUrl =
+  process.env.API_HTTP ??
+  `http://127.0.0.1:${process.env.CUT_ON_EIGHT_PORT ?? '4318'}`;
 
 export default defineConfig({
   plugins: [svelte()],
@@ -11,7 +13,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      '/api': `http://127.0.0.1:${backendPort}`,
+      '/api': backendUrl,
     },
   },
 });

@@ -1,4 +1,4 @@
-import type { Segment } from '@cut-on-eight/contracts';
+import type { Segment } from '@cut-on-eight/legacy-contracts';
 
 export type PlaybackScope =
   | { readonly kind: 'source'; readonly start: 0; readonly end: number }

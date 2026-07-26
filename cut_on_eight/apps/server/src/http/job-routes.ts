@@ -3,7 +3,7 @@ import {
   jobRecordSchema,
   jobSnapshotSchema,
   type JobSnapshot,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import type { FastifyInstance } from 'fastify';
 import type { ServerResponse } from 'node:http';
 import type { AppServices } from '../services.js';

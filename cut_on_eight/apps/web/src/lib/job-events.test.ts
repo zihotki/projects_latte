@@ -1,4 +1,4 @@
-import type { JobRecord, JobSnapshot } from '@cut-on-eight/contracts';
+import type { JobRecord, JobSnapshot } from '@cut-on-eight/legacy-contracts';
 import { describe, expect, it } from 'vitest';
 import {
   countJobs,

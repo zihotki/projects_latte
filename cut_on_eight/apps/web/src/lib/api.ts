@@ -27,7 +27,7 @@ import {
   type TagDefinition,
   type ThumbnailManifestV1,
   type WorkspaceSnapshot,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 
 export class ApiFailure extends Error {
   readonly code: string;

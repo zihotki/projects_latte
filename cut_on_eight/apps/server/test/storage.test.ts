@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { rm } from 'node:fs/promises';
-import type { ProjectDocument } from '@cut-on-eight/contracts';
+import type { ProjectDocument } from '@cut-on-eight/legacy-contracts';
 import {
   CorruptPersistedDataError,
   syncDirectory,

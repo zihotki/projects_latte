@@ -4,7 +4,7 @@ import {
   jobSnapshotSchema,
   type JobRecord,
   type JobSnapshot,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import type { LibraryRepository } from '../storage/library-repository.js';
 import type { StorageLayout } from '../storage/layout.js';
 import type { JobRepository } from './job-repository.js';
@@ -15,7 +15,7 @@ import {
 } from './ffprobe-runner.js';
 import { FfmpegError } from './ffmpeg-runner.js';
 import { thumbnailJobIdentity } from './thumbnail-job.js';
-import type { ProjectDocument } from '@cut-on-eight/contracts';
+import type { ProjectDocument } from '@cut-on-eight/legacy-contracts';
 import {
   ThumbnailGenerationError,
   type ThumbnailGenerator,

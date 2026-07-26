@@ -3,7 +3,7 @@ import {
   projectDocumentSchema,
   type JobSnapshot,
   type ProjectDocument,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import { randomUUID } from 'node:crypto';
 import {
   constants,

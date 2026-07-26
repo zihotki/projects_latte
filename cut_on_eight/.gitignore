@@ -12,3 +12,5 @@ coverage/
 *.m4v
 *.tmp
 *.swp
+aspire-apphost/.aspire/
+.local/postgres-test/

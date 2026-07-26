@@ -3,7 +3,7 @@ import type {
   ProjectDocument,
   Segment,
   WorkspaceSnapshot,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import { SvelteMap } from 'svelte/reactivity';
 import type {
   RegisterVideoEditorControl,

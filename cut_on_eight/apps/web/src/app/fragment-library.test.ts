@@ -1,4 +1,7 @@
-import type { FragmentCatalogue, Segment } from '@cut-on-eight/contracts';
+import type {
+  FragmentCatalogue,
+  Segment,
+} from '@cut-on-eight/legacy-contracts';
 import { describe, expect, it, vi } from 'vitest';
 import {
   FragmentLibrary,

@@ -3,7 +3,7 @@ import type {
   JobRecord,
   JobSnapshot,
   ThumbnailManifestV1,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import type { BackendState } from './app-status.js';
 import {
   mergeJobRecord,

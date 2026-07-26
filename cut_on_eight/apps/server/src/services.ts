@@ -20,7 +20,7 @@ import {
   type TagDefinition,
   type ThumbnailManifestV1,
   type WorkspaceSnapshot,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import { constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { open, type FileHandle } from 'node:fs/promises';

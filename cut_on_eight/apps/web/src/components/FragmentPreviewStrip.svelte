@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { FragmentPreview } from '@cut-on-eight/contracts';
+  import type { FragmentPreview } from '@cut-on-eight/legacy-contracts';
   import type { Attachment } from 'svelte/attachments';
   import { thumbnailPageUrl } from '../lib/api.js';
 

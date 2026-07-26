@@ -2,7 +2,7 @@ import {
   createTagRequestSchema,
   deletedFragmentSchema,
   fragmentMutationSchema,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import type { FastifyInstance } from 'fastify';
 import type { AppServices } from '../services.js';
 import { parseProjectId } from './route-params.js';

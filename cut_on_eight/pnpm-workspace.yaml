@@ -1,8 +1,10 @@
 packages:
   - apps/*
+  - aspire-apphost
   - packages/*
 
 storeDir: ../.local/pnpm-store
 
 allowBuilds:
   esbuild: true
+  protobufjs: true

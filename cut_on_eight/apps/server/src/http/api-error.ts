@@ -1,4 +1,4 @@
-import { apiErrorSchema, type ApiError } from '@cut-on-eight/contracts';
+import { apiErrorSchema, type ApiError } from '@cut-on-eight/legacy-contracts';
 import type { FastifyInstance } from 'fastify';
 import { CorruptPersistedDataError } from '../storage/atomic-json.js';
 import { UnsafeStoragePathError } from '../storage/layout.js';

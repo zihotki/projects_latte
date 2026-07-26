@@ -1,4 +1,4 @@
-import { projectDocumentSchema } from '@cut-on-eight/contracts';
+import { projectDocumentSchema } from '@cut-on-eight/legacy-contracts';
 import type { FastifyInstance } from 'fastify';
 import type { AppServices } from '../services.js';
 import { parseProjectId } from './route-params.js';

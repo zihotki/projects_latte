@@ -1,4 +1,4 @@
-import type { JobSnapshot } from '@cut-on-eight/contracts';
+import type { JobSnapshot } from '@cut-on-eight/legacy-contracts';
 import { countJobs } from '../lib/job-events.js';
 
 export type BackendState = 'checking' | 'ready' | 'unavailable';

@@ -1,7 +1,7 @@
 import type {
   ProjectDocument,
   ThumbnailManifestV1,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import { randomUUID } from 'node:crypto';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';

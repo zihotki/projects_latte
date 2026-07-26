@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ProjectSummary } from '@cut-on-eight/contracts';
+  import type { ProjectSummary } from '@cut-on-eight/legacy-contracts';
   import ConfirmDialog from './ConfirmDialog.svelte';
 
   let {

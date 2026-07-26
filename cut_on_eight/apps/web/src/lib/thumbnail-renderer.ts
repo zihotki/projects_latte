@@ -1,4 +1,4 @@
-import type { ThumbnailManifestV1 } from '@cut-on-eight/contracts';
+import type { ThumbnailManifestV1 } from '@cut-on-eight/legacy-contracts';
 
 export interface ThumbnailScale {
   timeToPixel(seconds: number): number;

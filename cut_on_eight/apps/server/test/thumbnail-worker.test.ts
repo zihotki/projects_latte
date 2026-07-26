@@ -1,4 +1,4 @@
-import type { ProjectDocument } from '@cut-on-eight/contracts';
+import type { ProjectDocument } from '@cut-on-eight/legacy-contracts';
 import {
   mkdtemp,
   readFile,

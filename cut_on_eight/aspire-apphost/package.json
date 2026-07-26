@@ -1,0 +1,14 @@
+{
+  "name": "@cut-on-eight/apphost",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "aspire:start": "aspire run",
+    "aspire:build": "tsc --noEmit -p tsconfig.apphost.json",
+    "build": "pnpm run aspire:build",
+    "check": "pnpm run aspire:build"
+  },
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  }
+}

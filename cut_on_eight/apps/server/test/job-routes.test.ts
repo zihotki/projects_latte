@@ -4,7 +4,7 @@ import type {
   JobSnapshot,
   ProjectDocument,
   WorkspaceSnapshot,
-} from '@cut-on-eight/contracts';
+} from '@cut-on-eight/legacy-contracts';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import type { ManagedSource, AppServices } from '../src/services.js';
