@@ -7,6 +7,8 @@ Local browser-based dance-video segmentation and cataloguing for macOS.
 - macOS (the importer uses the native file picker)
 - Node.js 24 or newer
 - pnpm 11.9.0 (`corepack enable` can provide the pinned version)
+- Docker Desktop, running
+- Aspire CLI 13.4 or newer
 - `ffprobe` and `ffmpeg` on `PATH` for source inspection and timeline thumbnails
 
 Missing `ffprobe` does not block importing, playback, marking, or saving. The
@@ -106,10 +108,11 @@ representative real-video precision, and native Play-control looping feel.
 ## Verify
 
 ```bash
-pnpm check
-pnpm test
-pnpm build
+pnpm verify
 ```
+
+From the repository root, `./scripts/verify.sh` additionally runs the
+containerized PostgreSQL integration suite.
 
 ## Workspace
 

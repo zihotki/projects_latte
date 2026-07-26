@@ -13,4 +13,6 @@ coverage/
 *.tmp
 *.swp
 aspire-apphost/.aspire/
+/.aspire/
+aspire-apphost/pnpm-lock.yaml
 .local/postgres-test/

@@ -6,7 +6,7 @@
 
 **Goal:** Make the PostgreSQL/filesystem system recoverable and operable, remove obsolete JSON authority, document backup/restore and deployment configuration, and prove Phase 4 through one pragmatic browser flow.
 
-**Architecture:** The worker reconciles interrupted catalog/filesystem transitions and resumes idempotent jobs. A host-side backup script streams `pg_dump` from the persistent Podman container into the external data root. Legacy routes, repositories, contracts, and tests are deleted only after the new vertical slices pass.
+**Architecture:** The worker reconciles interrupted catalog/filesystem transitions and resumes idempotent jobs. A host-side backup script streams `pg_dump` from the persistent Docker container into the external data root. Legacy routes, repositories, contracts, and tests are deleted only after the new vertical slices pass.
 
 **Tech Stack:** Slice 3 stack plus Node process utilities, `pg_dump` from the PostgreSQL container, and Playwright using the user's installed Chrome.
 
@@ -20,8 +20,8 @@
 - Recovery may delete only application-owned staged/orphaned files proven
   unreferenced by PostgreSQL.
 - Backups must be written on the macOS host under
-  `~/cut-on-eight_data/backups/postgres/`, not inside the Podman machine.
-- Do not add Docker commands, Dockerfiles, or Docker-only test tooling.
+  `~/cut-on-eight_data/backups/postgres/`, not inside Docker Desktop.
+- Use Docker commands only for the existing local container resources; do not add application Dockerfiles.
 - Use the browser smoke as a phase checkpoint, not as a large UI test suite.
 - Use installed Chrome through Playwright's `channel: 'chrome'`; do not install
   a Playwright browser system-wide.
@@ -183,7 +183,7 @@ Use the fixed AppHost container name `cut-on-eight-postgres`. The script:
 
 1. Resolves `CUT_ON_EIGHT_DATA_ROOT` with the same config helper.
 2. Creates `backups/postgres/`.
-3. Runs `podman inspect` and reads `POSTGRES_USER` without printing any
+3. Runs `docker inspect` and reads `POSTGRES_USER` without printing any
    password.
 4. Spawns:
 
@@ -232,7 +232,7 @@ Root:
 
 Document:
 
-- named volumes survive AppHost/container recreation but not Podman-machine
+- named volumes survive AppHost/container recreation but not Docker Desktop data
   deletion;
 - backup output is on the host;
 - Qdrant needs no backup because it is rebuilt;
@@ -251,7 +251,7 @@ pnpm -C cut_on_eight backup:postgres
 ```
 
 Expected: a non-empty `.dump` appears under the external backup folder and
-`podman exec cut-on-eight-postgres pg_restore --list <dump>` can list it when
+`docker exec cut-on-eight-postgres pg_restore --list <dump>` can list it when
 the file is streamed into the container or inspected with a compatible local
 tool.
 
@@ -386,7 +386,7 @@ List:
 - Node.js 24+;
 - pinned pnpm through Corepack;
 - Aspire CLI 13.4+;
-- Podman 5+ and a running Podman machine on macOS;
+- Docker Desktop running on macOS;
 - FFmpeg/FFprobe on `PATH`;
 - installed Chrome only for the optional phase browser checkpoint.
 
@@ -396,7 +396,7 @@ State clearly that the project and Codex do not install these system-wide.
 
 Cover:
 
-- `ASPIRE_CONTAINER_RUNTIME=podman`;
+- Aspire's default Docker runtime;
 - Aspire dashboard behavior;
 - named PostgreSQL/Qdrant volumes;
 - external BlobStore tree;
@@ -631,7 +631,7 @@ git commit -m "docs: complete catalog and search foundation"
 
 ## Phase 4 Exit Criteria
 
-- One Aspire command starts the host applications and persistent Podman
+- One Aspire command starts the host applications and persistent Docker
   resources.
 - PostgreSQL is the sole catalog authority; legacy JSON is ignored and
   untouched.

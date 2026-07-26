@@ -18,6 +18,21 @@ pnpm -C cut_on_eight dev
 pnpm -C cut_on_eight verify
 ```
 
+## Repository checks
+
+The repository keeps tool caches under `.local/`; nothing is installed globally.
+
+```bash
+pnpm -C cut_on_eight install --frozen-lockfile
+./scripts/check.sh       # TypeScript build/type/lint/format and Python static checks
+./scripts/test.sh        # Unit tests
+./scripts/integration.sh # Docker PostgreSQL and media integration tests
+./scripts/verify.sh      # Full local CI suite
+```
+
+`verify.sh` needs Docker and FFmpeg. GitHub Actions runs the same command on
+pull requests and pushes to `main`.
+
 Each project documents its own prerequisites, architecture, and workflows in its
 README.
 

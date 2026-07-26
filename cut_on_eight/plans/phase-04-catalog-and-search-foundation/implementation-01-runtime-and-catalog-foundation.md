@@ -6,17 +6,17 @@
 
 **Goal:** Establish the Phase 4 runtime, public API boundary, PostgreSQL catalog schema, migrations, health checks, and server observability without yet replacing the working video editor.
 
-**Architecture:** Aspire 13.4 orchestrates host-run Svelte, Fastify, migration, and worker processes plus persistent Podman PostgreSQL and Qdrant containers. A new browser-safe contract package and a Kysely catalog boundary are added alongside the legacy JSON implementation so the next slice can cut over vertically instead of breaking the app mid-migration.
+**Architecture:** Aspire 13.4 orchestrates host-run Svelte, Fastify, migration, and worker processes plus persistent Docker PostgreSQL and Qdrant containers. A new browser-safe contract package and a Kysely catalog boundary are added alongside the legacy JSON implementation so the next slice can cut over vertically instead of breaking the app mid-migration.
 
-**Tech Stack:** Node.js 24, pnpm 11, TypeScript 5.9, Aspire 13.4 TypeScript AppHost, Podman 5+, PostgreSQL 18.4, Qdrant 1.18.3, Fastify 5, Kysely, `pg`, `pg-boss`, Zod 4, Cockatiel 4, OpenTelemetry.
+**Tech Stack:** Node.js 24, pnpm 11, TypeScript 5.9, Aspire 13.4 TypeScript AppHost, Docker Desktop, PostgreSQL 18.4, Qdrant 1.18.3, Fastify 5, Kysely, `pg`, `pg-boss`, Zod 4, Cockatiel 4, OpenTelemetry.
 
 **Depends on:** [Approved Phase 4 design](design.md)
 
 ## Global Constraints
 
 - Keep every change under `projectslatte/cut_on_eight`; preserve both `AGENTS.md` files.
-- Do not install Aspire, Podman, FFmpeg, PostgreSQL, or browser binaries system-wide. Report a missing prerequisite as a handoff.
-- Use Podman only. `ASPIRE_CONTAINER_RUNTIME=podman` must be explicit in the root development script.
+- Do not install Aspire, Docker Desktop, FFmpeg, PostgreSQL, or browser binaries system-wide. Report a missing prerequisite as a handoff.
+- Use Docker Desktop locally. Let Aspire use its default Docker runtime.
 - Keep `~/cut-on-eight_data` as the default external data root; use `.local/` only for repository-local test and scratch data.
 - Do not change current editor behavior or delete JSON code in this slice.
 - Add dependencies by editing package manifests, then run one `pnpm -C cut_on_eight install`.
@@ -72,11 +72,11 @@ has moved to application-owned models.
 
 ```bash
 aspire --version
-ASPIRE_CONTAINER_RUNTIME=podman aspire doctor
-podman version
+aspire doctor
+docker version
 ```
 
-Expected: Aspire 13.4.x and Podman 5+ are reported. Stop this task with a
+Expected: Aspire 13.4.x and Docker are reported. Stop this task with a
 prerequisite handoff if either is absent; do not install it.
 
 - [ ] **Step 2: Generate the current TypeScript AppHost shape**
@@ -136,7 +136,7 @@ Replace root orchestration scripts with:
 
 ```json
 {
-  "dev": "ASPIRE_CONTAINER_RUNTIME=podman pnpm run aspire:start",
+  "dev": "pnpm run aspire:start",
   "dev:legacy": "concurrently --kill-others-on-fail --names contracts,server,web \"pnpm --filter @cut-on-eight/legacy-contracts dev\" \"pnpm --filter @cut-on-eight/server dev\" \"pnpm --filter @cut-on-eight/web dev\"",
   "db:migrate": "pnpm --filter @cut-on-eight/server db:migrate",
   "aspire:check": "pnpm --dir aspire-apphost run aspire:build"
@@ -861,7 +861,7 @@ pnpm -C cut_on_eight verify
 Then perform one bounded manual runtime check:
 
 ```bash
-ASPIRE_CONTAINER_RUNTIME=podman pnpm -C cut_on_eight run aspire:start
+pnpm -C cut_on_eight run aspire:start
 ```
 
 Expected in the Aspire dashboard:
@@ -884,7 +884,7 @@ git commit -m "feat: expose catalog dependency health"
 
 ## Slice 1 Exit Criteria
 
-- `pnpm dev` uses a TypeScript AppHost and Podman explicitly.
+- `pnpm dev` uses a TypeScript AppHost and Docker Desktop.
 - PostgreSQL and Qdrant use named persistent volumes.
 - The catalog migration and `pg-boss` schema initialize before API/worker.
 - The new public contract package contains no persistence or filesystem shape.

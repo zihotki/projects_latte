@@ -51,7 +51,7 @@ fragment editing remains a separate explicit operation.
 - Fragment-first PostgreSQL search and an optional video scope.
 - A payload-only Qdrant fragment projection with idempotent updates and full
   rebuild.
-- A TypeScript Aspire AppHost using Podman for PostgreSQL and Qdrant.
+- A TypeScript Aspire AppHost using Docker Desktop for PostgreSQL and Qdrant.
 - Explicit public Zod DTOs separated from server domain and persistence models.
 - Cockatiel resilience policies for appropriate remote calls.
 - OpenTelemetry traces, metrics, and correlated structured logs in the Aspire
@@ -95,19 +95,19 @@ TypeScript worker ──────> PostgreSQL / pg-boss
 During local development:
 
 - Svelte, Fastify, and the worker run as normal host processes.
-- Podman runs PostgreSQL 18.4 and Qdrant 1.18.3 as OCI containers.
-- `ASPIRE_CONTAINER_RUNTIME=podman` makes the runtime choice explicit.
+- Docker Desktop runs PostgreSQL 18.4 and Qdrant 1.18.3 as OCI containers.
+- Aspire uses its default Docker runtime.
 - PostgreSQL uses the named volume `cut-on-eight-postgres-data`.
 - Qdrant uses the named volume `cut-on-eight-qdrant-data`.
-- The application never requires Docker Desktop or a Docker daemon.
+- The application requires Docker Desktop for local Aspire container resources.
 
-On macOS, the named volumes live inside the Podman machine. They survive
-container recreation but not deletion of the machine. PostgreSQL logical
+On macOS, the named volumes live inside Docker Desktop. They survive
+container recreation but not deletion of Docker Desktop data. PostgreSQL logical
 backups are therefore written outside the VM under
 `~/cut-on-eight_data/backups/postgres/`. Qdrant is derived and needs no
 independent backup.
 
-System-wide Podman and Aspire CLI installation remains the user's
+System-wide Docker Desktop and Aspire CLI installation remains the user's
 responsibility. `aspire doctor` is the environment preflight.
 
 The same API and worker accept connection strings and storage roots through
@@ -461,7 +461,7 @@ There is no dual-write period and no fallback to JSON authority.
 
 ### Slice 1 — Runtime and catalog foundation
 
-- TypeScript Aspire AppHost and Podman resources.
+- TypeScript Aspire AppHost and Docker resources.
 - Persistent PostgreSQL and Qdrant volumes.
 - Kysely connection, migrations, and health checks.
 - Public-contract split.
@@ -515,8 +515,8 @@ browser smoke is reserved for phase checkpoints.
 
 Phase 4 is complete when:
 
-1. One Aspire command starts the host applications and persistent Podman
-   resources without Docker.
+1. One Aspire command starts the host applications and persistent Docker
+   resources.
 2. PostgreSQL 18.4 is the sole catalog authority and the application no longer
    reads or writes authoritative JSON documents.
 3. Import copies a source into the managed per-video directory before fragment

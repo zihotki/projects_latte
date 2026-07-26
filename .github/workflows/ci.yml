@@ -1,0 +1,40 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"
+      UV_CACHE_DIR: ${{ github.workspace }}/.local/uv-cache
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.local/uv-python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: cut_on_eight/.nvmrc
+          cache: pnpm
+          cache-dependency-path: cut_on_eight/pnpm-lock.yaml
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.11.28
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Node dependencies
+        run: pnpm -C cut_on_eight install --frozen-lockfile
+      - name: Verify Docker and install media tooling
+        run: docker info && sudo apt-get update && sudo apt-get install --yes ffmpeg
+      - name: Verify
+        run: ./scripts/verify.sh

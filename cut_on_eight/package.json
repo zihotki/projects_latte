@@ -5,18 +5,22 @@
   "type": "module",
   "packageManager": "pnpm@11.13.0",
   "engines": {
-    "node": ">=24"
+    "node": ">=24",
+    "pnpm": "11.13.0"
   },
   "scripts": {
     "predev": "pnpm --filter @cut-on-eight/legacy-contracts build && pnpm --filter @cut-on-eight/api-contracts build",
-    "dev": "ASPIRE_CONTAINER_RUNTIME=podman pnpm run aspire:start",
+    "dev": "pnpm run aspire:start",
     "dev:legacy": "concurrently --kill-others-on-fail --names contracts,server,web \"pnpm --filter @cut-on-eight/legacy-contracts dev\" \"pnpm --filter @cut-on-eight/server dev\" \"pnpm --filter @cut-on-eight/web dev\"",
     "build": "pnpm -r build",
     "precheck": "pnpm --filter @cut-on-eight/legacy-contracts build && pnpm --filter @cut-on-eight/api-contracts build",
     "check": "pnpm -r check && pnpm lint && pnpm format:check",
     "pretest": "pnpm --filter @cut-on-eight/legacy-contracts build && pnpm --filter @cut-on-eight/api-contracts build",
-    "test": "pnpm -r --if-present test",
-    "verify": "pnpm -r build && pnpm -r check && pnpm -r --if-present test && pnpm lint && pnpm format:check",
+    "test": "pnpm run test:unit",
+    "test:unit": "pnpm -r --if-present test",
+    "test:integration": "pnpm --filter @cut-on-eight/server test:integration",
+    "verify": "pnpm run ci:check && pnpm run test:unit",
+    "ci:check": "pnpm run build && pnpm run check",
     "test:web": "pnpm --filter @cut-on-eight/legacy-contracts build && pnpm --filter @cut-on-eight/api-contracts build && pnpm --filter @cut-on-eight/web test",
     "test:server": "pnpm --filter @cut-on-eight/legacy-contracts build && pnpm --filter @cut-on-eight/api-contracts build && pnpm --filter @cut-on-eight/server test",
     "test:contracts": "pnpm --filter @cut-on-eight/legacy-contracts test && pnpm --filter @cut-on-eight/api-contracts test",
@@ -26,7 +30,7 @@
     "aspire:check": "pnpm --dir aspire-apphost run aspire:build",
     "format:file": "prettier --write",
     "svelte:fix": "svelte-mcp svelte-autofixer",
-    "lint": "eslint \"apps/**/*.ts\" \"packages/**/*.ts\"",
+    "lint": "eslint \"apps/**/*.ts\" \"packages/**/*.ts\" \"aspire-apphost/**/*.mts\"",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

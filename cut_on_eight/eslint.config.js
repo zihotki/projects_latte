@@ -4,7 +4,12 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**'],
+    ignores: [
+      '**/.aspire/**',
+      '**/dist/**',
+      '**/coverage/**',
+      '**/node_modules/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -13,7 +18,11 @@ export default tseslint.config(
     languageOptions: { globals: globals.browser },
   },
   {
-    files: ['apps/server/**/*.ts', 'packages/**/*.ts'],
+    files: [
+      'apps/server/**/*.ts',
+      'packages/**/*.ts',
+      'aspire-apphost/**/*.mts',
+    ],
     languageOptions: { globals: globals.node },
   },
 );

@@ -14,3 +14,4 @@ Treat these as decision-making guidance rather than requirements to introduce ev
 ## Local Workflow
 
 - Work from the repository root, keep scratch/cache files in `.local/`, and prefer focused project scripts via `pnpm -C <project> <script>`.
+- Run `./scripts/check.sh` and `./scripts/test.sh` before handoff; use `./scripts/integration.sh` when Docker is available.

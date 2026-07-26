@@ -13,7 +13,7 @@
     "@cut-on-eight/api-contracts": "workspace:*",
     "@cut-on-eight/legacy-contracts": "workspace:*",
     "svelte": "^5.56.6",
-    "uuid": "latest"
+    "uuid": "^14.0.1"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.2.0",
