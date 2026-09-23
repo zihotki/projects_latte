@@ -14,7 +14,38 @@ function api(): FragmentSearchApi {
   return { searchFragments: vi.fn().mockResolvedValue(response()) };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => (resolve = done));
+  return { promise, resolve };
+}
+
 describe('SearchModel', () => {
+  it('ignores an older result after a newer query completes', async () => {
+    vi.useFakeTimers();
+    try {
+      const first = deferred<FragmentSearchResponse>();
+      const second = deferred<FragmentSearchResponse>();
+      const client = api();
+      vi.mocked(client.searchFragments)
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(second.promise);
+      const model = createSearchModel(client);
+      model.setQuery('old');
+      await vi.advanceTimersByTimeAsync(200);
+      model.setQuery('new');
+      await vi.advanceTimersByTimeAsync(200);
+      second.resolve(response('hybrid'));
+      await vi.advanceTimersByTimeAsync(0);
+      first.resolve(response('lexical'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(model.response?.mode).toBe('hybrid');
+      expect(model.state).toBe('ready');
+      model.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it('debounces and sends the current query', async () => {
     vi.useFakeTimers();
     try {

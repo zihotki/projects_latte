@@ -226,6 +226,23 @@ describe('FragmentLibrary', () => {
     expect(library.loading).toBe(false);
   });
 
+  it('does not replace newer fragments with an older successful refresh', async () => {
+    const first = deferred<FragmentCatalogue>();
+    const second = deferred<FragmentCatalogue>();
+    const apiClient = api();
+    vi.mocked(apiClient.loadFragments)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const library = new FragmentLibrary(apiClient, workspace(), jobs());
+    const older = library.refresh();
+    const newer = library.refresh();
+    second.resolve(catalogue({ ...segment, title: 'newer' }));
+    await newer;
+    first.resolve(catalogue({ ...segment, title: 'older' }));
+    await older;
+    expect(library.catalogue?.fragments[0]?.segment.title).toBe('newer');
+  });
+
   it('ignores refresh results after disposal', async () => {
     const pending = deferred<FragmentCatalogue>();
     const apiClient = api();
