@@ -3,6 +3,10 @@ import type {
   Segment,
   WorkspaceSnapshot,
 } from '../domain/editor-model.js';
+import {
+  applyEditorOperation,
+  type EditorOperation,
+} from '../domain/editor-operations.js';
 import { SvelteMap } from 'svelte/reactivity';
 import type {
   RegisterVideoEditorControl,
@@ -250,6 +254,19 @@ export class WorkspaceSession implements WorkspacePort {
     );
     this.drafts = { ...this.drafts, [projectId]: project };
     this.controllers.get(projectId)?.markDirty();
+  }
+
+  applyEditorOperation(projectId: string, operation: EditorOperation): void {
+    this.updateProject(projectId, (project) =>
+      applyEditorOperation(project, operation),
+    );
+  }
+
+  selectFragment(projectId: string, fragmentId: string | null): void {
+    this.applyEditorOperation(projectId, {
+      kind: 'fragmentSelected',
+      fragmentId,
+    });
   }
 
   samplePlaybackPosition(projectId: string, seconds: number): void {

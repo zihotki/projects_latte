@@ -77,8 +77,8 @@
             void background.retryThumbnails(activeProject.id)}
           onThumbnailLoadError={() =>
             background.thumbnailPageLoadFailed(activeProject.id)}
-          onChange={(projectId, mutate) =>
-            workspace.updateProject(projectId, mutate)}
+          onEditorOperation={(projectId, operation) =>
+            workspace.applyEditorOperation(projectId, operation)}
           onPlaybackSample={(projectId, seconds) =>
             workspace.samplePlaybackPosition(projectId, seconds)}
           registerControl={workspace.registerEditorControl}

@@ -4,6 +4,7 @@
     ThumbnailManifestV1,
   } from '@cut-on-eight/legacy-contracts';
   import type { ProjectDocument, Segment } from '../domain/editor-model.js';
+  import type { EditorOperation } from '../domain/editor-operations.js';
   import { onDestroy, onMount, untrack } from 'svelte';
   import type { Attachment } from 'svelte/attachments';
   import type { RegisterVideoEditorControl } from '../lib/editor-control.js';
@@ -40,7 +41,7 @@
 
   let {
     project,
-    onChange,
+    onEditorOperation,
     onPlaybackSample,
     registerControl,
     onSave,
@@ -57,10 +58,7 @@
     onDeleteFragment,
   }: {
     project: ProjectDocument;
-    onChange: (
-      projectId: string,
-      mutate: (project: ProjectDocument) => ProjectDocument,
-    ) => void;
+    onEditorOperation: (projectId: string, operation: EditorOperation) => void;
     onPlaybackSample: (projectId: string, seconds: number) => void;
     registerControl: RegisterVideoEditorControl;
     onSave: () => void;
@@ -161,10 +159,8 @@
       : selectPlaybackSegment(state, selected).state;
   }
 
-  function updateProject(
-    mutate: (project: ProjectDocument) => ProjectDocument,
-  ): void {
-    onChange(project.id, mutate);
+  function applyOperation(operation: EditorOperation): void {
+    onEditorOperation(project.id, operation);
   }
 
   function publishPosition(force = false): void {
@@ -177,11 +173,7 @@
   }
 
   function materializePosition(position: number): void {
-    updateProject((current) =>
-      Math.abs(current.playbackPositionSeconds - position) < 0.01
-        ? current
-        : { ...current, playbackPositionSeconds: position },
-    );
+    applyOperation({ kind: 'playbackPositionRecorded', seconds: position });
   }
 
   function prepareForSave(): void {
@@ -218,19 +210,11 @@
 
   function materializeTimelineViewport(): void {
     clearViewportPersistenceTimer();
-    updateProject((current) =>
-      Math.abs(current.editor.timelineZoom - timelineZoom) < 0.000_001 &&
-      Math.abs(current.editor.timelineOffsetSeconds - timelineOffsetSeconds) <
-        0.000_001
-        ? current
-        : {
-            ...current,
-            editor: {
-              timelineZoom,
-              timelineOffsetSeconds,
-            },
-          },
-    );
+    applyOperation({
+      kind: 'timelineViewportChanged',
+      zoom: timelineZoom,
+      offsetSeconds: timelineOffsetSeconds,
+    });
   }
 
   function samplePlayback(): void {
@@ -366,10 +350,7 @@
 
   function selectSegment(segment: Segment): void {
     setBoundaryFocus(null);
-    updateProject((current) => ({
-      ...current,
-      selectedSegmentId: segment.id,
-    }));
+    applyOperation({ kind: 'fragmentSelected', fragmentId: segment.id });
     void applyPlaybackDecision(selectPlaybackSegment(playbackState, segment));
     queueMicrotask(() => focusSegmentSurface(segment.id));
   }
@@ -392,11 +373,7 @@
     preservePlayback = false,
   ): void {
     setBoundaryFocus(null);
-    updateProject((current) =>
-      current.selectedSegmentId === null
-        ? current
-        : { ...current, selectedSegmentId: null },
-    );
+    applyOperation({ kind: 'fragmentSelected', fragmentId: null });
     const decision = clearSelection(playbackState, displayDuration, seconds);
     if (preservePlayback) playbackState = decision.state;
     else void applyPlaybackDecision(decision);
@@ -417,43 +394,36 @@
     }
 
     segmentError = null;
-    updateProject(() => result.project);
     const adjusted = result.project.segments.find(
       (segment) => segment.id === result.focus.segmentId,
     );
     if (adjusted !== undefined) {
+      applyOperation({ kind: 'fragmentBoundaryAdjusted', fragment: adjusted });
       playbackState = selectPlaybackSegment(playbackState, adjusted).state;
     }
   }
 
   function toggleExport(segmentId: string, selected: boolean): void {
-    updateProject((current) => ({
-      ...current,
-      segments: current.segments.map((segment) =>
-        segment.id === segmentId
-          ? { ...segment, exportSelected: selected }
-          : segment,
-      ),
-    }));
+    applyOperation({
+      kind: 'fragmentExportChanged',
+      fragmentId: segmentId,
+      selected,
+    });
   }
 
   function updateSegmentMetadata(
     segmentId: string,
     change: Pick<Segment, 'title' | 'tagIds' | 'exportSelected'>,
   ): void {
-    updateProject((current) => ({
-      ...current,
-      segments: current.segments.map((segment) =>
-        segment.id === segmentId ? { ...segment, ...change } : segment,
-      ),
-    }));
+    applyOperation({
+      kind: 'fragmentMetadataChanged',
+      fragmentId: segmentId,
+      ...change,
+    });
   }
 
   function togglePauseAfterCreation(checked: boolean): void {
-    updateProject((current) => ({
-      ...current,
-      settings: { ...current.settings, pauseAfterCreation: checked },
-    }));
+    applyOperation({ kind: 'pauseAfterCreationChanged', enabled: checked });
   }
 
   async function togglePlayback(): Promise<void> {
@@ -619,19 +589,20 @@
       event.preventDefault();
       const segmentStart = pendingStartSeconds;
       pendingStartSeconds = null;
-      let created = false;
-      updateProject((current) => {
-        const result = createSegment(
-          current,
-          segmentStart,
-          currentSeconds,
-          displayDuration,
-        );
-        segmentError = result.ok ? null : result.message;
-        created = result.ok;
-        return result.state;
-      });
-      if (created && project.settings.pauseAfterCreation) video?.pause();
+      const result = createSegment(
+        project,
+        segmentStart,
+        currentSeconds,
+        displayDuration,
+      );
+      segmentError = result.ok ? null : result.message;
+      if (result.ok) {
+        const fragment = result.state.segments.at(-1);
+        if (fragment !== undefined) {
+          applyOperation({ kind: 'fragmentCreated', fragment });
+        }
+        if (project.settings.pauseAfterCreation) video?.pause();
+      }
       return;
     }
 

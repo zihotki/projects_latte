@@ -62,6 +62,17 @@ function deferred<T>() {
 }
 
 describe('WorkspaceSession', () => {
+  it('does not start autosave for an unchanged editor operation', () => {
+    const client = api();
+    const session = new WorkspaceSession(client);
+    session.applyWorkspace(snapshot(), false);
+    session.applyEditorOperation(projectId, {
+      kind: 'pauseAfterCreationChanged',
+      enabled: false,
+    });
+    expect(session.saveStateFor(projectId)).toBe('saved');
+  });
+
   it('keeps an unsaved title while accepting new source facts', () => {
     const session = new WorkspaceSession(api());
     session.applyWorkspace(snapshot(), false);
