@@ -55,7 +55,84 @@ function api(): WorkspaceApi {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => (resolve = done));
+  return { promise, resolve };
+}
+
 describe('WorkspaceSession', () => {
+  it('keeps an unsaved title while accepting new source facts', () => {
+    const session = new WorkspaceSession(api());
+    session.applyWorkspace(snapshot(), false);
+    session.updateProject(projectId, (current) => ({
+      ...current,
+      metadata: { ...current.metadata, title: 'local edit' },
+    }));
+    session.applyWorkspace({
+      ...snapshot(),
+      openProjects: [{ ...project(), revision: 2, sourceHref: '/source' }],
+    });
+
+    expect(session.activeProject).toMatchObject({
+      revision: 2,
+      sourceHref: '/source',
+      metadata: { title: 'local edit' },
+    });
+  });
+
+  it('saves edits made while an earlier save is in flight', async () => {
+    const client = api();
+    const first = deferred<ProjectDocument>();
+    const saved: ProjectDocument[] = [];
+    client.saveProject = vi.fn(async (document) => {
+      saved.push(document);
+      return saved.length === 1 ? first.promise : document;
+    });
+    const session = new WorkspaceSession(client);
+    session.applyWorkspace(snapshot(), false);
+    session.updateProject(projectId, (current) => ({
+      ...current,
+      metadata: { ...current.metadata, title: 'first' },
+    }));
+    const firstSave = session.flushProject(projectId);
+    await vi.waitFor(() => expect(saved).toHaveLength(1));
+    session.updateProject(projectId, (current) => ({
+      ...current,
+      metadata: { ...current.metadata, title: 'second' },
+    }));
+    first.resolve({ ...saved[0]!, revision: 2 });
+    await firstSave;
+    await session.flushProject(projectId);
+
+    expect(saved.map(({ metadata }) => metadata.title)).toEqual([
+      'first',
+      'second',
+    ]);
+    expect(session.activeProject?.metadata.title).toBe('second');
+    expect(session.saveStateFor(projectId)).toBe('saved');
+  });
+
+  it('keeps an unsaved draft after a failed save and permits retry', async () => {
+    const client = api();
+    client.saveProject = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockImplementation(async (document: ProjectDocument) => document);
+    const session = new WorkspaceSession(client);
+    session.applyWorkspace(snapshot(), false);
+    session.updateProject(projectId, (current) => ({
+      ...current,
+      metadata: { ...current.metadata, title: 'keep me' },
+    }));
+
+    await expect(session.flushProject(projectId)).rejects.toThrow('offline');
+    expect(session.activeProject?.metadata.title).toBe('keep me');
+    expect(session.saveStateFor(projectId)).toBe('failed');
+    await session.retryAutosave(projectId);
+    expect(session.saveStateFor(projectId)).toBe('saved');
+  });
+
   it('initializes and exposes the active project', async () => {
     const session = new WorkspaceSession(api());
     await session.initialize();

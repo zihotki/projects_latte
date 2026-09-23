@@ -13,6 +13,10 @@ import {
   type SaveState,
   type SaveStatus,
 } from '../lib/save-controller.js';
+import {
+  mergeUnsavedEditor,
+  projectWorkspace,
+} from './workspace-projections.js';
 
 export interface WorkspaceApi {
   loadWorkspace(): Promise<WorkspaceSnapshot>;
@@ -56,7 +60,11 @@ export interface WorkspaceSessionCallbacks {
 export type ProjectMutation = (project: ProjectDocument) => ProjectDocument;
 
 export class WorkspaceSession implements WorkspacePort {
-  workspace = $state.raw<WorkspaceSnapshot | null>(null);
+  private serverWorkspace = $state.raw<WorkspaceSnapshot | null>(null);
+  private drafts = $state.raw<Record<string, ProjectDocument>>({});
+  private projectedWorkspace = $derived(
+    projectWorkspace(this.serverWorkspace, this.drafts),
+  );
   loading = $state(true);
   importing = $state(false);
   openingProjectId = $state<string | null>(null);
@@ -75,6 +83,10 @@ export class WorkspaceSession implements WorkspacePort {
     private readonly api: WorkspaceApi,
     private readonly callbacks: WorkspaceSessionCallbacks = {},
   ) {}
+
+  get workspace(): WorkspaceSnapshot | null {
+    return this.projectedWorkspace;
+  }
 
   get activeProject(): ProjectDocument | null {
     return (
@@ -236,12 +248,7 @@ export class WorkspaceSession implements WorkspacePort {
       projectId,
       project.playbackPositionSeconds,
     );
-    this.workspace = {
-      ...this.workspace,
-      openProjects: this.workspace.openProjects.map((candidate) =>
-        candidate.id === projectId ? project : candidate,
-      ),
-    };
+    this.drafts = { ...this.drafts, [projectId]: project };
     this.controllers.get(projectId)?.markDirty();
   }
 
@@ -360,29 +367,22 @@ export class WorkspaceSession implements WorkspacePort {
 
   applyWorkspace(snapshot: WorkspaceSnapshot, preserveEdits = true): void {
     if (this.disposed) return;
-    const currentProjects = new Map(
-      preserveEdits
-        ? this.workspace?.openProjects.map((project) => [
-            project.id,
+    const nextDrafts: Record<string, ProjectDocument> = {};
+    if (preserveEdits) {
+      for (const project of snapshot.openProjects) {
+        const local = this.drafts[project.id];
+        if (local !== undefined && this.saveStateFor(project.id) !== 'saved') {
+          nextDrafts[project.id] = mergeUnsavedEditor(
             this.documentFor(project.id),
-          ])
-        : [],
-    );
-    this.workspace = {
-      ...snapshot,
-      openProjects: snapshot.openProjects.map((project) => {
-        const current = currentProjects.get(project.id);
-        if (
-          current === undefined ||
-          this.saveStateFor(project.id) === 'saved'
-        ) {
-          return project;
+            project,
+          );
         }
-        return mergeUnsavedEditor(current, project);
-      }),
-    };
+      }
+    }
+    this.serverWorkspace = snapshot;
+    this.drafts = nextDrafts;
     this.ensureControllers();
-    this.callbacks.onWorkspaceApplied?.(this.workspace);
+    this.callbacks.onWorkspaceApplied?.(this.workspace!);
   }
 
   clearError(): void {
@@ -402,16 +402,26 @@ export class WorkspaceSession implements WorkspacePort {
     projectId: string,
     patch: (project: ProjectDocument) => ProjectDocument,
   ): void {
-    if (this.workspace === null || !this.hasOpenProject(projectId)) return;
-    this.workspace = {
-      ...this.workspace,
-      openProjects: this.workspace.openProjects.map((project) =>
+    if (this.serverWorkspace === null || !this.hasOpenProject(projectId))
+      return;
+    this.serverWorkspace = {
+      ...this.serverWorkspace,
+      openProjects: this.serverWorkspace.openProjects.map((project) =>
         project.id === projectId ? patch(project) : project,
       ),
     };
+    const draft = this.drafts[projectId];
+    if (draft !== undefined) {
+      this.drafts = { ...this.drafts, [projectId]: patch(draft) };
+    }
   }
 
   private updateSaveStatus(projectId: string, status: SaveStatus): void {
+    if (status.state === 'saved' && this.drafts[projectId] !== undefined) {
+      const next = { ...this.drafts };
+      delete next[projectId];
+      this.drafts = next;
+    }
     this.saveStates = { ...this.saveStates, [projectId]: status.state };
     const nextErrors = { ...this.saveErrors };
     if (status.state === 'failed' && status.error !== null) {
@@ -420,6 +430,33 @@ export class WorkspaceSession implements WorkspacePort {
       delete nextErrors[projectId];
     }
     this.saveErrors = nextErrors;
+  }
+
+  private applySavedProject(projectId: string, saved: ProjectDocument): void {
+    if (this.serverWorkspace === null) return;
+    this.serverWorkspace = {
+      ...this.serverWorkspace,
+      openProjects: this.serverWorkspace.openProjects.map((project) =>
+        project.id === projectId ? saved : project,
+      ),
+    };
+    const draft = this.drafts[projectId];
+    if (draft === undefined) return;
+    this.drafts = {
+      ...this.drafts,
+      [projectId]: {
+        ...draft,
+        revision: saved.revision,
+        segments: draft.segments.map((segment) => {
+          const synchronized = saved.segments.find(
+            ({ id }) => id === segment.id,
+          );
+          return synchronized === undefined
+            ? segment
+            : { ...segment, revision: synchronized.revision };
+        }),
+      },
+    };
   }
 
   private ensureControllers(): void {
@@ -443,18 +480,7 @@ export class WorkspaceSession implements WorkspacePort {
             const saved = await this.api.saveProject(
               this.documentFor(projectId),
             );
-            this.patchOpenProject(projectId, (current) => ({
-              ...current,
-              revision: saved.revision,
-              segments: current.segments.map((segment) => {
-                const synchronized = saved.segments.find(
-                  ({ id }) => id === segment.id,
-                );
-                return synchronized === undefined
-                  ? segment
-                  : { ...segment, revision: synchronized.revision };
-              }),
-            }));
+            this.applySavedProject(projectId, saved);
           },
           onStatusChange: (status) => this.updateSaveStatus(projectId, status),
         }),
@@ -479,33 +505,6 @@ export class WorkspaceSession implements WorkspacePort {
       ? null
       : { projectId, control: this.prepareProjectForSave(projectId) };
   }
-}
-
-function mergeUnsavedEditor(
-  local: ProjectDocument,
-  authoritative: ProjectDocument,
-): ProjectDocument {
-  const remoteSegments = new Map(
-    authoritative.segments.map((segment) => [segment.id, segment]),
-  );
-  return {
-    ...authoritative,
-    revision: Math.max(authoritative.revision ?? 0, local.revision ?? 0),
-    playbackPositionSeconds: local.playbackPositionSeconds,
-    selectedSegmentId: local.selectedSegmentId,
-    settings: local.settings,
-    metadata: local.metadata,
-    editor: local.editor,
-    segments: local.segments.map((segment) => {
-      const remote = remoteSegments.get(segment.id);
-      return remote === undefined
-        ? segment
-        : {
-            ...segment,
-            revision: Math.max(remote.revision ?? 0, segment.revision ?? 0),
-          };
-    }),
-  };
 }
 
 function describeError(error: unknown, action: string): string {
