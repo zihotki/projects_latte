@@ -6,7 +6,14 @@
   let {
     workspace,
     fragments,
-  }: { workspace: WorkspaceSession; fragments: FragmentLibrary } = $props();
+    onImport,
+    onOpen,
+  }: {
+    workspace: WorkspaceSession;
+    fragments: FragmentLibrary;
+    onImport: (file: File) => Promise<void>;
+    onOpen: (projectId: string) => Promise<void>;
+  } = $props();
 </script>
 
 {#if workspace.loading}
@@ -19,10 +26,8 @@
     openProjectIds={workspace.openProjectIds}
     openingProjectId={workspace.openingProjectId}
     importing={workspace.importing}
-    onImport={async (file) => {
-      await workspace.importMp4(file);
-    }}
-    onOpen={(projectId) => void workspace.reopenProject(projectId)}
+    {onImport}
+    {onOpen}
     onDelete={(projectId) => fragments.removeManagedVideo(projectId)}
   />
 {/if}

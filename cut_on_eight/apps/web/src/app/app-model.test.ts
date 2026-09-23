@@ -1,4 +1,7 @@
-import type { WorkspaceSnapshot } from '../domain/editor-model.js';
+import type {
+  ProjectDocument,
+  WorkspaceSnapshot,
+} from '../domain/editor-model.js';
 import { describe, expect, it, vi } from 'vitest';
 import { AppModel } from './app-model.svelte.js';
 import { BackgroundProcessing } from './background-processing.svelte.js';
@@ -11,18 +14,58 @@ const emptyWorkspace: WorkspaceSnapshot = {
   openProjects: [],
   library: [],
 };
+const videoId = '10000000-0000-4000-8000-000000000001';
+const fragmentId = '20000000-0000-4000-8000-000000000001';
+
+function openWorkspace(
+  selectedSegmentId: string | null = null,
+): WorkspaceSnapshot {
+  const project: ProjectDocument = {
+    schemaVersion: 3,
+    id: videoId,
+    source: {
+      fileName: 'practice.mp4',
+      durationSeconds: 20,
+      width: 640,
+      height: 360,
+      frameRateNumerator: 30,
+      frameRateDenominator: 1,
+      frameRateReliability: 'reliable',
+      hasAudio: true,
+      inspectedAt: null,
+      inspectorVersion: null,
+    },
+    playbackPositionSeconds: 0,
+    selectedSegmentId,
+    segments: [
+      {
+        id: fragmentId,
+        startSeconds: 1,
+        endSeconds: 3,
+        title: null,
+        tagIds: [],
+        exportSelected: true,
+      },
+    ],
+    settings: { pauseAfterCreation: false },
+    metadata: { title: null, tags: [], notes: null },
+    editor: { timelineZoom: 1, timelineOffsetSeconds: 0 },
+  };
+  return { activeProjectId: videoId, openProjects: [project], library: [] };
+}
 
 function createModel(
   options: {
     initialView?: string;
     loadWorkspace?: () => Promise<WorkspaceSnapshot>;
+    openProject?: () => Promise<WorkspaceSnapshot>;
   } = {},
 ) {
   const workspace = new WorkspaceSession({
     loadWorkspace:
       options.loadWorkspace ?? vi.fn().mockResolvedValue(emptyWorkspace),
     selectImport: vi.fn(),
-    openProject: vi.fn(),
+    openProject: options.openProject ?? vi.fn(),
     activateProject: vi.fn(),
     saveProject: vi.fn(),
     closeProject: vi.fn(),
@@ -81,6 +124,48 @@ function deferred<T>() {
 }
 
 describe('AppModel', () => {
+  it('opens a search result in the editor and selects its fragment', async () => {
+    const { app } = createModel({
+      initialView: 'search',
+      openProject: vi.fn().mockResolvedValue(openWorkspace()),
+    });
+    await app.start();
+    await app.openSearchResult(videoId, fragmentId);
+    expect(app.workspace.activeProject?.selectedSegmentId).toBe(fragmentId);
+    expect(app.preferences.activeView).toBe('editor');
+  });
+
+  it('opens a video but clears a missing search fragment', async () => {
+    const { app } = createModel({
+      initialView: 'search',
+      openProject: vi.fn().mockResolvedValue(openWorkspace(fragmentId)),
+    });
+    await app.start();
+    await app.openSearchResult(videoId, 'missing');
+    expect(app.workspace.activeProject?.selectedSegmentId).toBeNull();
+    expect(app.preferences.activeView).toBe('editor');
+  });
+
+  it('keeps the current view if a video cannot be opened', async () => {
+    const { app } = createModel({
+      initialView: 'search',
+      openProject: vi.fn().mockRejectedValue(new Error('offline')),
+    });
+    await app.start();
+    await app.openSearchResult(videoId, fragmentId);
+    expect(app.preferences.activeView).toBe('search');
+    expect(app.workspace.activeProject).toBeNull();
+  });
+
+  it('moves to the editor after opening a video from the library', async () => {
+    const { app } = createModel({
+      initialView: 'library',
+      openProject: vi.fn().mockResolvedValue(openWorkspace()),
+    });
+    await app.start();
+    await app.openLibraryVideo(videoId);
+    expect(app.preferences.activeView).toBe('editor');
+  });
   it('starts features and loads the restored fragment view', async () => {
     const { app, loadFragments, loadTags } = createModel({
       initialView: 'fragments',

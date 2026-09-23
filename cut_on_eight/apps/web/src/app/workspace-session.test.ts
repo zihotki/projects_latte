@@ -73,13 +73,13 @@ describe('WorkspaceSession', () => {
     expect(session.saveStateFor(projectId)).toBe('saved');
   });
 
-  it('keeps an unsaved title while accepting new source facts', () => {
+  it('keeps unsaved editor settings while accepting new source facts', () => {
     const session = new WorkspaceSession(api());
     session.applyWorkspace(snapshot(), false);
-    session.updateProject(projectId, (current) => ({
-      ...current,
-      metadata: { ...current.metadata, title: 'local edit' },
-    }));
+    session.applyEditorOperation(projectId, {
+      kind: 'pauseAfterCreationChanged',
+      enabled: true,
+    });
     session.applyWorkspace({
       ...snapshot(),
       openProjects: [{ ...project(), revision: 2, sourceHref: '/source' }],
@@ -88,7 +88,7 @@ describe('WorkspaceSession', () => {
     expect(session.activeProject).toMatchObject({
       revision: 2,
       sourceHref: '/source',
-      metadata: { title: 'local edit' },
+      settings: { pauseAfterCreation: true },
     });
   });
 
@@ -102,25 +102,24 @@ describe('WorkspaceSession', () => {
     });
     const session = new WorkspaceSession(client);
     session.applyWorkspace(snapshot(), false);
-    session.updateProject(projectId, (current) => ({
-      ...current,
-      metadata: { ...current.metadata, title: 'first' },
-    }));
+    session.applyEditorOperation(projectId, {
+      kind: 'playbackPositionRecorded',
+      seconds: 1,
+    });
     const firstSave = session.flushProject(projectId);
     await vi.waitFor(() => expect(saved).toHaveLength(1));
-    session.updateProject(projectId, (current) => ({
-      ...current,
-      metadata: { ...current.metadata, title: 'second' },
-    }));
+    session.applyEditorOperation(projectId, {
+      kind: 'playbackPositionRecorded',
+      seconds: 2,
+    });
     first.resolve({ ...saved[0]!, revision: 2 });
     await firstSave;
     await session.flushProject(projectId);
 
-    expect(saved.map(({ metadata }) => metadata.title)).toEqual([
-      'first',
-      'second',
-    ]);
-    expect(session.activeProject?.metadata.title).toBe('second');
+    expect(
+      saved.map(({ playbackPositionSeconds }) => playbackPositionSeconds),
+    ).toEqual([1, 2]);
+    expect(session.activeProject?.playbackPositionSeconds).toBe(2);
     expect(session.saveStateFor(projectId)).toBe('saved');
   });
 
@@ -132,13 +131,13 @@ describe('WorkspaceSession', () => {
       .mockImplementation(async (document: ProjectDocument) => document);
     const session = new WorkspaceSession(client);
     session.applyWorkspace(snapshot(), false);
-    session.updateProject(projectId, (current) => ({
-      ...current,
-      metadata: { ...current.metadata, title: 'keep me' },
-    }));
+    session.applyEditorOperation(projectId, {
+      kind: 'playbackPositionRecorded',
+      seconds: 9,
+    });
 
     await expect(session.flushProject(projectId)).rejects.toThrow('offline');
-    expect(session.activeProject?.metadata.title).toBe('keep me');
+    expect(session.activeProject?.playbackPositionSeconds).toBe(9);
     expect(session.saveStateFor(projectId)).toBe('failed');
     await session.retryAutosave(projectId);
     expect(session.saveStateFor(projectId)).toBe('saved');
@@ -155,10 +154,10 @@ describe('WorkspaceSession', () => {
     const session = new WorkspaceSession(api());
     session.applyWorkspace(snapshot(), false);
     session.samplePlaybackPosition(projectId, 42.5);
-    session.updateProject(projectId, (current) => ({
-      ...current,
-      selectedSegmentId: '20000000-0000-4000-8000-000000000001',
-    }));
+    session.applyEditorOperation(projectId, {
+      kind: 'pauseAfterCreationChanged',
+      enabled: true,
+    });
     expect(session.documentFor(projectId).playbackPositionSeconds).toBe(42.5);
     expect(session.saveStateFor(projectId)).toBe('unsaved');
   });
@@ -254,17 +253,17 @@ describe('WorkspaceSession', () => {
         },
       ],
     });
-    session.updateProject(projectId, (current) => ({
-      ...current,
-      metadata: { ...current.metadata, title: 'polled and edited' },
-    }));
+    session.applyEditorOperation(projectId, {
+      kind: 'pauseAfterCreationChanged',
+      enabled: true,
+    });
     await session.flushProject(projectId);
     expect(apiClient.saveProject).toHaveBeenCalledWith(
       expect.objectContaining({
         revision: 2,
         sourceHref: `/api/videos/${projectId}/source`,
         source: expect.objectContaining({ durationSeconds: 100 }),
-        metadata: expect.objectContaining({ title: 'polled and edited' }),
+        settings: { pauseAfterCreation: true },
       }),
     );
   });

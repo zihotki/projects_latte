@@ -57,7 +57,12 @@
     {/snippet}
 
     {#snippet library()}
-      <LibraryView workspace={app.workspace} fragments={app.fragments} />
+      <LibraryView
+        workspace={app.workspace}
+        fragments={app.fragments}
+        onImport={(file) => app.importVideo(file)}
+        onOpen={(videoId) => app.openLibraryVideo(videoId)}
+      />
     {/snippet}
 
     {#snippet fragments()}

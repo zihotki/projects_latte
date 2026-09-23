@@ -54,14 +54,10 @@ export interface WorkspacePort {
 
 export interface WorkspaceSessionCallbacks {
   readonly onWorkspaceApplied?: (snapshot: WorkspaceSnapshot) => void;
-  readonly onProjectOpened?: (projectId: string) => void;
-  readonly onImported?: () => void;
   readonly onImportOutcome?: (
     outcome: 'cancelled' | 'imported' | 'already-open',
   ) => void;
 }
-
-export type ProjectMutation = (project: ProjectDocument) => ProjectDocument;
 
 export class WorkspaceSession implements WorkspacePort {
   private serverWorkspace = $state.raw<WorkspaceSnapshot | null>(null);
@@ -139,7 +135,6 @@ export class WorkspaceSession implements WorkspacePort {
       if (snapshot.activeProjectId === prepared?.projectId) {
         prepared.control?.releaseAfterSave();
       }
-      this.callbacks.onImported?.();
       if (legacy !== undefined)
         this.callbacks.onImportOutcome?.(legacy.outcome);
       return legacy?.outcome !== 'cancelled';
@@ -164,7 +159,6 @@ export class WorkspaceSession implements WorkspacePort {
         await this.controllers.get(prepared.projectId)?.flush();
       }
       this.applyWorkspace(await this.api.openProject(projectId));
-      this.callbacks.onProjectOpened?.(projectId);
       return true;
     } catch (error) {
       prepared?.control?.releaseAfterSave();
@@ -233,7 +227,10 @@ export class WorkspaceSession implements WorkspacePort {
     );
   }
 
-  updateProject(projectId: string, mutate: ProjectMutation): void {
+  private updateProject(
+    projectId: string,
+    mutate: (project: ProjectDocument) => ProjectDocument,
+  ): void {
     if (this.workspace === null) return;
     const current = this.workspace.openProjects.find(
       (candidate) => candidate.id === projectId,
@@ -263,9 +260,13 @@ export class WorkspaceSession implements WorkspacePort {
   }
 
   selectFragment(projectId: string, fragmentId: string | null): void {
+    const selectedId =
+      fragmentId !== null && this.fragmentFor(projectId, fragmentId) === null
+        ? null
+        : fragmentId;
     this.applyEditorOperation(projectId, {
       kind: 'fragmentSelected',
-      fragmentId,
+      fragmentId: selectedId,
     });
   }
 

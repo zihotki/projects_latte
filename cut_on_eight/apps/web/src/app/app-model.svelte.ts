@@ -106,18 +106,20 @@ export class AppModel {
 
   async openSearchResult(videoId: string, fragmentId: string): Promise<void> {
     if (!(await this.workspace.reopenProject(videoId))) return;
-    this.workspace.updateProject(videoId, (project) => ({
-      ...project,
-      selectedSegmentId: project.segments.some(({ id }) => id === fragmentId)
-        ? fragmentId
-        : null,
-    }));
+    this.workspace.selectFragment(videoId, fragmentId);
+    this.changeView('editor');
+  }
+
+  async openLibraryVideo(videoId: string): Promise<void> {
+    if (await this.workspace.reopenProject(videoId)) this.changeView('editor');
+  }
+
+  async importVideo(file: File): Promise<void> {
+    if (await this.workspace.importMp4(file)) this.changeView('editor');
   }
 
   async openProcessingVideo(videoId: string): Promise<void> {
-    if (await this.workspace.reopenProject(videoId)) {
-      this.changeView('editor');
-    }
+    await this.openLibraryVideo(videoId);
   }
 
   clearGeneralError(): void {
@@ -160,11 +162,6 @@ export function createAppModel(): AppModel {
       collaboration.background?.requestThumbnails(snapshot.activeProjectId);
       collaboration.background?.start();
     },
-    onImported: () => {
-      preferences.changeView('editor');
-      collaboration.background?.start();
-    },
-    onProjectOpened: () => preferences.changeView('editor'),
   });
   const backgroundApi: BackgroundApi = {
     loadWorkspace,
