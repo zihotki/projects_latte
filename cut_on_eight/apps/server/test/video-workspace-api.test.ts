@@ -1,4 +1,5 @@
 import { rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { PgBoss } from 'pg-boss';
@@ -127,6 +128,34 @@ integration('video and workspace API', () => {
     });
     expect(range.statusCode).toBe(206);
     expect(range.body).toBe('video');
+  });
+
+  test('counts all active videos while limiting processing rows', async () => {
+    const ids = Array.from({ length: 105 }, () => randomUUID());
+    try {
+      await runtime.db
+        .insertInto('videos')
+        .values(
+          ids.map((id) => ({
+            id,
+            title: 'Queued test video',
+            original_file_name: 'test.mp4',
+            status: 'queued' as const,
+          })),
+        )
+        .execute();
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/processing',
+      });
+      expect(response.statusCode).toBe(200);
+      const snapshot = processingSnapshotSchema.parse(response.json());
+      expect(snapshot.activeCount).toBeGreaterThanOrEqual(105);
+      expect(snapshot.items).toHaveLength(100);
+    } finally {
+      await runtime.db.deleteFrom('videos').where('id', 'in', ids).execute();
+    }
   });
 
   test('removes an upload and its source when catalog finalization rolls back', async () => {

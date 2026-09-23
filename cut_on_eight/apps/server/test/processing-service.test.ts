@@ -26,7 +26,7 @@ describe('processing snapshot', () => {
       expect.objectContaining({
         videoId: base.id,
         task: 'thumbnails',
-        state: 'queued',
+        state: 'waiting',
       }),
     ]);
   });
@@ -48,6 +48,16 @@ describe('processing snapshot', () => {
       failureCode: 'probe_failed',
     });
     expect(JSON.stringify(snapshot)).not.toContain('/Users/');
+  });
+
+  it('labels failed uploads as import work', () => {
+    const snapshot = toProcessingSnapshot([
+      { ...base, videoStatus: 'failed', videoFailureCode: 'upload_failed' },
+    ]);
+    expect(snapshot.items[0]).toMatchObject({
+      task: 'import',
+      state: 'failed',
+    });
   });
 
   it('counts all work before limiting the list', () => {

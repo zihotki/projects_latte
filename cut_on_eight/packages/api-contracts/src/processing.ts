@@ -5,7 +5,7 @@ export const processingItemSchema = z.strictObject({
   videoId: entityIdSchema,
   videoTitle: z.string().min(1),
   task: z.enum(['import', 'inspect', 'thumbnails']),
-  state: z.enum(['queued', 'running', 'failed']),
+  state: z.enum(['waiting', 'queued', 'running', 'failed']),
   updatedAt: timestampSchema,
   failureCode: z
     .string()

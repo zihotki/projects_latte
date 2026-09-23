@@ -97,6 +97,12 @@ they do not own thumbnail jobs or files. A successful replacement switches the
 current bundle pointer; old bundles are deleted after a one-hour grace period,
 and the video purge deletes the current bundle.
 
+The compact Processing panel shows only video import, inspection, and thumbnail
+work. It counts all active and failed videos in PostgreSQL, but returns at most
+100 ordered rows. A ready video without thumbnail state is shown as waiting;
+failed thumbnail generation is shown as failed and does not keep the fragment
+library polling.
+
 The intended next model is fragment-first server-side search, followed by
 embeddings and extracted fragment features. PostgreSQL remains transactional;
 Qdrant may lag a recent edit or deletion while editing stays strongly consistent.

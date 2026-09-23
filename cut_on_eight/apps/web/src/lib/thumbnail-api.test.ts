@@ -48,6 +48,63 @@ describe('video thumbnail API', () => {
     } satisfies Partial<ApiFailure>);
   });
 
+  test('reports a failed video thumbnail job on fragment cards', async () => {
+    const videoId = '00000000-0000-4000-8000-000000000113';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url === '/api/fragments')
+          return new Response(
+            JSON.stringify([
+              {
+                id: '00000000-0000-4000-8000-000000000114',
+                videoId,
+                startUs: 0,
+                endUs: 1_000_000,
+                title: 'Turn',
+                description: null,
+                exportSelected: false,
+                revision: 1,
+                tags: [],
+                previewState: 'pending',
+                preview: null,
+              },
+            ]),
+          );
+        if (url === '/api/videos')
+          return new Response(
+            JSON.stringify([
+              {
+                id: videoId,
+                title: 'Practice',
+                description: null,
+                originalFileName: 'practice.mp4',
+                durationUs: 10_000_000,
+                width: 320,
+                height: 180,
+                frameRateNumerator: null,
+                frameRateDenominator: null,
+                frameRateReliability: 'approximate',
+                hasAudio: false,
+                status: 'ready',
+                revision: 1,
+                tags: [],
+              },
+            ]),
+          );
+        if (url === '/api/tags') return new Response('[]');
+        return new Response(null, {
+          status: 404,
+          headers: { 'x-thumbnail-state': 'failed' },
+        });
+      }),
+    );
+
+    const catalogue = await loadFragments();
+
+    expect(catalogue.fragments[0]?.thumbnailState).toBe('failed');
+  });
+
   test('uses video bundle frames on fragment cards', async () => {
     const videoId = '00000000-0000-4000-8000-000000000111';
     const fragmentId = '00000000-0000-4000-8000-000000000112';

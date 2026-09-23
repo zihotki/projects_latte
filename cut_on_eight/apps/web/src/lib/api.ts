@@ -215,7 +215,7 @@ export async function loadFragments(): Promise<FragmentCatalogue> {
     await Promise.all(
       videoIds.map(
         async (videoId) =>
-          [videoId, await loadCachedVideoThumbnailManifest(videoId)] as const,
+          [videoId, await loadVideoThumbnailAvailability(videoId)] as const,
       ),
     ),
   );
@@ -225,7 +225,10 @@ export async function loadFragments(): Promise<FragmentCatalogue> {
         fragment,
         videos,
         index + 1,
-        manifests.get(fragment.videoId) ?? null,
+        manifests.get(fragment.videoId) ?? {
+          manifest: null,
+          state: 'generating',
+        },
       ),
     ),
     tags,
@@ -358,8 +361,14 @@ export async function loadThumbnailManifest(
   if (response.status === 404) {
     throw new ApiFailure({
       status: 404,
-      code: 'thumbnail_not_ready',
-      message: 'Thumbnails are not ready.',
+      code:
+        response.headers.get('x-thumbnail-state') === 'failed'
+          ? 'thumbnail_failed'
+          : 'thumbnail_not_ready',
+      message:
+        response.headers.get('x-thumbnail-state') === 'failed'
+          ? 'Thumbnail generation failed.'
+          : 'Thumbnails are not ready.',
     });
   }
   if (!response.ok) throw invalidResponse();
@@ -376,14 +385,18 @@ const readyManifests = new Map<
     expiresAt: number;
   }
 >();
-const pendingManifests = new Map<string, Promise<ThumbnailManifestV1 | null>>();
+type ThumbnailAvailability = {
+  manifest: ThumbnailManifestV1 | null;
+  state: 'ready' | 'generating' | 'failed';
+};
+const pendingManifests = new Map<string, Promise<ThumbnailAvailability>>();
 
-export function loadCachedVideoThumbnailManifest(
+async function loadVideoThumbnailAvailability(
   videoId: string,
-): Promise<ThumbnailManifestV1 | null> {
+): Promise<ThumbnailAvailability> {
   const cached = readyManifests.get(videoId);
   if (cached !== undefined && cached.expiresAt > Date.now()) {
-    return Promise.resolve(cached.manifest);
+    return { manifest: cached.manifest, state: 'ready' };
   }
   const pending = pendingManifests.get(videoId);
   if (pending !== undefined) return pending;
@@ -393,12 +406,24 @@ export function loadCachedVideoThumbnailManifest(
         manifest,
         expiresAt: Date.now() + 30_000,
       });
-      return manifest;
+      return { manifest, state: 'ready' as const };
     })
-    .catch(() => null)
+    .catch((error: unknown) => ({
+      manifest: null,
+      state:
+        error instanceof ApiFailure && error.code === 'thumbnail_failed'
+          ? ('failed' as const)
+          : ('generating' as const),
+    }))
     .finally(() => pendingManifests.delete(videoId));
   pendingManifests.set(videoId, request);
   return request;
+}
+
+export async function loadCachedVideoThumbnailManifest(
+  videoId: string,
+): Promise<ThumbnailManifestV1 | null> {
+  return (await loadVideoThumbnailAvailability(videoId)).manifest;
 }
 
 function toTimelineManifest(
@@ -434,11 +459,11 @@ function toFragmentSummary(
   fragment: FragmentDto,
   videos: readonly VideoSummaryDto[],
   ordinal: number,
-  manifest: ThumbnailManifestV1 | null,
+  availability: ThumbnailAvailability,
 ): FragmentSummary {
   const video = videos.find(({ id }) => id === fragment.videoId);
   const previews = selectVideoFragmentPreviews(
-    manifest,
+    availability.manifest,
     toSeconds(fragment.startUs),
     toSeconds(fragment.endUs),
   );
@@ -460,7 +485,7 @@ function toFragmentSummary(
         preview.identity,
       ),
     })),
-    thumbnailState: manifest === null ? 'generating' : 'ready',
+    thumbnailState: availability.state,
     thumbnailJobId: null,
     frameStepSeconds:
       video?.frameRateNumerator && video.frameRateDenominator

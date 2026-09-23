@@ -19,19 +19,25 @@ export function createThumbnailOrigin(input: {
   }>(
     '/thumbnail-cdn/v1/videos/:videoId/manifest.json',
     async (request, reply) => {
-      const state = await findActiveState(
+      const state = await findThumbnailState(
         input.database,
         request.params.videoId,
       );
-      if (state === undefined) return reply.code(404).send();
-      const etag = `"${state.storage_key}"`;
+      if (state?.status !== 'ready' || state.active === undefined)
+        return reply
+          .header('cache-control', 'no-store')
+          .header('x-thumbnail-state', state?.status ?? 'missing')
+          .code(404)
+          .send();
+      const active = state.active;
+      const etag = `"${active.storage_key}"`;
       if (request.headers['if-none-match'] === etag)
         return reply.code(304).send();
       return reply
         .header('cache-control', 'no-cache')
         .header('etag', etag)
         .type('application/json')
-        .send(state.manifest);
+        .send(active.manifest);
     },
   );
   app.get<{
@@ -67,22 +73,33 @@ async function findActiveState(
     }
   | undefined
 > {
+  return (await findThumbnailState(database, videoId))?.active;
+}
+
+async function findThumbnailState(
+  database: Kysely<CatalogDatabase>,
+  videoId: string,
+): Promise<
+  | {
+      status: 'pending' | 'generating' | 'ready' | 'failed';
+      active?: { storage_key: string; manifest: VideoThumbnailManifest };
+    }
+  | undefined
+> {
   const state = await database
     .selectFrom('video_thumbnail_state')
     .select(['storage_key', 'manifest', 'status'])
     .where('video_id', '=', videoId)
     .executeTakeFirst();
-  if (
-    state?.status !== 'ready' ||
-    state.storage_key === null ||
-    state.storage_key === undefined
-  ) {
-    return undefined;
-  }
+  if (state === undefined) return undefined;
   const manifest = assertManifest(state.manifest);
-  return manifest === undefined
-    ? undefined
-    : { storage_key: state.storage_key, manifest };
+  return {
+    status: state.status,
+    active:
+      state.status === 'ready' && state.storage_key && manifest
+        ? { storage_key: state.storage_key, manifest }
+        : undefined,
+  };
 }
 
 function assertManifest(value: unknown): VideoThumbnailManifest | undefined {

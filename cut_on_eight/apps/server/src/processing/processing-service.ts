@@ -1,5 +1,5 @@
 import type { ProcessingSnapshotDto } from '@cut-on-eight/api-contracts';
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { CatalogDatabase, VideoTable } from '../catalog/database-types.js';
 
 export interface ProcessingRow {
@@ -35,7 +35,7 @@ function toItem(row: ProcessingRow): Item | null {
   if (row.videoStatus === 'failed') {
     return {
       ...base,
-      task: 'inspect',
+      task: row.videoFailureCode === 'upload_failed' ? 'import' : 'inspect',
       state: 'failed',
       failureCode: row.videoFailureCode,
     };
@@ -49,7 +49,9 @@ function toItem(row: ProcessingRow): Item | null {
         ? 'failed'
         : row.thumbnailStatus === 'generating'
           ? 'running'
-          : 'queued',
+          : row.thumbnailStatus === null
+            ? 'waiting'
+            : 'queued',
     updatedAt: (row.thumbnailUpdatedAt ?? row.videoUpdatedAt).toISOString(),
     failureCode:
       row.thumbnailStatus === 'failed' ? row.thumbnailFailureCode : null,
@@ -59,6 +61,7 @@ function toItem(row: ProcessingRow): Item | null {
 export function toProcessingSnapshot(
   rows: readonly ProcessingRow[],
   now: Date = new Date(),
+  counts?: { activeCount: number; failedCount: number },
 ): ProcessingSnapshotDto {
   const items = rows.flatMap((row) => {
     const item = toItem(row);
@@ -74,8 +77,8 @@ export function toProcessingSnapshot(
       : left.updatedAt.localeCompare(right.updatedAt);
   });
   return {
-    activeCount,
-    failedCount,
+    activeCount: counts?.activeCount ?? activeCount,
+    failedCount: counts?.failedCount ?? failedCount,
     observedAt: now.toISOString(),
     items: items.slice(0, 100),
   };
@@ -85,6 +88,17 @@ export class ProcessingService {
   constructor(private readonly database: Kysely<CatalogDatabase>) {}
 
   async snapshot(): Promise<ProcessingSnapshotDto> {
+    const counts = await sql<{ active_count: number; failed_count: number }>`
+      select
+        count(*) filter (where video.status in ('receiving', 'queued', 'processing')
+          or (video.status = 'ready' and thumbnail.status is distinct from 'ready'
+            and thumbnail.status is distinct from 'failed'))::int as active_count,
+        count(*) filter (where video.status = 'failed'
+          or (video.status = 'ready' and thumbnail.status = 'failed'))::int as failed_count
+      from videos as video
+      left join video_thumbnail_state as thumbnail on thumbnail.video_id = video.id
+      where video.status != 'deleting'
+    `.execute(this.database);
     const rows = await this.database
       .selectFrom('videos as video')
       .leftJoin(
@@ -103,7 +117,26 @@ export class ProcessingService {
         'thumbnail.failure_code as thumbnailFailureCode',
       ])
       .where('video.status', '!=', 'deleting')
+      .where(
+        sql<boolean>`video.status != 'ready' or thumbnail.status is distinct from 'ready'`,
+      )
+      .orderBy(
+        sql<number>`case when video.status = 'failed' or thumbnail.status = 'failed' then 1 else 0 end`,
+        'asc',
+      )
+      .orderBy(
+        sql<Date>`case when video.status = 'failed' or thumbnail.status = 'failed' then null when video.status = 'ready' then coalesce(thumbnail.updated_at, video.updated_at) else video.updated_at end`,
+        'asc',
+      )
+      .orderBy(
+        sql<Date>`case when video.status = 'failed' then video.updated_at when video.status = 'ready' and thumbnail.status = 'failed' then coalesce(thumbnail.updated_at, video.updated_at) else null end`,
+        'desc',
+      )
+      .limit(100)
       .execute();
-    return toProcessingSnapshot(rows);
+    return toProcessingSnapshot(rows, new Date(), {
+      activeCount: counts.rows[0]?.active_count ?? 0,
+      failedCount: counts.rows[0]?.failed_count ?? 0,
+    });
   }
 }
