@@ -4,7 +4,7 @@
 
 Aspire is the local entry point. It starts persistent Docker containers for
 PostgreSQL 18.4, Qdrant 1.18.3, and NATS 2.14.3 with JetStream, runs catalog
-migrations, and then starts the API, worker, outbox relay, Qdrant projector,
+migrations, and then starts the API, worker, outbox relay, `search-indexer`,
 `thumbnails-service`, and Svelte development server as host processes.
 
 ```text
@@ -14,8 +14,9 @@ Svelte SPA ──HTTP──> Fastify API ──> PostgreSQL catalog + pg-boss qu
                               └──> integration event archive + outbox
 
 Worker ───────────────────────> PostgreSQL / pg-boss / local media / FFmpeg
-Outbox relay ────────────────> NATS JetStream ──> Qdrant projector ──> Qdrant
+Outbox relay ────────────────> NATS JetStream ──> search-indexer ──> Qdrant
                                               └──> thumbnails-service ──> ~/cut-on-eight_thumbnails
+Fastify search API ──────────> LM Studio embeddings (optional) / Qdrant
 ```
 
 ## Ownership and durability
@@ -40,26 +41,47 @@ fragment-preview generation, and the standalone fragment library. The older
 JSON-based project format is not migrated into the PostgreSQL catalog; new
 videos should be imported through the current application.
 
-## Search today and later
+## Search
 
-Today, the Fragments view fetches fragments, videos, and tags from the
-PostgreSQL-backed API and filters them in the browser by title, source video,
-video selection, and tags. It is not a search service and has no index lag: a
-refresh reads current catalog data.
+The Search view is fragment-first. Its Fastify endpoint accepts one plain-text
+query plus optional tag, collection, and source-video filters. It returns
+fragment metadata, source-video context, and existing preview URLs; it never
+exposes local media paths, database state, or raw Qdrant payloads.
 
-The worker now projects every visible fragment to the Qdrant collection
-`cut_on_eight_fragments_v1`. Each payload has the fragment/source IDs, titles,
-descriptions, lowercase tags, timing, fragment revision, and projection version;
-it contains no media paths, checksums, or operational data. The point has no
-vector yet, so it is ready for future filtering and embeddings but does not
-provide nearest-neighbour retrieval today.
+For each embedding profile, Qdrant stores a versioned collection
+with two named vectors: `lexical-v1` is local BM25 with IDF and `semantic-v1`
+is a cosine dense vector. The canonical indexed document contains fragment
+title, description, and lowercase tags plus source title, description, and
+lowercase tags. Collection metadata is deliberately excluded so a collection
+rename does not require re-embedding all of its fragments. Keyword payload
+indexes support the explicit source-video, collection, and tag filters.
+
+With `CUT_ON_EIGHT_EMBEDDINGS_URL` configured, the API sends the query to the
+OpenAI-compatible LM Studio `/v1/embeddings` endpoint using the configured
+profile (by default `google/embeddinggemma-300M`, 768 dimensions). Qdrant
+retrieves dense and BM25 candidates and fuses them with reciprocal-rank fusion.
+Tags participate in the indexed text, so a tag match boosts ranking; only a
+visible UI filter narrows results.
+
+Without an embedding endpoint, the indexer writes BM25 vectors only and search
+runs in lexical mode. If LM Studio is temporarily unavailable, the API falls
+back to lexical querying while the durable indexer retries the pending dense
+work. If Qdrant is unavailable, search is temporarily unavailable; neither
+failure prevents catalog writes.
 
 Projection state lives in PostgreSQL. A catalog mutation commits first alongside
 an immutable integration event and an outbox-publication row. The relay publishes
-to JetStream after commit; the named Qdrant consumer applies source-positioned,
-idempotent upserts and deletes. Consequently, the projection is deliberately
-eventually consistent. Qdrant failures do not block catalog writes, and
-`pnpm search:rebuild` recreates it from PostgreSQL.
+to JetStream after commit; `search-indexer` re-reads current catalog state and
+applies source-positioned, idempotent upserts and deletes. The search index is
+therefore deliberately eventually consistent, while catalog editing is strongly
+consistent. Qdrant is disposable derived state.
+
+The active alias `cut_on_eight_fragments_active` isolates reads from rebuilding.
+`pnpm search:rebuild` creates a fresh profile collection, indexes a PostgreSQL
+snapshot, catches up with events after its high-water mark, verifies that its
+point count equals the visible catalog count, then atomically moves the alias.
+Failed rebuild collections remain available for diagnosis and never replace the
+active index.
 
 `pnpm events:replay` materializes the immutable PostgreSQL archive into a new,
 separate JetStream replay stream, with progress recorded in `event_replay_runs`.

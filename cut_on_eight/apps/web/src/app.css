@@ -621,7 +621,8 @@ button:disabled {
 .fragment-title input,
 .tag-entry input,
 .fragment-filters input,
-.fragment-filters select {
+.fragment-filters select,
+.search-input {
   min-width: 0;
   padding: 0.48rem 0.55rem;
   border: 1px solid #414955;
@@ -648,6 +649,77 @@ button:disabled {
   width: min(92rem, 100%);
   margin: 0 auto;
   padding: 1.2rem;
+}
+.search-view {
+  width: min(72rem, 100%);
+  margin: 0 auto;
+  padding: 1.2rem;
+}
+.search-input-label {
+  display: block;
+  margin: 1rem 0 0.35rem;
+  color: #aeb5c0;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.search-input {
+  width: 100%;
+  font-size: 1rem;
+}
+.search-filters {
+  margin: 0.7rem 0;
+  color: #c8cdd6;
+  font-size: 0.78rem;
+}
+.search-filters summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 700;
+}
+.search-filter-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.65rem;
+}
+.search-filter-groups fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0.55rem;
+  border: 1px solid #303640;
+  border-radius: 0.45rem;
+}
+.search-filter-groups legend {
+  padding: 0 0.25rem;
+  color: #969eab;
+}
+.search-indexing-hint {
+  margin: 0.55rem 0;
+  color: #aeb5c0;
+  font-size: 0.76rem;
+}
+.search-result-card {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.search-result-card:hover,
+.search-result-card:focus-visible {
+  outline: 2px solid #d4a741;
+  outline-offset: -2px;
+}
+.search-result-card .fragment-card-copy {
+  display: grid;
+  gap: 0.4rem;
+}
+.search-result-card .fragment-card-copy > span:not(.tag-chips) {
+  color: #969eab;
+  font-size: 0.72rem;
 }
 .fragment-filters {
   display: grid;

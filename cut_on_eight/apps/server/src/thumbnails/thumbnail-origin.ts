@@ -69,10 +69,14 @@ async function findActiveState(
 > {
   const state = await database
     .selectFrom('video_thumbnail_state')
-    .select(['storage_key', 'manifest'])
+    .select(['storage_key', 'manifest', 'status'])
     .where('video_id', '=', videoId)
     .executeTakeFirst();
-  if (state?.storage_key === null || state?.storage_key === undefined) {
+  if (
+    state?.status !== 'ready' ||
+    state.storage_key === null ||
+    state.storage_key === undefined
+  ) {
     return undefined;
   }
   const manifest = assertManifest(state.manifest);

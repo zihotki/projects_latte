@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { Kysely } from 'kysely';
 import {
   closeCatalogDatabase,
@@ -8,13 +8,15 @@ import {
 import type { CatalogDatabase } from '../src/catalog/database-types.js';
 import { migrateCatalog } from '../src/catalog/migrations/index.js';
 import { appendFragmentProjectionEvent } from '../src/search/fragment-projection.js';
+import { createEmbeddingClient } from '../src/search/embedding-client.js';
 import {
-  createFragmentProjectionStore,
-  type FragmentProjectionStore,
-} from '../src/search/qdrant-client.js';
-import { rebuildFragmentProjection } from '../src/search/rebuild.js';
+  collectionForProfile,
+  createHybridSearchStore,
+  type HybridSearchStore,
+} from '../src/search/hybrid-qdrant-store.js';
+import { createSearchIndexStateStore } from '../src/search/search-index-state.js';
+import { runSearchIndexer } from '../src/search/search-indexer.js';
 import { OutboxRelay } from '../src/events/outbox-relay.js';
-import { runQdrantProjector } from '../src/events/consumers/qdrant-projector.js';
 import {
   createJetStreamManager,
   createJetStreamRuntime,
@@ -35,42 +37,35 @@ const integration =
     ? describe.skip
     : describe;
 
-if (
-  databaseUrl === undefined ||
-  qdrantHttpUrl === undefined ||
-  natsUrl === undefined
-) {
-  console.warn(
-    'Skipping Qdrant smoke: PostgreSQL, Qdrant, and NATS test URLs are required',
-  );
-}
-
-integration('Qdrant fragment projection', () => {
+integration('semantic search lexical smoke', () => {
+  const videoId = randomUUID();
+  const fragmentId = randomUUID();
+  const profile = {
+    id: 'lexical-smoke-v1',
+    model: 'unused',
+    dimensions: 3,
+    baseUrl: null,
+  };
   let database: Kysely<CatalogDatabase>;
-  let store: FragmentProjectionStore;
   let runtime: Awaited<ReturnType<typeof createJetStreamRuntime>>;
   let topology: Awaited<ReturnType<typeof createJetStreamManager>>;
+  let store: HybridSearchStore;
   let releaseSuiteLock: (() => Promise<void>) | undefined;
-  const videoId = randomUUID();
-  const firstId = randomUUID();
-  const secondId = randomUUID();
-  const fragmentTagId = randomUUID();
-  const videoTagId = randomUUID();
+  let stopping = false;
+  let indexer: Promise<void> | undefined;
 
   beforeAll(async () => {
     releaseSuiteLock = await acquireDatabaseSuiteLock(databaseUrl!);
     database = createCatalogDatabase({ databaseUrl: databaseUrl! });
     await migrateCatalog(database);
     await resetCatalogTestState(database);
-    store = createFragmentProjectionStore({
-      qdrantHttpUrl,
-      qdrantApiKey: null,
-    });
-    await store.recreate();
     runtime = await createJetStreamRuntime({ natsUrl: natsUrl! });
     topology = await createJetStreamManager({ natsUrl: natsUrl! });
     await ensurePipelineTopology(topology.manager);
-
+    store = createHybridSearchStore({
+      qdrantHttpUrl: qdrantHttpUrl!,
+      qdrantApiKey: null,
+    });
     await database
       .insertInto('videos')
       .values({
@@ -85,77 +80,74 @@ integration('Qdrant fragment projection', () => {
       .execute();
     await database
       .insertInto('fragments')
-      .values([
-        {
-          id: firstId,
-          video_id: videoId,
-          start_us: 100_000,
-          end_us: 2_000_000,
-          title: 'opening turn',
-          description: 'Clean turn into promenade',
-          export_selected: false,
-          revision: 1,
-        },
-        {
-          id: secondId,
-          video_id: videoId,
-          start_us: 3_000_000,
-          end_us: 5_000_000,
-          title: 'closing line',
-          description: null,
-          export_selected: false,
-          revision: 1,
-        },
-      ])
+      .values({
+        id: fragmentId,
+        video_id: videoId,
+        start_us: 100_000,
+        end_us: 2_000_000,
+        title: 'opening turn',
+        description: 'Clean turn into promenade',
+        export_selected: false,
+        revision: 1,
+      })
       .execute();
-    await database
-      .insertInto('tags')
-      .values([
-        { id: fragmentTagId, name: 'turn' },
-        { id: videoTagId, name: 'waltz' },
-      ])
-      .execute();
-    await database
-      .insertInto('fragment_tags')
-      .values({ fragment_id: firstId, tag_id: fragmentTagId })
-      .execute();
-    await database
-      .insertInto('video_tags')
-      .values({ video_id: videoId, tag_id: videoTagId })
-      .execute();
+
+    indexer = runSearchIndexer({
+      database,
+      runtime,
+      profile,
+      collection: collectionForProfile(profile),
+      store,
+      embeddings: createEmbeddingClient(profile),
+      indexState: createSearchIndexStateStore(database),
+      stopping: () => stopping,
+    });
   });
 
   afterAll(async () => {
     try {
-      await closeCatalogDatabase(database);
+      stopping = true;
+      await indexer;
       await topology?.close();
       await runtime?.close();
+      await closeCatalogDatabase(database);
     } finally {
       await releaseSuiteLock?.();
     }
   });
 
-  test('relays immutable events into the eventual Qdrant projection', async () => {
-    await database.transaction().execute(async (transaction) => {
-      await appendFragmentProjectionEvent(transaction, firstId);
-      await appendFragmentProjectionEvent(transaction, secondId);
-    });
-    await projectUntil(() => store.count().then((count) => count === 2));
+  test('indexes and removes fragment state through search-indexer-v1 without embeddings', async () => {
+    const relay = new OutboxRelay(database, runtime);
+    await database
+      .transaction()
+      .execute((transaction) =>
+        appendFragmentProjectionEvent(transaction, fragmentId),
+      );
+    await relay.publishAvailable();
+    await vi.waitFor(
+      () =>
+        expect(store.count(collectionForProfile(profile).name)).resolves.toBe(
+          1,
+        ),
+      { timeout: 10_000 },
+    );
 
-    expect(await store.count()).toBe(2);
-    expect(await store.get(firstId)).toMatchObject({
-      id: firstId,
-      payload: {
-        projection_version: 1,
-        projection_revision: 1,
-        fragment_id: firstId,
-        video_id: videoId,
-        fragment_title: 'opening turn',
-        fragment_tags: ['turn'],
-        source_title: 'Viennese Waltz Practice',
-        source_tags: ['waltz'],
-      },
+    const matches = await store.query({
+      collection: collectionForProfile(profile).name,
+      lexicalText: 'promenade',
+      limit: 10,
     });
+    expect(matches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          fragmentId,
+          payload: expect.objectContaining({
+            fragment_title: 'opening turn',
+            source_title: 'Viennese Waltz Practice',
+          }),
+        }),
+      ]),
+    );
 
     await database.transaction().execute(async (transaction) => {
       await transaction
@@ -165,45 +157,17 @@ integration('Qdrant fragment projection', () => {
           purge_after: new Date(Date.now() + 1_000),
           undo_token_hash: 'a'.repeat(64),
         })
-        .where('id', '=', firstId)
+        .where('id', '=', fragmentId)
         .execute();
-      await appendFragmentProjectionEvent(transaction, firstId);
+      await appendFragmentProjectionEvent(transaction, fragmentId);
     });
-    await projectUntil(() =>
-      store.get(firstId).then((point) => point === null),
-    );
-    expect(await store.get(firstId)).toBeNull();
-
-    await store.recreate();
-    expect(await rebuildFragmentProjection(database, store)).toBe(1);
-    expect(await store.count()).toBe(1);
-    expect(await store.get(secondId)).toMatchObject({
-      payload: { projection_version: 1, fragment_id: secondId },
-    });
-  });
-
-  async function projectUntil(
-    condition: () => Promise<boolean>,
-  ): Promise<void> {
-    let stopping = false;
-    const projector = runQdrantProjector({
-      database,
-      runtime,
-      store,
-      stopping: () => stopping,
-    });
-    const relay = new OutboxRelay(database, runtime);
     await relay.publishAvailable();
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (await condition()) {
-        stopping = true;
-        await projector;
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    stopping = true;
-    await projector;
-    throw new Error('Timed out waiting for Qdrant projection');
-  }
+    await vi.waitFor(
+      () =>
+        expect(store.count(collectionForProfile(profile).name)).resolves.toBe(
+          0,
+        ),
+      { timeout: 10_000 },
+    );
+  }, 30_000);
 });

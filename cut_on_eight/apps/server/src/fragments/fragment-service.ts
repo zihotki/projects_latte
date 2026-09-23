@@ -86,11 +86,31 @@ export class FragmentService {
       const existingById = new Map(
         existing.map((fragment) => [fragment.id, fragment]),
       );
+      const currentVideoTags = (await videos.tags(videoId)).map(({ id }) => id);
+      const videoSearchChanged =
+        video.title !== request.title ||
+        video.description !== request.description ||
+        !sameIds(currentVideoTags, request.tagIds);
+      const currentFragmentTags = new Map(
+        await Promise.all(
+          request.fragments.map(
+            async ({ id }) =>
+              [
+                id,
+                (await new FragmentRepository(transaction).tags(id)).map(
+                  ({ id: tagId }) => tagId,
+                ),
+              ] as const,
+          ),
+        ),
+      );
+      const changedFragmentIds = new Set<string>();
       const merged = new Map(existingById);
       for (const mutation of request.fragments) {
         const prior = existingById.get(mutation.id);
         if (mutation.expectedRevision === null) {
           if (prior !== undefined) throw new StaleRevision();
+          changedFragmentIds.add(mutation.id);
           merged.set(mutation.id, {
             id: mutation.id,
             videoId,
@@ -105,11 +125,22 @@ export class FragmentService {
           if (prior === undefined) throw new CatalogNotFound();
           if (prior.revision !== mutation.expectedRevision)
             throw new StaleRevision();
+          const changed =
+            prior.startUs !== mutation.startUs ||
+            prior.endUs !== mutation.endUs ||
+            prior.title !== mutation.title ||
+            prior.description !== mutation.description ||
+            prior.exportSelected !== mutation.exportSelected ||
+            !sameIds(
+              currentFragmentTags.get(mutation.id) ?? [],
+              mutation.tagIds,
+            );
+          if (changed) changedFragmentIds.add(mutation.id);
           merged.set(mutation.id, {
             ...prior,
             ...mutation,
             videoId,
-            revision: prior.revision + 1,
+            revision: prior.revision + (changed ? 1 : 0),
           });
         }
       }
@@ -124,23 +155,27 @@ export class FragmentService {
         );
       }
 
-      await transaction
-        .updateTable('videos')
-        .set({
-          title: request.title,
-          description: request.description,
-          revision: video.revision + 1,
-          updated_at: new Date(),
-        })
-        .where('id', '=', videoId)
-        .execute();
-      await replaceVideoTags(transaction, videoId, request.tagIds);
+      if (videoSearchChanged || changedFragmentIds.size > 0) {
+        await transaction
+          .updateTable('videos')
+          .set({
+            title: request.title,
+            description: request.description,
+            revision: video.revision + 1,
+            updated_at: new Date(),
+          })
+          .where('id', '=', videoId)
+          .execute();
+      }
+      if (!sameIds(currentVideoTags, request.tagIds))
+        await replaceVideoTags(transaction, videoId, request.tagIds);
       await transaction
         .updateTable('workspace_videos')
         .set({ playback_position_us: request.playbackPositionUs })
         .where('video_id', '=', videoId)
         .execute();
       for (const mutation of request.fragments) {
+        if (!changedFragmentIds.has(mutation.id)) continue;
         const prior = existingById.get(mutation.id);
         const timingChanged =
           prior === undefined ||
@@ -197,7 +232,9 @@ export class FragmentService {
           );
         }
       }
-      for (const fragmentId of merged.keys()) {
+      for (const fragmentId of videoSearchChanged
+        ? merged.keys()
+        : changedFragmentIds) {
         await appendFragmentProjectionEvent(transaction, fragmentId);
       }
       await transaction
@@ -418,6 +455,10 @@ export class FragmentService {
       .execute();
     if (rows.length !== unique.length) throw new CatalogNotFound();
   }
+}
+
+function sameIds(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((id) => right.includes(id));
 }
 
 async function replaceVideoTags(

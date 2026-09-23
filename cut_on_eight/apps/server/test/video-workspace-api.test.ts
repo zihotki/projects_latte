@@ -14,7 +14,6 @@ import type { ServerConfig } from '../src/config.js';
 import { createRuntime } from '../src/runtime.js';
 import type { ApiRuntime } from '../src/runtime.js';
 import { VideoService } from '../src/videos/video-service.js';
-import { sourceBlobKey } from '../src/blobs/blob-key.js';
 import {
   acquireDatabaseSuiteLock,
   resetCatalogTestState,
@@ -40,6 +39,12 @@ integration('video and workspace API', () => {
     databaseUrl: databaseUrl!,
     qdrantHttpUrl: null,
     qdrantApiKey: null,
+    embeddingProfile: {
+      id: 'embeddinggemma-v1',
+      model: 'google/embeddinggemma-300M',
+      dimensions: 768,
+      baseUrl: null,
+    },
     maxUploadBytes: 1024 * 1024,
     host: '127.0.0.1',
     port: 4318,
@@ -111,8 +116,9 @@ integration('video and workspace API', () => {
     expect(range.body).toBe('video');
   });
 
-  test('keeps a published source receiving when catalog finalization rolls back', async () => {
+  test('removes an upload and its source when catalog finalization rolls back', async () => {
     const sourceName = `rollback-${Date.now()}.mp4`;
+    const publish = vi.spyOn(runtime.blobs, 'publish');
     const failingBoss = {
       send: vi.fn().mockRejectedValue(new Error('catalog finalization failed')),
     } as unknown as PgBoss;
@@ -131,31 +137,16 @@ integration('video and workspace API', () => {
         })(),
       }),
     ).rejects.toThrow('catalog finalization failed');
-    const receiving = await runtime.db
+    const failed = await runtime.db
       .selectFrom('videos')
-      .select(['id', 'status', 'source_asset_id'])
+      .select('id')
       .where('original_file_name', '=', sourceName)
-      .executeTakeFirstOrThrow();
-    expect(receiving).toMatchObject({
-      status: 'receiving',
-      source_asset_id: null,
-    });
-    expect((await service.list()).some(({ id }) => id === receiving.id)).toBe(
-      false,
-    );
-    expect(
-      (await runtime.workspace.snapshot()).library.some(
-        ({ id }) => id === receiving.id,
-      ),
-    ).toBe(false);
-    const key = sourceBlobKey(receiving.id, sourceName);
-    await expect(runtime.blobs.stat(key)).resolves.toMatchObject({
-      size: 17,
-    });
-    await runtime.blobs.delete(key);
-    await runtime.db
-      .deleteFrom('videos')
-      .where('id', '=', receiving.id)
-      .execute();
+      .executeTakeFirst();
+    expect(failed).toBeUndefined();
+    const key = publish.mock.lastCall?.[1];
+    expect(key).toBeDefined();
+    if (key === undefined) throw new Error('Expected a published source key');
+    await expect(runtime.blobs.stat(key)).rejects.toThrow();
+    publish.mockRestore();
   });
 });

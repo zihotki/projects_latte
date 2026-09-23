@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+**/dist
+.local
+.aspire
+**/.aspire
+.agents
+.codex
+.env*
+**/.env*
+*.mp4
+*.mov
+*.m4v
+coverage
+.git

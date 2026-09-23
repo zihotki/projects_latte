@@ -9,19 +9,32 @@ import {
 } from '@nats-io/jetstream';
 import {
   pipelineStream,
-  qdrantProjectorConsumer,
+  searchIndexerConsumer,
   thumbnailGeneratorConsumer,
 } from './jetstream.js';
+
+export const searchIndexerMaxDeliveries = 10;
 
 export async function ensurePipelineTopology(
   manager: JetStreamManager,
 ): Promise<void> {
   await ensureStream(manager);
-  await ensureConsumer(manager, qdrantProjectorConsumer, {
+  await ensureConsumer(manager, searchIndexerConsumer, {
     filter_subject: 'cut_on_eight.fragment.>',
-    ack_wait: nanos(30_000),
-    max_deliver: 10,
+    ack_wait: nanos(60_000),
+    max_deliver: searchIndexerMaxDeliveries,
     max_ack_pending: 1,
+    backoff: [
+      nanos(5_000),
+      nanos(30_000),
+      nanos(300_000),
+      nanos(1_800_000),
+      nanos(7_200_000),
+      nanos(21_600_000),
+      nanos(43_200_000),
+      nanos(86_400_000),
+      nanos(172_800_000),
+    ],
   });
   await ensureConsumer(manager, thumbnailGeneratorConsumer, {
     filter_subject: 'cut_on_eight.video.thumbnails.requested.v1',

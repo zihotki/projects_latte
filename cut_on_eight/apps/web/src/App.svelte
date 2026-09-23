@@ -6,6 +6,7 @@
   import EditorWorkspaceView from './components/EditorWorkspaceView.svelte';
   import FragmentLibraryView from './components/FragmentLibraryView.svelte';
   import LibraryView from './components/LibraryView.svelte';
+  import SearchView from './components/SearchView.svelte';
 
   const app = createAppModel();
   onDestroy(() => app.dispose());
@@ -51,6 +52,16 @@
 
     {#snippet fragments()}
       <FragmentLibraryView fragments={app.fragments} />
+    {/snippet}
+
+    {#snippet search()}
+      <SearchView
+        model={app.search}
+        tags={app.fragments.tags}
+        videos={app.workspace.workspace?.library ?? []}
+        onOpenFragment={(videoId, fragmentId) =>
+          void app.openSearchResult(videoId, fragmentId)}
+      />
     {/snippet}
   </EditorShell>
 </main>

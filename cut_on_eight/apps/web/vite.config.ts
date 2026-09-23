@@ -14,6 +14,9 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': backendUrl,
+      '/thumbnail-cdn':
+        process.env.THUMBNAILS_SERVICE_HTTP ??
+        `http://127.0.0.1:${process.env.CUT_ON_EIGHT_THUMBNAIL_ORIGIN_PORT ?? '4320'}`,
     },
   },
 });

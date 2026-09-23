@@ -112,11 +112,24 @@ function toRouteError(error: unknown): ApiRouteError {
   );
 }
 
-export function installApiErrorHandling(app: FastifyInstance): void {
+export function installApiErrorHandling(
+  app: FastifyInstance,
+  options: { legacy?: boolean } = {},
+): void {
   app.setNotFoundHandler((_request, reply) =>
-    reply
-      .code(404)
-      .send(apiError('route_not_found', 'The API route was not found.', false)),
+    options.legacy
+      ? reply
+          .code(404)
+          .send(
+            apiError('route_not_found', 'The API route was not found.', false),
+          )
+      : reply.code(404).type('application/problem+json').send({
+          type: 'https://cut-on-eight.local/problems/route_not_found',
+          title: 'Route not found',
+          status: 404,
+          detail: 'The API route was not found.',
+          code: 'route_not_found',
+        }),
   );
 
   app.setErrorHandler((error, request, reply) => {
@@ -132,15 +145,18 @@ export function installApiErrorHandling(app: FastifyInstance): void {
             ? 422
             : 409;
       const code = error instanceof CatalogNotFound ? error.code : error.code;
-      return reply.code(status).send({
-        type: `https://cut-on-eight.local/problems/${code}`,
-        title: status === 404 ? 'Catalog item not found' : 'Catalog conflict',
-        status,
-        detail:
-          error.message || 'The catalog operation could not be completed.',
-        code,
-        instance: request.url,
-      });
+      return reply
+        .code(status)
+        .type('application/problem+json')
+        .send({
+          type: `https://cut-on-eight.local/problems/${code}`,
+          title: status === 404 ? 'Catalog item not found' : 'Catalog conflict',
+          status,
+          detail:
+            error.message || 'The catalog operation could not be completed.',
+          code,
+          instance: request.url,
+        });
     }
     const safeError = toRouteError(error);
 
@@ -148,15 +164,30 @@ export function installApiErrorHandling(app: FastifyInstance): void {
       request.log.error(error);
     }
 
+    if (options.legacy) {
+      return reply
+        .code(safeError.statusCode)
+        .send(
+          apiError(
+            safeError.code,
+            safeError.message,
+            safeError.retryable,
+            safeError.details,
+          ),
+        );
+    }
+
     return reply
       .code(safeError.statusCode)
-      .send(
-        apiError(
-          safeError.code,
-          safeError.message,
-          safeError.retryable,
-          safeError.details,
-        ),
-      );
+      .type('application/problem+json')
+      .send({
+        type: `https://cut-on-eight.local/problems/${safeError.code}`,
+        title:
+          safeError.statusCode >= 500 ? 'Request failed' : 'Invalid request',
+        status: safeError.statusCode,
+        detail: safeError.message,
+        code: safeError.code,
+        instance: request.url,
+      });
   });
 }

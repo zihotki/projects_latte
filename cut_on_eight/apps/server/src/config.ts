@@ -12,7 +12,8 @@ export interface ServerConfig {
   qdrantApiKey: string | null;
   embeddingProfile: EmbeddingProfile;
   maxUploadBytes: number;
-  host: '127.0.0.1';
+  host: '127.0.0.1' | '0.0.0.0';
+  publicOrigin?: string | null;
   port: number;
 }
 
@@ -65,6 +66,27 @@ export function getServerConfig(
     environment.CUT_ON_EIGHT_THUMBNAIL_ORIGIN_URL ??
     `http://127.0.0.1:${thumbnailOriginPort}`;
   assertUrl(thumbnailOriginUrl, ['http:', 'https:'], 'thumbnail origin URL');
+  const publicOrigin = environment.CUT_ON_EIGHT_PUBLIC_ORIGIN ?? null;
+  if (publicOrigin !== null) {
+    assertUrl(publicOrigin, ['http:', 'https:'], 'public origin');
+    const parsed = new URL(publicOrigin);
+    if (
+      parsed.origin !== publicOrigin ||
+      parsed.username !== '' ||
+      parsed.password !== ''
+    ) {
+      throw new Error('CUT_ON_EIGHT_PUBLIC_ORIGIN must be an exact origin');
+    }
+  }
+  const host = environment.CUT_ON_EIGHT_HOST ?? '127.0.0.1';
+  if (host !== '127.0.0.1' && host !== '0.0.0.0') {
+    throw new Error('CUT_ON_EIGHT_HOST must be 127.0.0.1 or 0.0.0.0');
+  }
+  if (host === '0.0.0.0' && publicOrigin === null) {
+    throw new Error(
+      'CUT_ON_EIGHT_PUBLIC_ORIGIN is required for a network listener',
+    );
+  }
   const natsUrl = environment.NATS_URL ?? 'nats://127.0.0.1:4222';
   assertUrl(natsUrl, ['nats:', 'tls:'], 'NATS URL');
 
@@ -101,14 +123,13 @@ export function getServerConfig(
     qdrantApiKey: environment.QDRANT_APIKEY ?? null,
     embeddingProfile,
     maxUploadBytes,
-    host: '127.0.0.1',
+    host,
+    publicOrigin,
     port,
   };
 }
 
-function getEmbeddingProfile(
-  environment: NodeJS.ProcessEnv,
-): EmbeddingProfile {
+function getEmbeddingProfile(environment: NodeJS.ProcessEnv): EmbeddingProfile {
   const id = environment.CUT_ON_EIGHT_EMBEDDING_PROFILE ?? 'embeddinggemma-v1';
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) {
     throw new Error(

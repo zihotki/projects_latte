@@ -38,16 +38,15 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@sveltejs/mcp": "^0.1.25",
-    "@types/node": "^26.1.1",
-    "concurrently": "^10.0.3",
-    "eslint": "^10.7.0",
-    "globals": "^17.7.0",
-    "prettier": "^3.9.5",
+    "@sveltejs/mcp": "^0.1.26",
+    "@types/node": "^26.6.2",
+    "concurrently": "^10.0.5",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.8",
     "prettier-plugin-svelte": "^4.1.1",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.64.0",
-    "vitest": "^4.1.10",
-    "wait-on": "^9.0.10"
+    "typescript-eslint": "^8.70.1",
+    "vitest": "^4.1.11"
   }
 }

@@ -4,6 +4,7 @@ import {
   editorVideoSchema,
   fragmentListSchema,
   fragmentPatchRequestSchema,
+  fragmentSearchResponseSchema,
   fragmentSchema,
   problemDetailsSchema,
   restoreFragmentRequestSchema,
@@ -11,13 +12,18 @@ import {
   tagSchema,
   uploadAcceptedSchema,
   videoListSchema,
+  videoThumbnailManifestSchema,
   workspaceSchema,
   type FragmentDto,
+  type FragmentSearchQuery,
+  type FragmentSearchResponse,
   type VideoSummaryDto,
+  type VideoThumbnailManifestDto,
 } from '@cut-on-eight/api-contracts';
 import {
   jobSnapshotSchema,
   type JobSnapshot,
+  type ThumbnailManifestV1,
 } from '@cut-on-eight/legacy-contracts';
 import type {
   DeletedFragment,
@@ -210,6 +216,24 @@ export function loadTags(): Promise<TagDefinition[]> {
   return request('/api/tags', tagListSchema);
 }
 
+export function searchFragments(
+  input: FragmentSearchQuery,
+  signal?: AbortSignal,
+): Promise<FragmentSearchResponse> {
+  const query = new URLSearchParams({ q: input.q, limit: String(input.limit) });
+  for (const tagId of input.tagIds) query.append('tagIds', tagId);
+  for (const collectionId of input.collectionIds)
+    query.append('collectionIds', collectionId);
+  for (const videoId of input.videoIds) query.append('videoIds', videoId);
+  return request(
+    `/api/search/fragments?${query}`,
+    fragmentSearchResponseSchema,
+    {
+      signal,
+    },
+  );
+}
+
 export function createTag(name: string): Promise<TagDefinition> {
   return request('/api/tags', tagSchema, {
     method: 'POST',
@@ -292,7 +316,47 @@ export function thumbnailPageUrl(
   fileName: string,
   immutableIdentity: string,
 ): string {
-  return `/api/projects/${encodeURIComponent(projectId)}/thumbnails/${encodeURIComponent(fileName)}?identity=${encodeURIComponent(immutableIdentity)}`;
+  return `/thumbnail-cdn/v1/videos/${encodeURIComponent(projectId)}/${encodeURIComponent(fileName)}?identity=${encodeURIComponent(immutableIdentity)}`;
+}
+
+export async function loadThumbnailManifest(
+  videoId: string,
+): Promise<ThumbnailManifestV1> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `/thumbnail-cdn/v1/videos/${encodeURIComponent(videoId)}/manifest.json`,
+    );
+  } catch {
+    throw new ApiFailure({
+      status: 503,
+      code: 'thumbnail_unavailable',
+      message: 'Thumbnail service is unavailable.',
+    });
+  }
+  if (response.status === 404) {
+    throw new ApiFailure({
+      status: 404,
+      code: 'thumbnail_not_ready',
+      message: 'Thumbnails are not ready.',
+    });
+  }
+  if (!response.ok) throw invalidResponse();
+  const body: unknown = await response.json().catch(() => null);
+  const parsed = videoThumbnailManifestSchema.safeParse(body);
+  if (!parsed.success) throw invalidResponse();
+  return toTimelineManifest(parsed.data, response.headers.get('etag'));
+}
+
+function toTimelineManifest(
+  manifest: VideoThumbnailManifestDto,
+  etag: string | null,
+): ThumbnailManifestV1 {
+  return {
+    ...manifest,
+    generatorVersion: manifest.profileVersion,
+    sourceFingerprint: etag ?? manifest.profileVersion,
+  };
 }
 
 /** Legacy event client compatibility; Phase 4 uses processing-record polling. */

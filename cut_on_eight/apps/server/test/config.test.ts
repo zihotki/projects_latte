@@ -4,6 +4,28 @@ import { join } from 'node:path';
 import { getServerConfig } from '../src/config.js';
 
 describe('getServerConfig', () => {
+  it('requires a precise public origin when configured', () => {
+    expect(
+      getServerConfig({
+        DATABASE_URL: 'postgres://catalog',
+        CUT_ON_EIGHT_PUBLIC_ORIGIN: 'https://cuts.example.test',
+      }).publicOrigin,
+    ).toBe('https://cuts.example.test');
+    expect(() =>
+      getServerConfig({
+        DATABASE_URL: 'postgres://catalog',
+        CUT_ON_EIGHT_PUBLIC_ORIGIN: 'https://cuts.example.test/path',
+      }),
+    ).toThrow('exact origin');
+  });
+  it('requires a public origin for a container network listener', () => {
+    expect(() =>
+      getServerConfig({
+        DATABASE_URL: 'postgres://catalog',
+        CUT_ON_EIGHT_HOST: '0.0.0.0',
+      }),
+    ).toThrow('CUT_ON_EIGHT_PUBLIC_ORIGIN is required');
+  });
   it('uses a valid configured port', () => {
     expect(
       getServerConfig({
@@ -27,6 +49,7 @@ describe('getServerConfig', () => {
       },
       maxUploadBytes: 20 * 1024 ** 3,
       host: '127.0.0.1',
+      publicOrigin: null,
       port: 4320,
     });
   });

@@ -25,6 +25,7 @@ import { registerWorkspaceCatalogRoutes } from './api/workspace-routes.js';
 import { registerAssetRoutes } from './api/asset-routes.js';
 import { registerCatalogFragmentRoutes } from './api/fragment-routes.js';
 import { registerCatalogTagRoutes } from './api/tag-routes.js';
+import { registerSearchRoutes } from './api/search-routes.js';
 
 export interface CreateAppOptions {
   readonly config?: ServerConfig;
@@ -58,8 +59,8 @@ export function createApp(options: CreateAppOptions = {}): CutOnEightApp {
       : undefined;
   const app = Fastify({ logger: true });
 
-  installApiErrorHandling(app);
-  installApiRequestProtection(app);
+  installApiErrorHandling(app, { legacy: options.runtime === undefined });
+  installApiRequestProtection(app, config?.publicOrigin);
 
   app.get('/api/health', async () =>
     healthResponseSchema.parse({
@@ -81,6 +82,7 @@ export function createApp(options: CreateAppOptions = {}): CutOnEightApp {
     registerAssetRoutes(app, options.runtime);
     registerCatalogFragmentRoutes(app, options.runtime);
     registerCatalogTagRoutes(app, options.runtime);
+    registerSearchRoutes(app, options.runtime);
     app.addHook('onClose', async () => options.runtime?.close());
   } else {
     registerWorkspaceRoutes(app, services!);

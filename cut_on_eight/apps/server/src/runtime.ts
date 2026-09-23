@@ -12,6 +12,12 @@ import { FragmentService } from './fragments/fragment-service.js';
 import { createBoss, createPhase4Queues } from './jobs/boss.js';
 import { VideoService } from './videos/video-service.js';
 import { WorkspaceService } from './workspace/workspace-service.js';
+import { createEmbeddingClient } from './search/embedding-client.js';
+import { createHybridSearchStore } from './search/hybrid-qdrant-store.js';
+import {
+  createFragmentSearchService,
+  type FragmentSearchService,
+} from './search/search-service.js';
 
 export interface ApiRuntime {
   readonly db: Kysely<CatalogDatabase>;
@@ -20,6 +26,7 @@ export interface ApiRuntime {
   readonly videos: VideoService;
   readonly fragments: FragmentService;
   readonly workspace: WorkspaceService;
+  readonly search: FragmentSearchService;
   close(): Promise<void>;
 }
 
@@ -32,6 +39,12 @@ export async function createRuntime(config: ServerConfig): Promise<ApiRuntime> {
   const workspace = new WorkspaceService(db);
   const fragments = new FragmentService(db, boss, workspace);
   const videos = new VideoService(db, boss, blobs, workspace);
+  const search = createFragmentSearchService({
+    database: db,
+    profile: config.embeddingProfile,
+    store: createHybridSearchStore(config),
+    embeddings: createEmbeddingClient(config.embeddingProfile),
+  });
   let closed = false;
   return {
     db,
@@ -40,6 +53,7 @@ export async function createRuntime(config: ServerConfig): Promise<ApiRuntime> {
     videos,
     fragments,
     workspace,
+    search,
     async close() {
       if (closed) return;
       closed = true;

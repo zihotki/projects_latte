@@ -6,6 +6,7 @@ coverage/
 .env
 .env.*
 !.env.example
+!deploy/.env.homelab.example
 .DS_Store
 *.mp4
 *.mov

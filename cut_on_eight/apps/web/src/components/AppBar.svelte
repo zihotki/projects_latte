@@ -36,6 +36,11 @@
       aria-current={activeView === 'fragments' ? 'page' : undefined}
       onclick={() => onViewChange('fragments')}>Fragments</button
     >
+    <button
+      type="button"
+      aria-current={activeView === 'search' ? 'page' : undefined}
+      onclick={() => onViewChange('search')}>Search</button
+    >
   </nav>
 
   <div class="top-tools">

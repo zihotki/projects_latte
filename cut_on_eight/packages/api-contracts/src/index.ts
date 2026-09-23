@@ -4,4 +4,5 @@ export * from './health.js';
 export * from './problem-details.js';
 export * from './search.js';
 export * from './videos.js';
+export * from './video-thumbnails.js';
 export * from './workspace.js';

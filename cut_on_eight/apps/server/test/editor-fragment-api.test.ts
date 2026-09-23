@@ -141,6 +141,46 @@ integration('editor and fragment API', () => {
     expect(saved.fragments).toHaveLength(2);
     expect(saved.editor.selectedFragmentId).toBe(firstId);
 
+    const eventsBeforeSelection = await database
+      .selectFrom('integration_events')
+      .select('event_id')
+      .where('aggregate_id', 'in', [firstId, secondId])
+      .execute();
+    const selectionOnly = await app.inject({
+      method: 'PATCH',
+      url: `/api/videos/${videoId}/editor`,
+      payload: {
+        ...editorSave(
+          saved.video.revision,
+          saved.fragments.map((item) =>
+            fragment(
+              item.id,
+              item.revision,
+              item.startUs,
+              item.endUs,
+              item.tags.map(({ id }) => id),
+            ),
+          ),
+          secondId,
+        ),
+        playbackPositionUs: 500_000,
+      },
+    });
+    expect(selectionOnly.statusCode).toBe(200);
+    const selection = editorVideoSchema.parse(selectionOnly.json());
+    expect(selection.video.revision).toBe(saved.video.revision);
+    expect(selection.fragments.map(({ revision }) => revision)).toEqual(
+      saved.fragments.map(({ revision }) => revision),
+    );
+    expect(selection.editor.selectedFragmentId).toBe(secondId);
+    expect(
+      await database
+        .selectFrom('integration_events')
+        .select('event_id')
+        .where('aggregate_id', 'in', [firstId, secondId])
+        .execute(),
+    ).toHaveLength(eventsBeforeSelection.length);
+
     const overlap = await app.inject({
       method: 'PATCH',
       url: `/api/videos/${videoId}/editor`,

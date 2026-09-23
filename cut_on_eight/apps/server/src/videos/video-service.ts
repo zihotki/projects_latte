@@ -76,9 +76,9 @@ export class VideoService {
 
     let staged: StagedBlob | undefined;
     let published = false;
+    const destination = sourceBlobKey(videoId, source.fileName);
     try {
       staged = await this.blobs.writeStaged(source.bytes);
-      const destination = sourceBlobKey(videoId, source.fileName);
       await this.blobs.publish(staged, destination);
       published = true;
       const publishedBlob = staged;
@@ -118,20 +118,32 @@ export class VideoService {
         );
       });
     } catch (error) {
-      if (!published) {
-        if (staged !== undefined) await this.blobs.delete(staged.key);
+      try {
+        if (staged !== undefined)
+          await this.blobs.delete(published ? destination : staged.key);
+        await this.database
+          .deleteFrom('videos')
+          .where('id', '=', videoId)
+          .where('status', '=', 'receiving')
+          .execute();
+      } catch (cleanupError) {
         await this.database
           .updateTable('videos')
           .set({
             status: 'failed',
             processing_failure_code: 'upload_failed',
-            processing_failure_retryable: true,
+            processing_failure_retryable: false,
             processing_failure_at: new Date(),
             updated_at: new Date(),
           })
           .where('id', '=', videoId)
           .where('status', '=', 'receiving')
           .execute();
+        throw new AggregateError(
+          [error, cleanupError],
+          'Upload and cleanup failed',
+          { cause: cleanupError },
+        );
       }
       throw error;
     }

@@ -1,0 +1,12 @@
+FROM node:24-bookworm-slim AS build
+WORKDIR /app
+RUN corepack enable
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @cut-on-eight/legacy-contracts build \
+ && pnpm --filter @cut-on-eight/api-contracts build \
+ && pnpm --filter @cut-on-eight/web build
+
+FROM caddy:2-alpine
+COPY --from=build /app/apps/web/dist /srv
+COPY deploy/Caddyfile /etc/caddy/Caddyfile

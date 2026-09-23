@@ -1,0 +1,94 @@
+x-app: &app
+  image: cut-on-eight-server:local
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile.server
+  env_file:
+    - path: .env.homelab
+      required: false
+  user: '${CUT_ON_EIGHT_UID:-1000}:${CUT_ON_EIGHT_GID:-1000}'
+  environment:
+    DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+    CUT_ON_EIGHT_PUBLIC_ORIGIN: ${CUT_ON_EIGHT_PUBLIC_ORIGIN:?Set CUT_ON_EIGHT_PUBLIC_ORIGIN}
+    CUT_ON_EIGHT_HOST: 0.0.0.0
+    CUT_ON_EIGHT_DATA_ROOT: /data/media
+    CUT_ON_EIGHT_THUMBNAIL_ROOT: /data/thumbnails
+    NATS_URL: nats://nats:4222
+    QDRANT_HTTP_URL: http://qdrant:6333
+  volumes:
+    - type: bind
+      source: ${CUT_ON_EIGHT_MEDIA_DIR:?Set CUT_ON_EIGHT_MEDIA_DIR}
+      target: /data/media
+    - type: bind
+      source: ${CUT_ON_EIGHT_THUMBNAILS_DIR:?Set CUT_ON_EIGHT_THUMBNAILS_DIR}
+      target: /data/thumbnails
+  restart: unless-stopped
+
+services:
+  nats:
+    image: nats:2.14.3-alpine
+    command: ['-js', '-sd', '/data']
+    volumes:
+      - nats-data:/data
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.3
+    volumes:
+      - qdrant-data:/qdrant/storage
+    restart: unless-stopped
+
+  migrate:
+    <<: *app
+    command: ['node', 'apps/server/dist/catalog/migrate.js']
+    restart: 'no'
+    depends_on: [nats, qdrant]
+
+  api:
+    <<: *app
+    command: ['node', 'apps/server/dist/server.js']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ['node', 'apps/server/dist/worker.js']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  outbox-relay:
+    <<: *app
+    command: ['node', 'apps/server/dist/events/relay.js']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  search-indexer:
+    <<: *app
+    command: ['node', 'apps/server/dist/search/search-indexer-main.js']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  thumbnails-service:
+    <<: *app
+    command: ['node', 'apps/server/dist/thumbnails-service.js']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    image: cut-on-eight-web:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    ports:
+      - '127.0.0.1:8080:8080'
+    depends_on: [api, thumbnails-service]
+    restart: unless-stopped
+
+volumes:
+  nats-data:
+  qdrant-data:

@@ -1,6 +1,7 @@
 import type { AppServices } from '../src/services.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
+import type { ServerConfig } from '../src/config.js';
 
 function services(overrides: Partial<AppServices> = {}): AppServices {
   const unused = async (): Promise<never> => {
@@ -27,6 +28,31 @@ function services(overrides: Partial<AppServices> = {}): AppServices {
 }
 
 describe('API request protection', () => {
+  it('allows only the configured public origin for a proxy host', async () => {
+    const app = createApp({
+      services: services(),
+      config: { publicOrigin: 'https://cuts.example.test' } as ServerConfig,
+    });
+    const accepted = await app.inject({
+      method: 'GET',
+      url: '/api/health',
+      headers: {
+        host: 'cuts.example.test',
+        origin: 'https://cuts.example.test',
+      },
+    });
+    const rejected = await app.inject({
+      method: 'GET',
+      url: '/api/health',
+      headers: {
+        host: 'cuts.example.test',
+        origin: 'https://evil.example.test',
+      },
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(rejected.statusCode).toBe(403);
+    await app.close();
+  });
   it.each([
     ['existing injected requests', undefined],
     ['Vite proxy requests', { host: '127.0.0.1:4318' }],

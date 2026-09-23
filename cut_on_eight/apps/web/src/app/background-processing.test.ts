@@ -8,6 +8,7 @@ import {
   type BackgroundApi,
 } from './background-processing.svelte.js';
 import type { WorkspaceSnapshot } from '../domain/editor-model.js';
+import { ApiFailure } from '../lib/api.js';
 
 const projectId = '11111111-1111-4111-8111-111111111111';
 
@@ -81,6 +82,24 @@ function api(overrides: Partial<BackgroundApi> = {}): BackgroundApi {
 }
 
 describe('BackgroundProcessing', () => {
+  it('can retry an unavailable video thumbnail manifest', async () => {
+    const loadThumbnailManifest = vi.fn().mockRejectedValue(
+      new ApiFailure({
+        status: 404,
+        code: 'thumbnail_not_ready',
+        message: 'Thumbnails are not ready.',
+      }),
+    );
+    const model = new BackgroundProcessing(
+      api({ loadThumbnailManifest }),
+      () => projectId,
+    );
+    await model.refreshThumbnailManifest(projectId, 'no-job');
+    await model.refreshThumbnailManifest(projectId, 'no-job');
+    expect(loadThumbnailManifest).toHaveBeenCalledTimes(2);
+    expect(model.thumbnailStateFor(projectId)).toBe('generating');
+    model.dispose();
+  });
   it('loads tool capabilities', async () => {
     const model = new BackgroundProcessing(api(), () => null);
     await model.loadToolCapabilities();

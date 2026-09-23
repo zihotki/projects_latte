@@ -9,6 +9,8 @@ import type { PublishedEvent } from './event-store.js';
 const encoder = new TextEncoder();
 
 export const pipelineStream = 'CUT_ON_EIGHT_EVENTS';
+export const searchIndexerConsumer = 'search-indexer-v1';
+// Retained only for the manual rollback projector. New topology never creates it.
 export const qdrantProjectorConsumer = 'qdrant-projector-v1';
 export const thumbnailGeneratorConsumer = 'thumbnail-generator-v1';
 

@@ -1,5 +1,5 @@
 <script module lang="ts">
-  export type ActiveView = 'editor' | 'library' | 'fragments';
+  export type ActiveView = 'editor' | 'library' | 'fragments' | 'search';
   export type EditorMode = 'video' | 'segment' | 'boundary';
 </script>
 
@@ -19,6 +19,7 @@
     editor,
     library,
     fragments,
+    search,
   }: {
     activeView: ActiveView;
     mode: EditorMode;
@@ -30,6 +31,7 @@
     editor: Snippet;
     library: Snippet;
     fragments: Snippet;
+    search: Snippet;
   } = $props();
 </script>
 
@@ -46,7 +48,9 @@
     {@render editor()}
   {:else if activeView === 'library'}
     {@render library()}
-  {:else}
+  {:else if activeView === 'fragments'}
     {@render fragments()}
+  {:else}
+    {@render search()}
   {/if}
 </div>

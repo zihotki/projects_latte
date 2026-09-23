@@ -37,7 +37,9 @@ describe('thumbnail renderer', () => {
     const first = thumbnailPageUrl('project', 'sprite-001.webp', 'v1:first');
     const second = thumbnailPageUrl('project', 'sprite-001.webp', 'v2:second');
     expect(first).not.toBe(second);
-    expect(first).toContain('?identity=v1%3Afirst');
+    expect(first).toContain(
+      '/thumbnail-cdn/v1/videos/project/sprite-001.webp?identity=v1%3Afirst',
+    );
   });
 
   it('draws only intersecting cells with manifest source rectangles', () => {

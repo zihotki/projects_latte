@@ -40,6 +40,7 @@ await api.withReference(catalog);
 await api.withReference(qdrant);
 await api.withReference(nats);
 await api.withEnvironment('NATS_URL', 'nats://127.0.0.1:4222');
+await passEmbeddingEnvironment(api);
 await api.waitForCompletion(migrations);
 
 const worker = await builder.addJavaScriptApp('worker', '../apps/server', {
@@ -59,19 +60,20 @@ await relay.withReference(nats);
 await relay.withEnvironment('NATS_URL', 'nats://127.0.0.1:4222');
 await relay.waitForCompletion(migrations);
 
-const projector = await builder.addJavaScriptApp(
-  'qdrant-projector',
+const searchIndexer = await builder.addJavaScriptApp(
+  'search-indexer',
   '../apps/server',
   {
-    runScriptName: 'dev:qdrant-projector',
+    runScriptName: 'dev:search-indexer',
   },
 );
-await projector.withPnpm({ install: false });
-await projector.withReference(catalog);
-await projector.withReference(qdrant);
-await projector.withReference(nats);
-await projector.withEnvironment('NATS_URL', 'nats://127.0.0.1:4222');
-await projector.waitForCompletion(migrations);
+await searchIndexer.withPnpm({ install: false });
+await searchIndexer.withReference(catalog);
+await searchIndexer.withReference(qdrant);
+await searchIndexer.withReference(nats);
+await searchIndexer.withEnvironment('NATS_URL', 'nats://127.0.0.1:4222');
+await passEmbeddingEnvironment(searchIndexer);
+await searchIndexer.waitForCompletion(migrations);
 
 const thumbnails = await builder.addJavaScriptApp(
   'thumbnails-service',
@@ -98,3 +100,17 @@ await web.withReference(thumbnails);
 await web.waitFor(api);
 
 await builder.build().run();
+
+async function passEmbeddingEnvironment(resource: {
+  withEnvironment(name: string, value: string): PromiseLike<unknown>;
+}): Promise<void> {
+  for (const name of [
+    'CUT_ON_EIGHT_EMBEDDING_PROFILE',
+    'CUT_ON_EIGHT_EMBEDDING_MODEL',
+    'CUT_ON_EIGHT_EMBEDDING_DIMENSIONS',
+    'CUT_ON_EIGHT_EMBEDDINGS_URL',
+  ]) {
+    const value = process.env[name];
+    if (value !== undefined) await resource.withEnvironment(name, value);
+  }
+}

@@ -1,0 +1,17 @@
+:8080 {
+  encode zstd gzip
+
+  handle /api/* {
+    reverse_proxy api:4318
+  }
+
+  handle /thumbnail-cdn/* {
+    reverse_proxy thumbnails-service:4320
+  }
+
+  handle {
+    root * /srv
+    try_files {path} /index.html
+    file_server
+  }
+}

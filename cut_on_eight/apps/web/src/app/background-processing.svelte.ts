@@ -141,7 +141,10 @@ export class BackgroundProcessing {
       const next = { ...this.thumbnailManifests };
       delete next[projectId];
       this.thumbnailManifests = next;
-      if (hasErrorCode(error, 'thumbnail_not_ready')) return;
+      if (hasErrorCode(error, 'thumbnail_not_ready')) {
+        this.thumbnailRequestKeys.delete(projectId);
+        return;
+      }
       this.thumbnailLoadErrors = {
         ...this.thumbnailLoadErrors,
         [projectId]: describeError(error, 'Thumbnails unavailable'),
@@ -240,11 +243,14 @@ export class BackgroundProcessing {
       try {
         const workspace = await this.api.loadWorkspace!();
         if (this.disposed) return;
-        processing = workspace.library.some((video) =>
-          ['receiving', 'queued', 'processing', 'deleting'].includes(
-            video.status ?? '',
-          ),
-        );
+        processing =
+          workspace.library.some((video) =>
+            ['receiving', 'queued', 'processing', 'deleting'].includes(
+              video.status ?? '',
+            ),
+          ) ||
+          (this.getActiveProjectId() !== null &&
+            this.thumbnailManifestFor(this.getActiveProjectId()!) === null);
         this.api.onWorkspace?.(workspace);
       } catch {
         // Keep polling after a transient local backend failure.

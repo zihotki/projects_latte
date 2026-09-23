@@ -5,10 +5,12 @@ import {
   deleteFragment,
   deleteProject,
   loadFragments,
+  loadThumbnailManifest,
   loadTags,
   loadWorkspace,
   openProject,
   restoreFragment,
+  searchFragments,
   saveProject,
   importVideo,
   updateFragment,
@@ -34,6 +36,7 @@ import {
   WorkspaceSession,
   type WorkspaceApi,
 } from './workspace-session.svelte.js';
+import { createSearchModel, type SearchModel } from './search-model.svelte.js';
 
 export class AppModel {
   backendState = $state<BackendState>('checking');
@@ -45,6 +48,7 @@ export class AppModel {
     readonly background: BackgroundProcessing,
     readonly fragments: FragmentLibrary,
     readonly preferences: UiPreferences,
+    readonly search: SearchModel = createSearchModel({ searchFragments }),
   ) {}
 
   get status(): AppStatusSnapshot {
@@ -92,6 +96,16 @@ export class AppModel {
     if (view === 'fragments') void this.fragments.refresh();
   }
 
+  async openSearchResult(videoId: string, fragmentId: string): Promise<void> {
+    if (!(await this.workspace.reopenProject(videoId))) return;
+    this.workspace.updateProject(videoId, (project) => ({
+      ...project,
+      selectedSegmentId: project.segments.some(({ id }) => id === fragmentId)
+        ? fragmentId
+        : null,
+    }));
+  }
+
   clearGeneralError(): void {
     this.workspace.clearError();
     this.background.clearError();
@@ -102,6 +116,7 @@ export class AppModel {
     this.disposed = true;
     this.startRevision += 1;
     this.fragments.dispose();
+    this.search.dispose();
     this.background.dispose();
     this.workspace.dispose();
   }
@@ -138,6 +153,7 @@ export function createAppModel(): AppModel {
   });
   const backgroundApi: BackgroundApi = {
     loadWorkspace,
+    loadThumbnailManifest,
     onWorkspace: (snapshot) => workspace.applyWorkspace(snapshot),
     connectJobEvents: () => () => undefined,
   };
@@ -155,5 +171,11 @@ export function createAppModel(): AppModel {
     restoreFragment,
   };
   const fragments = new FragmentLibrary(fragmentApi, workspace, background);
-  return new AppModel(workspace, background, fragments, preferences);
+  return new AppModel(
+    workspace,
+    background,
+    fragments,
+    preferences,
+    createSearchModel({ searchFragments }),
+  );
 }

@@ -12,12 +12,12 @@
   "dependencies": {
     "@cut-on-eight/api-contracts": "workspace:*",
     "@cut-on-eight/legacy-contracts": "workspace:*",
-    "svelte": "^5.56.6",
-    "uuid": "^14.0.1"
+    "svelte": "^5.57.1",
+    "uuid": "^14.0.2"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^7.2.0",
-    "svelte-check": "^4.7.3",
-    "vite": "^8.1.5"
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "svelte-check": "^4.7.6",
+    "vite": "^8.3.0"
   }
 }

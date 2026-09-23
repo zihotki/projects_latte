@@ -33,7 +33,14 @@ export async function runThumbnailGenerator(input: {
   while (!input.stopping()) {
     const message = await consumer.next({ expires: 1_000 });
     if (message === null) continue;
-    await processThumbnailMessage(input, message);
+    try {
+      await processThumbnailMessage(input, message);
+    } catch (error) {
+      console.error('Thumbnail event could not be processed', error);
+      if (message.info.deliveryCount >= 5)
+        message.term('thumbnail_unexpected_failure');
+      else message.nak(30_000);
+    }
   }
 }
 

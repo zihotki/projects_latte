@@ -8,7 +8,7 @@ interface LocalAuthority {
 
 const localHostPattern = /^(localhost|127\.0\.0\.1)(?::([0-9]+))?$/i;
 const ipv6LoopbackPattern = /^\[::1\](?::([0-9]+))?$/;
-const originPattern = /^http:\/\/([^/?#]+)$/i;
+const originPattern = /^https?:\/\/([^/?#]+)$/i;
 const fetchSites = new Set(['cross-site', 'none', 'same-origin', 'same-site']);
 
 function parsePort(value: string | undefined): number | null {
@@ -41,11 +41,20 @@ function parseLocalAuthority(value: string): LocalAuthority | null {
   };
 }
 
-function requireLocalHost(request: FastifyRequest): LocalAuthority {
+function requireLocalHost(
+  request: FastifyRequest,
+  publicOrigin?: string | null,
+): LocalAuthority | null {
   const value = request.headers.host;
   const authority =
     typeof value === 'string' ? parseLocalAuthority(value) : null;
   if (authority !== null) return authority;
+  if (
+    publicOrigin !== undefined &&
+    publicOrigin !== null &&
+    value === new URL(publicOrigin).host
+  )
+    return null;
 
   throw new ApiRouteError(
     value === undefined ? 400 : 403,
@@ -71,7 +80,7 @@ function parseOrigin(value: string): ParsedOrigin | null {
   try {
     const parsed = new URL(value);
     if (
-      parsed.protocol !== 'http:' ||
+      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
       parsed.username !== '' ||
       parsed.password !== ''
     ) {
@@ -103,12 +112,20 @@ function isAllowedOrigin(
 
 function protectBrowserRequest(
   request: FastifyRequest,
-  requestHost: LocalAuthority,
+  requestHost: LocalAuthority | null,
+  publicOrigin?: string | null,
 ): void {
   const originValue = request.headers.origin;
   const fetchSiteValue = request.headers['sec-fetch-site'];
 
   if (originValue !== undefined) {
+    if (
+      publicOrigin !== undefined &&
+      publicOrigin !== null &&
+      originValue === publicOrigin &&
+      request.headers.host === new URL(publicOrigin).host
+    )
+      return;
     const origin = parseOrigin(originValue);
     if (origin === null) {
       throw new ApiRouteError(
@@ -120,6 +137,7 @@ function protectBrowserRequest(
     }
     if (
       origin.localAuthority !== null &&
+      requestHost !== null &&
       isAllowedOrigin(origin.localAuthority, requestHost)
     ) {
       return;
@@ -157,10 +175,13 @@ function isApiRequest(url: string): boolean {
   return url === '/api' || url.startsWith('/api/') || url.startsWith('/api?');
 }
 
-export function installApiRequestProtection(app: FastifyInstance): void {
+export function installApiRequestProtection(
+  app: FastifyInstance,
+  publicOrigin?: string | null,
+): void {
   app.addHook('onRequest', async (request) => {
     if (!isApiRequest(request.url)) return;
-    const requestHost = requireLocalHost(request);
-    protectBrowserRequest(request, requestHost);
+    const requestHost = requireLocalHost(request, publicOrigin);
+    protectBrowserRequest(request, requestHost, publicOrigin);
   });
 }

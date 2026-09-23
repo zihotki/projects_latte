@@ -54,7 +54,10 @@ export class UiPreferences {
 
   private readActiveView(): ActiveView | null {
     const value = this.read(ACTIVE_VIEW_KEY);
-    return value === 'editor' || value === 'library' || value === 'fragments'
+    return value === 'editor' ||
+      value === 'library' ||
+      value === 'fragments' ||
+      value === 'search'
       ? value
       : null;
   }
