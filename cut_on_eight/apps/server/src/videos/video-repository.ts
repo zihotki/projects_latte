@@ -45,6 +45,26 @@ export class VideoRepository {
       .execute();
   }
 
+  async tagsByVideoIds(
+    ids: readonly string[],
+  ): Promise<Map<string, TagRecord[]>> {
+    const grouped = new Map<string, TagRecord[]>();
+    if (ids.length === 0) return grouped;
+    const rows = await this.database
+      .selectFrom('video_tags')
+      .innerJoin('tags', 'tags.id', 'video_tags.tag_id')
+      .select(['video_tags.video_id', 'tags.id', 'tags.name'])
+      .where('video_tags.video_id', 'in', [...ids])
+      .orderBy('tags.name')
+      .execute();
+    for (const row of rows) {
+      const tags = grouped.get(row.video_id) ?? [];
+      tags.push({ id: row.id, name: row.name });
+      grouped.set(row.video_id, tags);
+    }
+    return grouped;
+  }
+
   async asset(assetId: string): Promise<AssetRecord | null> {
     const row = await this.database
       .selectFrom('assets')

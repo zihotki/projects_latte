@@ -24,20 +24,21 @@ Fastify search API ──────────> LM Studio embeddings (optiona
 - PostgreSQL is the authoritative store for videos, fragments, tags, editor
   state, workspace state, assets, projection state, and durable background jobs.
 - `~/cut-on-eight_data` is an application-owned local blob store. An import is
-  copied there before the catalog publishes the video; the worker writes
-  generated fragment-preview assets there too.
+  copied there before the catalog publishes the video. Historical
+  fragment-preview assets remain readable during the thumbnail cutover.
 - Docker named volumes retain PostgreSQL and Qdrant data between AppHost runs.
   NATS has its own bounded operational volume. PostgreSQL is authoritative;
   Qdrant is disposable because it is intended to be rebuilt from PostgreSQL.
 - The API returns after durable catalog/job state is committed. Inspection,
-  preview generation, cleanup, and purge work run asynchronously through
-  `pg-boss` and resume after a worker restart.
+  cleanup, and purge work run asynchronously through `pg-boss`. Per-video
+  thumbnail generation runs in `thumbnails-service`; new fragment edits do
+  not queue per-fragment preview jobs.
 
 ## Current product boundary
 
 The current vertical slice supports video import, editor and workspace state,
 fragment CRUD, title/description/tag editing, video and fragment deletion,
-fragment-preview generation, and the standalone fragment library. The older
+reusable video thumbnails, and the standalone fragment library. The older
 JSON-based project format is not migrated into the PostgreSQL catalog; new
 videos should be imported through the current application.
 

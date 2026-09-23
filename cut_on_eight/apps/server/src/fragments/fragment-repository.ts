@@ -53,6 +53,56 @@ export class FragmentRepository {
       .execute();
   }
 
+  async tagsByFragmentIds(
+    ids: readonly string[],
+  ): Promise<Map<string, TagRecord[]>> {
+    const grouped = new Map<string, TagRecord[]>();
+    if (ids.length === 0) return grouped;
+    const rows = await this.database
+      .selectFrom('fragment_tags')
+      .innerJoin('tags', 'tags.id', 'fragment_tags.tag_id')
+      .select(['fragment_tags.fragment_id', 'tags.id', 'tags.name'])
+      .where('fragment_tags.fragment_id', 'in', [...ids])
+      .orderBy('tags.name')
+      .execute();
+    for (const row of rows) {
+      const tags = grouped.get(row.fragment_id) ?? [];
+      tags.push({ id: row.id, name: row.name });
+      grouped.set(row.fragment_id, tags);
+    }
+    return grouped;
+  }
+
+  async previewsByFragmentIds(
+    ids: readonly string[],
+  ): Promise<
+    Map<string, NonNullable<Awaited<ReturnType<FragmentRepository['preview']>>>>
+  > {
+    const grouped = new Map<
+      string,
+      NonNullable<Awaited<ReturnType<FragmentRepository['preview']>>>
+    >();
+    if (ids.length === 0) return grouped;
+    const rows = await this.database
+      .selectFrom('fragment_previews')
+      .selectAll()
+      .where('fragment_id', 'in', [...ids])
+      .execute();
+    for (const row of rows) {
+      grouped.set(row.fragment_id, {
+        status: row.status,
+        assetId: row.asset_id,
+        revision: row.fragment_revision,
+        sampleUs: row.sample_us.map(safeMicroseconds),
+        columns: row.columns,
+        rows: row.rows,
+        frameWidth: row.frame_width,
+        frameHeight: row.frame_height,
+      });
+    }
+    return grouped;
+  }
+
   async preview(fragmentId: string) {
     const row = await this.database
       .selectFrom('fragment_previews')

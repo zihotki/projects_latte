@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { PgBoss } from 'pg-boss';
-import type { Kysely } from 'kysely';
+import type { Kysely, KyselyPlugin } from 'kysely';
 import {
   deletedFragmentSchema,
   editorVideoSchema,
@@ -43,6 +43,7 @@ integration('editor and fragment API', () => {
   let database: Kysely<CatalogDatabase>;
   let app: CutOnEightApp;
   let blobs: LocalBlobStore;
+  let boss: PgBoss;
   let releaseSuiteLock: (() => Promise<void>) | undefined;
   const videoId = randomUUID();
   const firstId = randomUUID();
@@ -80,7 +81,7 @@ integration('editor and fragment API', () => {
       })
       .execute();
     await new WorkspaceRepository(database).open(videoId);
-    const boss = {
+    boss = {
       send: vi.fn().mockResolvedValue(randomUUID()),
     } as unknown as PgBoss;
     blobs = new LocalBlobStore(config.dataRoot);
@@ -140,6 +141,22 @@ integration('editor and fragment API', () => {
     const saved = editorVideoSchema.parse(savedResponse.json());
     expect(saved.fragments).toHaveLength(2);
     expect(saved.editor.selectedFragmentId).toBe(firstId);
+
+    let snapshotQueries = 0;
+    const queryCounter: KyselyPlugin = {
+      transformQuery({ node }) {
+        snapshotQueries += 1;
+        return node;
+      },
+      async transformResult({ result }) {
+        return result;
+      },
+    };
+    const snapshot = await new WorkspaceService(
+      database.withPlugin(queryCounter),
+    ).snapshot();
+    expect(snapshot.openVideos[0]?.fragments).toHaveLength(2);
+    expect(snapshotQueries).toBeLessThanOrEqual(8);
 
     const eventsBeforeSelection = await database
       .selectFrom('integration_events')
@@ -217,6 +234,11 @@ integration('editor and fragment API', () => {
     expect(patchedResponse.statusCode).toBe(200);
     const patched = fragmentSchema.parse(patchedResponse.json());
     expect(patched.title).toBe('opening');
+    expect(boss.send).not.toHaveBeenCalledWith(
+      'fragment.preview.v1',
+      expect.anything(),
+      expect.anything(),
+    );
 
     const stale = await app.inject({
       method: 'PATCH',

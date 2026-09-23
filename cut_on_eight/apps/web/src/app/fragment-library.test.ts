@@ -238,7 +238,7 @@ describe('FragmentLibrary', () => {
     expect(library.catalogue).toBeNull();
   });
 
-  it('polls while fragment previews are being generated', async () => {
+  it('polls while video thumbnails are being generated', async () => {
     vi.useFakeTimers();
     try {
       const apiClient = api();
@@ -252,7 +252,7 @@ describe('FragmentLibrary', () => {
         .mockResolvedValueOnce(catalogue());
       const library = new FragmentLibrary(apiClient, workspace(), jobs());
       await library.refresh();
-      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(apiClient.loadFragments).toHaveBeenCalledTimes(2);
       library.dispose();
     } finally {

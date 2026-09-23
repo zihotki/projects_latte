@@ -7,6 +7,7 @@
   import FragmentLibraryView from './components/FragmentLibraryView.svelte';
   import LibraryView from './components/LibraryView.svelte';
   import SearchView from './components/SearchView.svelte';
+  import ProcessingPanel from './components/ProcessingPanel.svelte';
 
   const app = createAppModel();
   onDestroy(() => app.dispose());
@@ -30,6 +31,15 @@
   >
     {#snippet status()}
       <AppStatus {app} variant="summary" />
+    {/snippet}
+
+    {#snippet processing()}
+      {#if app.processing !== null}
+        <ProcessingPanel
+          model={app.processing}
+          onOpenVideo={(videoId) => void app.openProcessingVideo(videoId)}
+        />
+      {/if}
     {/snippet}
 
     {#snippet alerts()}

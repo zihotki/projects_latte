@@ -8,6 +8,7 @@
     statusState,
     onViewChange,
     status,
+    processing,
     help,
   }: {
     activeView: ActiveView;
@@ -15,6 +16,7 @@
     statusState: 'ready' | 'working' | 'attention';
     onViewChange: (view: ActiveView) => void;
     status: Snippet;
+    processing: Snippet;
     help: Snippet;
   } = $props();
 </script>
@@ -44,6 +46,7 @@
   </nav>
 
   <div class="top-tools">
+    {@render processing()}
     <details class="status-menu">
       <summary class="status-summary" data-state={statusState}
         >{statusLabel}</summary

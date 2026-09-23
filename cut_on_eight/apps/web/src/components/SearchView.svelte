@@ -8,6 +8,8 @@
   import type { TagDefinition } from '../domain/catalogue-model.js';
   import type { ProjectSummary } from '../domain/editor-model.js';
   import FragmentPreviewStrip from './FragmentPreviewStrip.svelte';
+  import { thumbnailPageUrl } from '../lib/api.js';
+  import { selectVideoFragmentPreviews } from '../domain/video-fragment-previews.js';
 
   let {
     model,
@@ -48,6 +50,23 @@
     return `${(result.startUs / 1_000_000).toFixed(2)}–${(
       result.endUs / 1_000_000
     ).toFixed(2)}s`;
+  }
+
+  function resultPreviews(result: FragmentSearchResultDto) {
+    const manifest = model.manifests[result.videoId];
+    if (manifest === undefined) return searchResultPreviews(result);
+    return selectVideoFragmentPreviews(
+      manifest,
+      result.startUs / 1_000_000,
+      result.endUs / 1_000_000,
+    ).map((preview) => ({
+      ...preview,
+      href: thumbnailPageUrl(
+        result.videoId,
+        preview.pageFileName,
+        preview.identity,
+      ),
+    }));
   }
 </script>
 
@@ -136,7 +155,7 @@
             type="button"
             onclick={() => onOpenFragment(result.videoId, result.id)}
           >
-            <FragmentPreviewStrip previews={searchResultPreviews(result)} />
+            <FragmentPreviewStrip previews={resultPreviews(result)} />
             <span class="fragment-card-copy">
               <strong>{searchResultLabel(result)}</strong>
               <span>{result.sourceTitle} · {duration(result)}</span>

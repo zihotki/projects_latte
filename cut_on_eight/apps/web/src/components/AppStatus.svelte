@@ -17,10 +17,6 @@
         {app.background.ffprobeState}
       </dd>
     </div>
-    <div>
-      <dt>Jobs</dt>
-      <dd>{app.status.jobsLabel}</dd>
-    </div>
   </dl>
 {:else}
   {#if app.background.ffprobeState === 'unavailable'}

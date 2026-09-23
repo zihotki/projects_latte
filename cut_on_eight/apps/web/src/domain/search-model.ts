@@ -3,6 +3,7 @@ import type {
   FragmentSearchResultDto,
 } from '@cut-on-eight/api-contracts';
 import type { FragmentPreview } from './catalogue-model.js';
+import type { ThumbnailManifestV1 } from '@cut-on-eight/legacy-contracts';
 
 export interface FragmentSearchFilters {
   readonly tagIds: readonly string[];
@@ -15,6 +16,9 @@ export const emptyFragmentSearchFilters: FragmentSearchFilters = {
 };
 
 export interface FragmentSearchApi {
+  loadVideoThumbnailManifest?(
+    videoId: string,
+  ): Promise<ThumbnailManifestV1 | null>;
   searchFragments(
     input: {
       q: string;

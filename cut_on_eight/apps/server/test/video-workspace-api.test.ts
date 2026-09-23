@@ -2,7 +2,10 @@ import { rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { PgBoss } from 'pg-boss';
-import { uploadAcceptedSchema } from '@cut-on-eight/api-contracts';
+import {
+  processingSnapshotSchema,
+  uploadAcceptedSchema,
+} from '@cut-on-eight/api-contracts';
 import type { CutOnEightApp } from '../src/app.js';
 import { createApp } from '../src/app.js';
 import {
@@ -100,6 +103,16 @@ integration('video and workspace API', () => {
     videoId = accepted.video.id;
     expect(accepted.workspace.activeVideoId).toBe(videoId);
     expect(accepted.video.status).toBe('queued');
+    const processing = processingSnapshotSchema.parse(
+      (await app.inject({ method: 'GET', url: '/api/processing' })).json(),
+    );
+    expect(processing.items).toContainEqual(
+      expect.objectContaining({
+        videoId,
+        task: 'inspect',
+        state: 'queued',
+      }),
+    );
     expect(accepted.workspace.library.some(({ id }) => id === videoId)).toBe(
       true,
     );

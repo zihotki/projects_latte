@@ -34,10 +34,9 @@ export class VideoService {
   async list(): Promise<VideoSummaryDto[]> {
     const repository = new VideoRepository(this.database);
     const videos = await repository.list();
-    return Promise.all(
-      videos.map(async (video) =>
-        toVideoSummaryDto(video, await repository.tags(video.id)),
-      ),
+    const tags = await repository.tagsByVideoIds(videos.map(({ id }) => id));
+    return videos.map((video) =>
+      toVideoSummaryDto(video, tags.get(video.id) ?? []),
     );
   }
 

@@ -1,4 +1,5 @@
 import type { FragmentSearchResponse } from '@cut-on-eight/api-contracts';
+import type { ThumbnailManifestV1 } from '@cut-on-eight/legacy-contracts';
 import { describe, expect, it, vi } from 'vitest';
 import { createSearchModel, type SearchModel } from './search-model.svelte.js';
 import type { FragmentSearchApi } from '../domain/search-model.js';
@@ -87,6 +88,42 @@ describe('SearchModel', () => {
       expect(model.state).toBe('ready');
       expect(model.response?.mode).toBe('lexical');
       expect(model.error).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('loads a video bundle for a search result', async () => {
+    vi.useFakeTimers();
+    try {
+      const videoId = '00000000-0000-4000-8000-000000000001';
+      const manifest = {
+        schemaVersion: 1,
+        generatorVersion: 'overview-webp-v2',
+        sourceFingerprint: 'bundle-a',
+        durationSeconds: 10,
+        thumbnail: [160, 90],
+        pages: [['sprite-aaaaaaaaaaaaaaaaaaaaaaaa-0.webp', 160, 90]],
+        samples: [[5, 0, 0, 0, 160, 90]],
+      } as ThumbnailManifestV1;
+      const client: FragmentSearchApi = {
+        searchFragments: vi.fn().mockResolvedValue({
+          ...response(),
+          results: [
+            {
+              id: '00000000-0000-4000-8000-000000000002',
+              videoId,
+              startUs: 4_000_000,
+              endUs: 6_000_000,
+            },
+          ],
+        }),
+        loadVideoThumbnailManifest: vi.fn().mockResolvedValue(manifest),
+      };
+      const model = createSearchModel(client);
+      model.setQuery('turn');
+      await vi.advanceTimersByTimeAsync(200);
+      expect(model.manifests[videoId]).toEqual(manifest);
     } finally {
       vi.useRealTimers();
     }

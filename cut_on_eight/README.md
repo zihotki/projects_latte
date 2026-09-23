@@ -4,7 +4,7 @@ Cut on Eight is a browser app for importing dance videos, marking precise
 fragments, editing their timing and metadata, browsing the resulting video and
 fragment library, and searching fragments. It is in active development: the
 PostgreSQL catalog, durable media-processing worker, fragment library, tags,
-previews, and eventually consistent hybrid Qdrant search are working.
+video thumbnail bundles, and eventually consistent hybrid Qdrant search are working.
 
 ## Install
 
@@ -34,9 +34,9 @@ From the repository root, use `pnpm -C cut_on_eight dev` instead.
 ### Default data locations
 
 The application-owned media directory is `~/cut-on-eight_data`. Imported files
-are copied there before processing, and source videos plus generated fragment
-previews remain there. Do not edit or remove its contents while the app is
-using them.
+are copied there before processing. Source videos and any older fragment
+previews remain there. New fragment cards reuse the separate video thumbnail
+bundles. Do not edit or remove these files while the app is using them.
 
 The authoritative catalog and durable job queue are in Docker's named volume
 `cut-on-eight-postgres-data`. Qdrant uses the separate, rebuildable
@@ -82,13 +82,13 @@ pnpm dev
 - Create fragments while watching, loop a selected fragment, nudge its start
   and end with clicks or the keyboard, and edit its title, description, and
   lower-case tags.
-- Browse a standalone fragment library with five-frame previews; delete and
+- Browse a standalone fragment library with up to five video-bundle frames; delete and
   restore fragments, or delete videos with confirmation.
 - Search fragments from the top-level Search view with plain text and optional
   tag, collection, or source-video filters. Results include their source video
   and existing previews.
-- Run inspection and preview generation as durable background work. Saves do
-  not wait for that work, and the worker resumes queued work after restart.
+- Check queued and active video work in the compact Processing panel. Import,
+  inspection, and video thumbnail generation do not block fragment edits.
 
 ## Search and consistency
 

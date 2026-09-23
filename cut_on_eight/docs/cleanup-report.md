@@ -22,10 +22,10 @@ cache and failure recovery. See [homelab deployment](homelab-deployment.md).
 
 ## Next cleanup, in order
 
-1. **Finish the preview cutover.** Fragment cards still use per-fragment
-   preview jobs and assets. Reuse suitable frames from the video bundle, then
-   remove the old job, asset, route, and storage paths. Test a short fragment,
-   a fragment near the end, and a missing bundle before removal.
+1. **Retire old preview paths.** Fragment and search cards now use video
+   bundles, and edits no longer queue per-fragment generation. Keep the old
+   worker and asset reader for previously queued jobs and stored previews.
+   After a real-media check, remove those paths and derived records safely.
 2. **Make search failures operable.** The indexer records a terminal failure,
    but there is no failed-count display or targeted retry command. Add both,
    reconcile existing JetStream consumer settings on startup, and retire the
@@ -35,10 +35,10 @@ cache and failure recovery. See [homelab deployment](homelab-deployment.md).
    ordered, multi-membership collection tables and editor are not built.
    Either implement the approved collection design or hide the unused filter
    until it has real data.
-4. **Reduce duplicate work.** Workspace snapshots fetch tags and previews per
-   fragment, and the event log still carries full legacy projection payloads
-   although the new indexer reloads catalog state. Batch reads and shrink new
-   events only after replay compatibility is clear.
+4. **Shrink event payloads after compatibility review.** Workspace, library,
+   and fragment lists now batch tag and preview reads. The event log still
+   carries full legacy projection payloads although the new indexer reloads
+   catalog state. Change new events only after replay compatibility is clear.
 5. **Harden deployment.** Build and smoke-test the images on a host with Docker
    Hub access. Add authenticated remote access and tested, off-host backups
    before exposing the app. Verify PostgreSQL, media mounts, restore, and

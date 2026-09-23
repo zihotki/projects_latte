@@ -218,18 +218,6 @@ export class FragmentService {
             mutation.id,
             revision,
           );
-          await this.boss.send(
-            jobNames.generateFragmentPreview,
-            envelope({
-              videoId,
-              fragmentId: mutation.id,
-              expectedRevision: revision,
-            }),
-            {
-              db: fromKysely(transaction),
-              singletonKey: `${mutation.id}:${revision}`,
-            },
-          );
         }
       }
       for (const fragmentId of videoSearchChanged
@@ -319,18 +307,6 @@ export class FragmentService {
           this.boss,
           fragmentId,
           revision,
-        );
-        await this.boss.send(
-          jobNames.generateFragmentPreview,
-          envelope({
-            videoId: current.video_id,
-            fragmentId,
-            expectedRevision: revision,
-          }),
-          {
-            db: fromKysely(transaction),
-            singletonKey: `${fragmentId}:${revision}`,
-          },
         );
       }
     });
@@ -428,14 +404,17 @@ export class FragmentService {
     repository: FragmentRepository,
   ): Promise<FragmentDto[]> {
     const records = await repository.list();
-    return Promise.all(
-      records.map(async (fragment) =>
-        toFragmentDto({
-          fragment,
-          tags: await repository.tags(fragment.id),
-          preview: await repository.preview(fragment.id),
-        }),
-      ),
+    const ids = records.map(({ id }) => id);
+    const [tags, previews] = await Promise.all([
+      repository.tagsByFragmentIds(ids),
+      repository.previewsByFragmentIds(ids),
+    ]);
+    return records.map((fragment) =>
+      toFragmentDto({
+        fragment,
+        tags: tags.get(fragment.id) ?? [],
+        preview: previews.get(fragment.id) ?? null,
+      }),
     );
   }
 

@@ -20,36 +20,47 @@ export class WorkspaceService {
     const fragments = new FragmentRepository(this.database);
     const workspace = new WorkspaceRepository(this.database);
     const libraryRecords = await videos.list();
-    const library = await Promise.all(
-      libraryRecords.map(async (video) =>
-        toVideoSummaryDto(video, await videos.tags(video.id)),
-      ),
+    const videoTags = await videos.tagsByVideoIds(
+      libraryRecords.map(({ id }) => id),
     );
-    const openIds = await workspace.openVideoIds();
+    const library = libraryRecords.map((video) =>
+      toVideoSummaryDto(video, videoTags.get(video.id) ?? []),
+    );
+    const openRows = await this.database
+      .selectFrom('workspace_videos')
+      .select(['video_id', 'playback_position_us'])
+      .orderBy('position')
+      .execute();
+    const openIds = openRows.map(({ video_id }) => video_id);
+    const fragmentGroups = await Promise.all(
+      openIds.map((id) => fragments.list(id)),
+    );
+    const fragmentIds = fragmentGroups.flat().map(({ id }) => id);
+    const [fragmentTags, previews, editorRows] = await Promise.all([
+      fragments.tagsByFragmentIds(fragmentIds),
+      fragments.previewsByFragmentIds(fragmentIds),
+      openIds.length === 0
+        ? Promise.resolve([])
+        : this.database
+            .selectFrom('editor_state')
+            .selectAll()
+            .where('video_id', 'in', openIds)
+            .execute(),
+    ]);
+    const editors = new Map(editorRows.map((row) => [row.video_id, row]));
     const openVideos = [];
-    for (const videoId of openIds) {
+    for (const [index, videoId] of openIds.entries()) {
       const video = libraryRecords.find(({ id }) => id === videoId);
       if (video === undefined) continue;
-      const fragmentRecords = await fragments.list(videoId);
-      const fragmentDtos = await Promise.all(
-        fragmentRecords.map(async (fragment) =>
-          toFragmentDto({
-            fragment,
-            tags: await fragments.tags(fragment.id),
-            preview: await fragments.preview(fragment.id),
-          }),
-        ),
+      const fragmentDtos = (fragmentGroups[index] ?? []).map((fragment) =>
+        toFragmentDto({
+          fragment,
+          tags: fragmentTags.get(fragment.id) ?? [],
+          preview: previews.get(fragment.id) ?? null,
+        }),
       );
-      const workspaceRow = await this.database
-        .selectFrom('workspace_videos')
-        .select('playback_position_us')
-        .where('video_id', '=', videoId)
-        .executeTakeFirstOrThrow();
-      const editor = await this.database
-        .selectFrom('editor_state')
-        .selectAll()
-        .where('video_id', '=', videoId)
-        .executeTakeFirst();
+      const workspaceRow = openRows[index]!;
+      const editor = editors.get(videoId);
       openVideos.push(
         editorVideoSchema.parse({
           video: library.find(({ id }) => id === videoId),

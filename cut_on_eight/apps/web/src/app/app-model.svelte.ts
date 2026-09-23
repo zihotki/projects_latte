@@ -8,6 +8,8 @@ import {
   loadThumbnailManifest,
   loadTags,
   loadWorkspace,
+  loadProcessing,
+  loadCachedVideoThumbnailManifest,
   openProject,
   restoreFragment,
   searchFragments,
@@ -37,6 +39,7 @@ import {
   type WorkspaceApi,
 } from './workspace-session.svelte.js';
 import { createSearchModel, type SearchModel } from './search-model.svelte.js';
+import { ProcessingModel } from './processing-model.svelte.js';
 
 export class AppModel {
   backendState = $state<BackendState>('checking');
@@ -48,7 +51,11 @@ export class AppModel {
     readonly background: BackgroundProcessing,
     readonly fragments: FragmentLibrary,
     readonly preferences: UiPreferences,
-    readonly search: SearchModel = createSearchModel({ searchFragments }),
+    readonly search: SearchModel = createSearchModel({
+      searchFragments,
+      loadVideoThumbnailManifest: loadCachedVideoThumbnailManifest,
+    }),
+    readonly processing: ProcessingModel | null = null,
   ) {}
 
   get status(): AppStatusSnapshot {
@@ -81,6 +88,7 @@ export class AppModel {
       this.backendState = 'ready';
       void this.background.loadToolCapabilities();
       this.background.start();
+      this.processing?.start();
       if (this.preferences.activeView === 'fragments') {
         void this.fragments.refresh();
       } else {
@@ -106,6 +114,12 @@ export class AppModel {
     }));
   }
 
+  async openProcessingVideo(videoId: string): Promise<void> {
+    if (await this.workspace.reopenProject(videoId)) {
+      this.changeView('editor');
+    }
+  }
+
   clearGeneralError(): void {
     this.workspace.clearError();
     this.background.clearError();
@@ -117,6 +131,7 @@ export class AppModel {
     this.startRevision += 1;
     this.fragments.dispose();
     this.search.dispose();
+    this.processing?.dispose();
     this.background.dispose();
     this.workspace.dispose();
   }
@@ -176,6 +191,10 @@ export function createAppModel(): AppModel {
     background,
     fragments,
     preferences,
-    createSearchModel({ searchFragments }),
+    createSearchModel({
+      searchFragments,
+      loadVideoThumbnailManifest: loadCachedVideoThumbnailManifest,
+    }),
+    new ProcessingModel(loadProcessing),
   );
 }

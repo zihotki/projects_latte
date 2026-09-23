@@ -2,6 +2,7 @@ import type {
   FragmentSearchResponse,
   FragmentSearchResultDto,
 } from '@cut-on-eight/api-contracts';
+import type { ThumbnailManifestV1 } from '@cut-on-eight/legacy-contracts';
 import {
   emptyFragmentSearchFilters,
   type FragmentSearchApi,
@@ -16,6 +17,7 @@ export interface SearchModel {
   readonly response: FragmentSearchResponse | null;
   readonly state: SearchState;
   readonly error: string | null;
+  readonly manifests: Readonly<Record<string, ThumbnailManifestV1>>;
   setQuery(value: string): void;
   setFilters(value: FragmentSearchFilters): void;
   dispose(): void;
@@ -27,6 +29,7 @@ class SearchModelImpl implements SearchModel {
   response = $state.raw<FragmentSearchResponse | null>(null);
   state = $state<SearchState>('idle');
   error = $state<string | null>(null);
+  manifests = $state.raw<Record<string, ThumbnailManifestV1>>({});
 
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private controller: AbortController | null = null;
@@ -94,6 +97,7 @@ class SearchModelImpl implements SearchModel {
       if (!this.isCurrent(revision, controller)) return;
       this.response = response;
       this.state = 'ready';
+      void this.loadManifests(response, revision);
     } catch (error) {
       if (!this.isCurrent(revision, controller) || isAbort(error)) return;
       this.error = describeError(error);
@@ -101,6 +105,32 @@ class SearchModelImpl implements SearchModel {
     } finally {
       if (this.controller === controller) this.controller = null;
     }
+  }
+
+  private async loadManifests(
+    response: FragmentSearchResponse,
+    revision: number,
+  ): Promise<void> {
+    if (this.api.loadVideoThumbnailManifest === undefined) return;
+    const ids = [...new Set(response.results.map(({ videoId }) => videoId))];
+    const loaded = await Promise.all(
+      ids.map(
+        async (id) =>
+          [
+            id,
+            await this.api.loadVideoThumbnailManifest!(id).catch(() => null),
+          ] as const,
+      ),
+    );
+    if (this.disposed || revision !== this.requestRevision) return;
+    this.manifests = {
+      ...this.manifests,
+      ...Object.fromEntries(
+        loaded.flatMap(([id, manifest]) =>
+          manifest === null ? [] : [[id, manifest] as const],
+        ),
+      ),
+    };
   }
 
   private isCurrent(revision: number, controller: AbortController): boolean {

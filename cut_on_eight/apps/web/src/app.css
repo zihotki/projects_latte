@@ -112,6 +112,72 @@ h2 {
 .top-tools {
   gap: 0.45rem;
 }
+.processing-control {
+  position: relative;
+}
+.processing-toggle {
+  white-space: nowrap;
+}
+.processing-failure-count {
+  margin-left: 0.35rem;
+  color: #ffc5ca;
+}
+.processing-panel {
+  position: absolute;
+  top: calc(100% + 0.55rem);
+  right: 0;
+  z-index: 25;
+  width: min(22rem, calc(100vw - 1rem));
+  max-height: min(65vh, 32rem);
+  overflow: auto;
+  padding: 0.7rem;
+  border: 1px solid #3a414c;
+  border-radius: 0.5rem;
+  background: #191d23;
+  box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 35%);
+}
+.processing-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+.processing-heading button {
+  border: 0;
+  background: transparent;
+  color: #aeb5c0;
+  cursor: pointer;
+}
+.processing-panel ul {
+  margin: 0.6rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.processing-panel li + li {
+  border-top: 1px solid #303640;
+}
+.processing-panel li button {
+  display: grid;
+  gap: 0.15rem;
+  width: 100%;
+  padding: 0.55rem 0.25rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.processing-panel li button:hover,
+.processing-panel li button:focus-visible {
+  background: #272e38;
+}
+.processing-panel li span,
+.processing-panel li small,
+.processing-stale,
+.processing-empty {
+  color: #aeb5c0;
+  font-size: 0.75rem;
+}
 .status-menu,
 .context-help {
   position: relative;

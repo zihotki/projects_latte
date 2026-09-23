@@ -227,7 +227,7 @@ export class FragmentLibrary {
     this.previewPollTimer = setTimeout(() => {
       this.previewPollTimer = null;
       void this.refresh();
-    }, 1_000);
+    }, 5_000);
   }
 
   private clearPreviewPoll(): void {

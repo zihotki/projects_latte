@@ -7,6 +7,7 @@ import {
   fragmentSearchResponseSchema,
   fragmentSchema,
   problemDetailsSchema,
+  processingSnapshotSchema,
   restoreFragmentRequestSchema,
   tagListSchema,
   tagSchema,
@@ -17,6 +18,7 @@ import {
   type FragmentDto,
   type FragmentSearchQuery,
   type FragmentSearchResponse,
+  type ProcessingSnapshotDto,
   type VideoSummaryDto,
   type VideoThumbnailManifestDto,
 } from '@cut-on-eight/api-contracts';
@@ -43,6 +45,7 @@ import {
   toSeconds,
   toWorkspaceSnapshot,
 } from '../domain/editor-mappers.js';
+import { selectVideoFragmentPreviews } from '../domain/video-fragment-previews.js';
 
 export class ApiFailure extends Error {
   readonly status: number;
@@ -117,6 +120,10 @@ const jsonHeaders = { 'content-type': 'application/json' };
 
 export async function loadWorkspace(): Promise<WorkspaceSnapshot> {
   return toWorkspaceSnapshot(await request('/api/workspace', workspaceSchema));
+}
+
+export async function loadProcessing(): Promise<ProcessingSnapshotDto> {
+  return request('/api/processing', processingSnapshotSchema);
 }
 
 export async function importVideo(file: File): Promise<WorkspaceSnapshot> {
@@ -203,9 +210,23 @@ export async function loadFragments(): Promise<FragmentCatalogue> {
     request('/api/videos', videoListSchema),
     request('/api/tags', tagListSchema),
   ]);
+  const videoIds = [...new Set(fragments.map(({ videoId }) => videoId))];
+  const manifests = new Map(
+    await Promise.all(
+      videoIds.map(
+        async (videoId) =>
+          [videoId, await loadCachedVideoThumbnailManifest(videoId)] as const,
+      ),
+    ),
+  );
   return {
     fragments: fragments.map((fragment, index) =>
-      toFragmentSummary(fragment, videos, index + 1),
+      toFragmentSummary(
+        fragment,
+        videos,
+        index + 1,
+        manifests.get(fragment.videoId) ?? null,
+      ),
     ),
     tags,
     diagnostics: [],
@@ -348,6 +369,38 @@ export async function loadThumbnailManifest(
   return toTimelineManifest(parsed.data, response.headers.get('etag'));
 }
 
+const readyManifests = new Map<
+  string,
+  {
+    manifest: ThumbnailManifestV1;
+    expiresAt: number;
+  }
+>();
+const pendingManifests = new Map<string, Promise<ThumbnailManifestV1 | null>>();
+
+export function loadCachedVideoThumbnailManifest(
+  videoId: string,
+): Promise<ThumbnailManifestV1 | null> {
+  const cached = readyManifests.get(videoId);
+  if (cached !== undefined && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached.manifest);
+  }
+  const pending = pendingManifests.get(videoId);
+  if (pending !== undefined) return pending;
+  const request = loadThumbnailManifest(videoId)
+    .then((manifest) => {
+      readyManifests.set(videoId, {
+        manifest,
+        expiresAt: Date.now() + 30_000,
+      });
+      return manifest;
+    })
+    .catch(() => null)
+    .finally(() => pendingManifests.delete(videoId));
+  pendingManifests.set(videoId, request);
+  return request;
+}
+
 function toTimelineManifest(
   manifest: VideoThumbnailManifestDto,
   etag: string | null,
@@ -381,9 +434,14 @@ function toFragmentSummary(
   fragment: FragmentDto,
   videos: readonly VideoSummaryDto[],
   ordinal: number,
+  manifest: ThumbnailManifestV1 | null,
 ): FragmentSummary {
   const video = videos.find(({ id }) => id === fragment.videoId);
-  const preview = fragment.preview;
+  const previews = selectVideoFragmentPreviews(
+    manifest,
+    toSeconds(fragment.startUs),
+    toSeconds(fragment.endUs),
+  );
   return {
     projectId: fragment.videoId,
     sourceFileName: video?.originalFileName ?? 'Video',
@@ -394,27 +452,15 @@ function toFragmentSummary(
         : toSeconds(video.durationUs),
     ordinal,
     segment: toSegment(fragment),
-    previews:
-      preview === null
-        ? []
-        : preview.sampleUs.map((sampleUs, index) => ({
-            href: preview.href,
-            sampleSeconds: toSeconds(sampleUs),
-            pageFileName: `preview-r${preview.revision}.webp`,
-            pageWidth: preview.frameWidth * preview.columns,
-            pageHeight: preview.frameHeight * preview.rows,
-            x: preview.frameWidth * index,
-            y: 0,
-            width: preview.frameWidth,
-            height: preview.frameHeight,
-            identity: `${preview.assetId}:${preview.revision}`,
-          })),
-    thumbnailState:
-      fragment.previewState === 'ready'
-        ? 'ready'
-        : fragment.previewState === 'failed'
-          ? 'failed'
-          : 'generating',
+    previews: previews.map((preview) => ({
+      ...preview,
+      href: thumbnailPageUrl(
+        fragment.videoId,
+        preview.pageFileName,
+        preview.identity,
+      ),
+    })),
+    thumbnailState: manifest === null ? 'generating' : 'ready',
     thumbnailJobId: null,
     frameStepSeconds:
       video?.frameRateNumerator && video.frameRateDenominator

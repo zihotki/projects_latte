@@ -26,6 +26,7 @@ import { registerAssetRoutes } from './api/asset-routes.js';
 import { registerCatalogFragmentRoutes } from './api/fragment-routes.js';
 import { registerCatalogTagRoutes } from './api/tag-routes.js';
 import { registerSearchRoutes } from './api/search-routes.js';
+import { registerProcessingRoutes } from './api/processing-routes.js';
 
 export interface CreateAppOptions {
   readonly config?: ServerConfig;
@@ -83,6 +84,7 @@ export function createApp(options: CreateAppOptions = {}): CutOnEightApp {
     registerCatalogFragmentRoutes(app, options.runtime);
     registerCatalogTagRoutes(app, options.runtime);
     registerSearchRoutes(app, options.runtime);
+    registerProcessingRoutes(app, options.runtime);
     app.addHook('onClose', async () => options.runtime?.close());
   } else {
     registerWorkspaceRoutes(app, services!);

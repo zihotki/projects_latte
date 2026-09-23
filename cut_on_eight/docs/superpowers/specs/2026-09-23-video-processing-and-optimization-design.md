@@ -18,6 +18,15 @@ indexing is not part of the processing view.
 4. Review replay compatibility before shrinking new event payloads. This is a
    separate follow-up, not a prerequisite for the processing view.
 
+## Rollout decision
+
+The search API and historical data still refer to per-fragment preview assets.
+The first cutover uses video bundles in fragment and search cards and stops
+queuing new preview jobs. The old reader and worker remain temporarily so
+existing assets and queued jobs still work. Remove those paths and derived
+records in a separate compatibility cleanup after the new display is checked
+with real media. This does not add new per-fragment generation work.
+
 No multi-user model, per-job progress percentage, completed-job history,
 search queue, or manual queue controls are part of this work.
 

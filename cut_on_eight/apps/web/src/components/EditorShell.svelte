@@ -15,6 +15,7 @@
     statusState,
     onViewChange,
     status,
+    processing,
     alerts,
     editor,
     library,
@@ -27,6 +28,7 @@
     statusState: 'ready' | 'working' | 'attention';
     onViewChange: (view: ActiveView) => void;
     status: Snippet;
+    processing: Snippet;
     alerts: Snippet;
     editor: Snippet;
     library: Snippet;
@@ -35,7 +37,14 @@
   } = $props();
 </script>
 
-<AppBar {activeView} {statusLabel} {statusState} {onViewChange} {status}>
+<AppBar
+  {activeView}
+  {statusLabel}
+  {statusState}
+  {onViewChange}
+  {status}
+  {processing}
+>
   {#snippet help()}
     <ContextHelp {mode} />
   {/snippet}
