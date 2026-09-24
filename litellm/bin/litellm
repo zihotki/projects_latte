@@ -43,6 +43,36 @@ is_running() {
   [[ -n "$(compose ps --status running -q "$1")" ]]
 }
 
+running_backup_dir() {
+  local postgres_id
+  postgres_id="$(compose ps --status running -q postgres)"
+  [[ -n "$postgres_id" ]] || { printf 'PostgreSQL is not running.\n' >&2; return 1; }
+  docker inspect --format '{{json .Mounts}}' "$postgres_id" | python3 -c '
+import json
+import os
+import sys
+
+mounts = json.load(sys.stdin)
+sources = [m.get("Source") for m in mounts if m.get("Type") == "bind" and m.get("Destination") == "/var/lib/pgbackrest"]
+if len(sources) != 1 or not sources[0]:
+    print("Running PostgreSQL has no unique backup repository bind mount.", file=sys.stderr)
+    sys.exit(1)
+source = sources[0]
+if sys.platform == "darwin" and source.startswith("/host_mnt/"):
+    source = source[len("/host_mnt"):]
+print(os.path.realpath(source))
+'
+}
+
+require_matching_backup_dir() {
+  local mounted_dir
+  mounted_dir="$(running_backup_dir)" || return 1
+  [[ "$mounted_dir" == "$LITELLM_BACKUP_DIR" ]] || {
+    printf 'Backup directory differs from the running PostgreSQL mount: %s\n' "$mounted_dir" >&2
+    return 1
+  }
+}
+
 wait_postgres() {
   local i
   for ((i=0; i<90; i++)); do
@@ -80,7 +110,10 @@ start() {
   local postgres_before proxy_before postgres_was_running=0 success=0
   postgres_before="$(compose ps -aq postgres)"
   proxy_before="$(compose ps -aq proxy)"
-  if is_running postgres; then postgres_was_running=1; fi
+  if is_running postgres; then
+    postgres_was_running=1
+    require_matching_backup_dir
+  fi
   cleanup_start() {
     if (( success == 0 )); then
       if [[ -z "$proxy_before" ]]; then compose rm --stop --force proxy >/dev/null 2>&1 || true
@@ -110,12 +143,17 @@ backup() {
   require_docker
   is_running postgres || { printf 'PostgreSQL is not running.\n' >&2; return 1; }
   resolve_backup_dir
+  require_matching_backup_dir
   backup_run
 }
 
 status() {
   require_docker
-  resolve_backup_dir
+  if is_running postgres; then
+    LITELLM_BACKUP_DIR="$(running_backup_dir)" || return 1
+  else
+    resolve_backup_dir
+  fi
   local service state info summary
   for service in postgres proxy; do
     state="$(compose ps --format json "$service" 2>/dev/null | python3 -c 'import json,sys; s=sys.stdin.read().strip(); print(json.loads(s.splitlines()[0]).get("State", "stopped") if s else "stopped")')"

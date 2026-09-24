@@ -5,8 +5,9 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 root_dir="$(cd "$project_dir/.." && pwd)"
 command="$project_dir/bin/litellm"
 test_dir="$root_dir/.local/litellm-smoke-$$"
-mkdir -p "$test_dir/bin" "$test_dir/backups" "$test_dir/public" "$test_dir/unwritable"
+mkdir -p "$test_dir/bin" "$test_dir/backups" "$test_dir/other-backups" "$test_dir/public" "$test_dir/unwritable"
 chmod 700 "$test_dir/backups"
+chmod 700 "$test_dir/other-backups"
 chmod 755 "$test_dir/public"
 chmod 500 "$test_dir/unwritable"
 export LITELLM_BACKUP_DIR="$test_dir/backups"
@@ -49,6 +50,15 @@ assert_stopped() {
   [[ -z "$(compose ps --status running -q postgres)" ]]
 }
 cleanup() {
+  local result=$?
+  if (( result != 0 )); then
+    for log in "$test_dir"/{first,second,third,mismatched-backup,mismatched-status,manual}.log; do
+      if [[ -f "$log" ]]; then
+        printf '%s:\n' "$(basename "$log")" >&2
+        tail -n 10 "$log" >&2
+      fi
+    done
+  fi
   unset LITELLM_SMOKE_FAIL_BACKUP
   compose down --volumes --remove-orphans >/dev/null 2>&1 || true
   rm -rf "$test_dir"
@@ -110,6 +120,16 @@ second_type="$(compose exec -T --user postgres postgres pgbackrest --stanza=lite
 "$command" start > "$test_dir/third.log" 2>&1
 grep -q 'already running' "$test_dir/third.log"
 [[ "$(count_backups)" == 2 ]]
+if LITELLM_BACKUP_DIR="$test_dir/other-backups" "$command" backup > "$test_dir/mismatched-backup.log" 2>&1; then
+  printf 'Backup accepted a path different from the running PostgreSQL mount.\n' >&2; exit 1
+fi
+grep -q 'Backup directory differs from the running PostgreSQL mount' "$test_dir/mismatched-backup.log"
+[[ "$(count_backups)" == 2 ]]
+LITELLM_BACKUP_DIR="$test_dir/other-backups" "$command" status > "$test_dir/mismatched-status.log" 2>&1
+grep -Fxq "Backup directory: $test_dir/backups" "$test_dir/mismatched-status.log"
+if grep -Fxq "Backup directory: $test_dir/other-backups" "$test_dir/mismatched-status.log"; then
+  printf 'Status reported the requested path instead of the live mount.\n' >&2; exit 1
+fi
 "$command" backup > "$test_dir/manual.log" 2>&1
 grep -q 'Starting incr backup.' "$test_dir/manual.log"
 [[ "$(count_backups)" == 3 ]]
@@ -135,4 +155,4 @@ if LITELLM_SMOKE_FAIL_BACKUP=yes "$command" start > "$test_dir/failure.log" 2>&1
 fi
 assert_stopped
 [[ "$(count_backups)" == 3 ]]
-printf 'LiteLLM smoke passed: full, incremental, no duplicate, seven-day choice, failure cleanup, private backup, and secret boundary.\n'
+printf 'LiteLLM smoke passed: full, incremental, no duplicate, seven-day choice, failure cleanup, live mount check, private backup, and secret boundary.\n'
