@@ -52,7 +52,7 @@ assert_stopped() {
 cleanup() {
   local result=$?
   if (( result != 0 )); then
-    for log in "$test_dir"/{first,second,third,mismatched-backup,mismatched-status,manual}.log; do
+    for log in "$test_dir"/{first,second,third,mismatched-backup,mismatched-status,manual,restore,restart}.log; do
       if [[ -f "$log" ]]; then
         printf '%s:\n' "$(basename "$log")" >&2
         tail -n 10 "$log" >&2
@@ -60,7 +60,8 @@ cleanup() {
     done
   fi
   unset LITELLM_SMOKE_FAIL_BACKUP
-  compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+  compose down --remove-orphans >/dev/null 2>&1 || true
+  "$DOCKER_REAL" volume rm "${COMPOSE_PROJECT_NAME}_postgres-data" >/dev/null 2>&1 || true
   rm -rf "$test_dir"
 }
 trap cleanup EXIT
@@ -130,6 +131,23 @@ grep -Fxq "Backup directory: $test_dir/backups" "$test_dir/mismatched-status.log
 if grep -Fxq "Backup directory: $test_dir/other-backups" "$test_dir/mismatched-status.log"; then
   printf 'Status reported the requested path instead of the live mount.\n' >&2; exit 1
 fi
+key_alias="litellm-smoke-$$"
+key_response="$(curl --silent --show-error --fail \
+  -X POST http://127.0.0.1:4000/key/generate \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer sk-local-smoke-master-1234567890' \
+  -d "{\"key_alias\":\"$key_alias\",\"models\":[\"agent-cheap\"]}")"
+printf '%s' "$key_response" | python3 -c 'import json,sys; assert json.load(sys.stdin).get("key")'
+unset key_response
+has_key_alias() {
+  local count
+  count="$(printf '%s\n' \
+    'SELECT count(*) FROM "LiteLLM_VerificationToken" WHERE key_alias = :'"'"'alias'"'"';' \
+    | compose exec -T --user postgres postgres \
+      psql -X -v ON_ERROR_STOP=1 -v "alias=$key_alias" -U litellm -d litellm -At)"
+  [[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]]
+}
+has_key_alias
 "$command" backup > "$test_dir/manual.log" 2>&1
 grep -q 'Starting incr backup.' "$test_dir/manual.log"
 [[ "$(count_backups)" == 3 ]]
@@ -149,10 +167,24 @@ summary="$(printf '%s' '[{"name":"litellm","backup":[{"type":"full","timestamp":
 summary="$(printf '%s' '[{"name":"litellm","backup":[{"type":"full","timestamp":{"stop":1600000000}}]}]' | backup_summary 1600604799)"
 [[ "$summary" == *'|incr' ]]
 
+live_volume="${COMPOSE_PROJECT_NAME}_postgres-data"
+volume_identity="$("$DOCKER_REAL" volume inspect --format '{{.Name}}:{{.CreatedAt}}' "$live_volume")"
 "$command" stop > "$test_dir/stop2.log" 2>&1
+"$command" restore-check --expect-key-alias "$key_alias" > "$test_dir/restore.log" 2>&1 || {
+  cat "$test_dir/restore.log" >&2; exit 1
+}
+grep -q 'Isolated restore passed' "$test_dir/restore.log"
+[[ "$("$DOCKER_REAL" volume inspect --format '{{.Name}}:{{.CreatedAt}}' "$live_volume")" == "$volume_identity" ]]
+if "$DOCKER_REAL" volume ls --format '{{.Name}}' | grep -Fq "${COMPOSE_PROJECT_NAME}-restore-"; then
+  printf 'A temporary restore volume remains.\n' >&2; exit 1
+fi
+"$command" start > "$test_dir/restart.log" 2>&1 || { cat "$test_dir/restart.log" >&2; exit 1; }
+has_key_alias
+[[ "$("$DOCKER_REAL" volume inspect --format '{{.Name}}:{{.CreatedAt}}' "$live_volume")" == "$volume_identity" ]]
+"$command" stop > "$test_dir/stop3.log" 2>&1
 if LITELLM_SMOKE_FAIL_BACKUP=yes "$command" start > "$test_dir/failure.log" 2>&1; then
   printf 'Injected backup failure did not stop startup.\n' >&2; exit 1
 fi
 assert_stopped
-[[ "$(count_backups)" == 3 ]]
-printf 'LiteLLM smoke passed: full, incremental, no duplicate, seven-day choice, failure cleanup, live mount check, private backup, and secret boundary.\n'
+[[ "$(count_backups)" == 4 ]]
+printf 'LiteLLM smoke passed: full/incremental backups, virtual key restore, live volume identity, failure cleanup, live mount check, private backup, and secret boundary.\n'

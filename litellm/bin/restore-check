@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+set +x
+
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+compose_file="$project_dir/compose.yaml"
+image=projectslatte/litellm-postgres:18.6-trixie-pgbackrest-2.55.1
+expected_alias=''
+
+if (( $# != 0 )); then
+  if (( $# != 2 )) || [[ "$1" != --expect-key-alias || -z "$2" ]]; then
+    printf 'Usage: %s [--expect-key-alias ALIAS]\n' "$0" >&2
+    exit 2
+  fi
+  expected_alias="$2"
+fi
+
+compose_metadata="$(
+  docker compose -f "$compose_file" config --format json | python3 -c '
+import json
+import sys
+config = json.load(sys.stdin)
+print(config["name"], config["networks"]["default"]["name"], config["volumes"]["postgres-data"]["name"])
+'
+)"
+read -r project_name network_name live_volume <<< "$compose_metadata"
+
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  docker compose -f "$compose_file" build postgres >/dev/null
+fi
+
+restore_volume="${project_name}-restore-$(date +%s)-$$-$RANDOM"
+restore_container="${restore_volume}-postgres"
+[[ "$restore_volume" != "$live_volume" ]] || { printf 'Restore volume matches the live volume.\n' >&2; exit 1; }
+created_network=0
+created_volume=0
+created_container=0
+cleanup() {
+  local result=$?
+  trap - EXIT
+  if (( created_container )); then docker rm --force "$restore_container" >/dev/null 2>&1 || true; fi
+  if (( created_volume )); then docker volume rm "$restore_volume" >/dev/null || result=1; fi
+  if (( created_network )); then docker network rm "$network_name" >/dev/null || result=1; fi
+  exit "$result"
+}
+trap cleanup EXIT
+
+if ! docker network inspect "$network_name" >/dev/null 2>&1; then
+  docker network create \
+    --label "com.docker.compose.project=$project_name" \
+    --label com.docker.compose.network=default \
+    "$network_name" >/dev/null
+  created_network=1
+fi
+if docker volume inspect "$restore_volume" >/dev/null 2>&1; then
+  printf 'Temporary restore volume name already exists.\n' >&2
+  exit 1
+fi
+if docker container inspect "$restore_container" >/dev/null 2>&1; then
+  printf 'Temporary restore container name already exists.\n' >&2
+  exit 1
+fi
+docker volume create "$restore_volume" >/dev/null
+created_volume=1
+
+# The volume is empty. Prepare only its PostgreSQL directory before restore.
+docker run --rm --volume "$restore_volume:/var/lib/postgresql" \
+  --entrypoint sh "$image" -c \
+  'mkdir -p /var/lib/postgresql/18/docker && chown -R postgres:postgres /var/lib/postgresql'
+
+docker run --rm --user postgres \
+  --volume "$restore_volume:/var/lib/postgresql" \
+  --volume "$LITELLM_BACKUP_DIR:/var/lib/pgbackrest:ro" \
+  --entrypoint pgbackrest "$image" --stanza=litellm restore
+
+created_container=1
+docker run --detach --name "$restore_container" --network "$network_name" \
+  --user postgres \
+  --volume "$restore_volume:/var/lib/postgresql" \
+  --volume "$LITELLM_BACKUP_DIR:/var/lib/pgbackrest:ro" \
+  "$image" postgres -c archive_mode=off >/dev/null
+
+ready=0
+for (( i=0; i<90; i++ )); do
+  if docker exec --user postgres "$restore_container" \
+    pg_isready -U litellm -d litellm >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  if [[ "$(docker inspect --format '{{.State.Running}}' "$restore_container")" != true ]]; then
+    break
+  fi
+  sleep 2
+done
+if (( ! ready )); then
+  printf 'Restored PostgreSQL did not become ready.\n' >&2
+  docker logs --tail 30 "$restore_container" >&2 || true
+  exit 1
+fi
+
+query_result="$(docker exec --user postgres "$restore_container" \
+  psql -X -v ON_ERROR_STOP=1 -U litellm -d litellm -Atqc 'SELECT 1')"
+[[ "$query_result" == 1 ]] || { printf 'Restored PostgreSQL query failed.\n' >&2; exit 1; }
+
+if [[ -n "$expected_alias" ]]; then
+  count="$(printf '%s\n' \
+    'SELECT count(*) FROM "LiteLLM_VerificationToken" WHERE key_alias = :'"'"'alias'"'"';' \
+    | docker exec -i --user postgres "$restore_container" \
+      psql -X -v ON_ERROR_STOP=1 -v "alias=$expected_alias" -U litellm -d litellm -At)"
+  [[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] || {
+    printf 'Expected virtual key alias is absent from restored PostgreSQL.\n' >&2
+    exit 1
+  }
+fi
+
+printf 'Isolated restore passed: PostgreSQL accepted a query.\n'

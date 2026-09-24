@@ -7,6 +7,7 @@ A repository for small, focused software projects.
 | Project | Description |
 | --- | --- |
 | [Cut on Eight](cut_on_eight/README.md) | Local browser-based dance-video segmentation and cataloguing. |
+| [LiteLLM gateway](litellm/README.md) | Local AI model gateway with per-app keys and PostgreSQL backups. |
 
 ## Working with a project
 

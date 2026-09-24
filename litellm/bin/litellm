@@ -7,7 +7,7 @@ LITELLM_COMPOSE_FILE="$project_dir/compose.yaml"
 source "$project_dir/lib/backup.sh"
 
 usage() {
-  printf 'Usage: %s start|status|backup|stop\n' "$0" >&2
+  printf 'Usage: %s start|status|backup|stop|restore-check [--expect-key-alias ALIAS]\n' "$0" >&2
   exit 2
 }
 
@@ -185,10 +185,20 @@ stop() {
   compose down
 }
 
+restore_check() {
+  require_docker
+  resolve_backup_dir
+  if is_running postgres; then
+    require_matching_backup_dir
+  fi
+  "$project_dir/bin/restore-check" "$@"
+}
+
 case "${1:-}" in
   start) start ;;
   status) status ;;
   backup) backup ;;
   stop) stop ;;
+  restore-check) shift; restore_check "$@" ;;
   *) usage ;;
 esac
