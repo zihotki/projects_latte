@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+set -euo pipefail
+set +x
+
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LITELLM_COMPOSE_FILE="$project_dir/compose.yaml"
+source "$project_dir/lib/backup.sh"
+
+usage() {
+  printf 'Usage: %s start|status|backup|stop\n' "$0" >&2
+  exit 2
+}
+
+compose() {
+  docker compose -f "$LITELLM_COMPOSE_FILE" "$@"
+}
+
+require_docker() {
+  command -v docker >/dev/null || { printf 'Docker is not installed.\n' >&2; return 1; }
+  docker info >/dev/null 2>&1 || { printf 'Docker daemon is unavailable.\n' >&2; return 1; }
+}
+
+resolve_backup_dir() {
+  local backup_dir="${LITELLM_BACKUP_DIR:-$HOME/.local/share/projectslatte/litellm-backups}"
+  [[ "$backup_dir" = /* ]] || { printf 'Backup path must be absolute.\n' >&2; return 1; }
+  mkdir -p -m 700 "$backup_dir" || { printf 'Cannot create backup directory.\n' >&2; return 1; }
+  LITELLM_BACKUP_DIR="$(cd "$backup_dir" && pwd -P)" || return 1
+  export LITELLM_BACKUP_DIR
+  local mode owner
+  mode="$(stat -f '%Lp' "$LITELLM_BACKUP_DIR" 2>/dev/null || stat -c '%a' "$LITELLM_BACKUP_DIR")" || return 1
+  owner="$(stat -f '%u' "$LITELLM_BACKUP_DIR" 2>/dev/null || stat -c '%u' "$LITELLM_BACKUP_DIR")" || return 1
+  [[ "$owner" == "$(id -u)" && "$mode" == 700 ]] || {
+    printf 'Backup directory must be owned by you and have mode 700: %s\n' "$LITELLM_BACKUP_DIR" >&2
+    return 1
+  }
+  [[ -w "$LITELLM_BACKUP_DIR" ]] || { printf 'Backup directory is not writable.\n' >&2; return 1; }
+  local probe="$LITELLM_BACKUP_DIR/.write-check-$$"
+  ( umask 077; : > "$probe" ) || { printf 'Backup directory is not writable.\n' >&2; return 1; }
+  rm -f "$probe"
+}
+
+is_running() {
+  [[ -n "$(compose ps --status running -q "$1")" ]]
+}
+
+wait_postgres() {
+  local i
+  for ((i=0; i<90; i++)); do
+    if [[ "$(compose ps --format json postgres 2>/dev/null | python3 -c 'import json,sys; text=sys.stdin.read().strip(); print(any(c.get("Health") == "healthy" for c in ([json.loads(x) for x in text.splitlines()] if text else [])))' 2>/dev/null)" == True ]]; then
+      return 0
+    fi
+    is_running postgres || break
+    sleep 2
+  done
+  printf 'PostgreSQL did not become healthy.\n' >&2
+  return 1
+}
+
+wait_proxy() {
+  local i
+  for ((i=0; i<90; i++)); do
+    if curl --silent --show-error --fail --max-time 2 http://127.0.0.1:4000/health/liveliness >/dev/null 2>&1; then
+      return 0
+    fi
+    is_running proxy || break
+    sleep 2
+  done
+  printf 'LiteLLM did not become ready. Check docker compose logs proxy.\n' >&2
+  return 1
+}
+
+start() {
+  require_docker
+  if is_running proxy; then
+    printf 'LiteLLM is already running.\n'
+    return 0
+  fi
+  source "$project_dir/lib/secrets.sh"
+  resolve_backup_dir
+  local postgres_before proxy_before postgres_was_running=0 success=0
+  postgres_before="$(compose ps -aq postgres)"
+  proxy_before="$(compose ps -aq proxy)"
+  if is_running postgres; then postgres_was_running=1; fi
+  cleanup_start() {
+    if (( success == 0 )); then
+      if [[ -z "$proxy_before" ]]; then compose rm --stop --force proxy >/dev/null 2>&1 || true
+      else compose stop proxy >/dev/null 2>&1 || true; fi
+      if (( postgres_was_running == 0 )); then
+        if [[ -z "$postgres_before" ]]; then compose rm --stop --force postgres >/dev/null 2>&1 || true
+        else compose stop postgres >/dev/null 2>&1 || true; fi
+      fi
+    fi
+  }
+  trap cleanup_start EXIT
+  compose up -d --no-deps postgres
+  wait_postgres
+  if ! compose exec -T --user postgres postgres pgbackrest --stanza=litellm check >/dev/null 2>&1; then
+    compose exec -T --user postgres postgres pgbackrest --stanza=litellm stanza-create
+    compose exec -T --user postgres postgres pgbackrest --stanza=litellm check
+  fi
+  backup_run
+  compose up -d --no-deps proxy
+  wait_proxy
+  success=1
+  trap - EXIT
+  printf 'LiteLLM is ready at http://127.0.0.1:4000/v1\n'
+}
+
+backup() {
+  require_docker
+  is_running postgres || { printf 'PostgreSQL is not running.\n' >&2; return 1; }
+  resolve_backup_dir
+  backup_run
+}
+
+status() {
+  require_docker
+  resolve_backup_dir
+  local service state info summary
+  for service in postgres proxy; do
+    state="$(compose ps --format json "$service" 2>/dev/null | python3 -c 'import json,sys; s=sys.stdin.read().strip(); print(json.loads(s.splitlines()[0]).get("State", "stopped") if s else "stopped")')"
+    printf '%s: %s\n' "$service" "$state"
+  done
+  printf 'Backup directory: %s\n' "$LITELLM_BACKUP_DIR"
+  if is_running postgres; then
+    info="$(backup_info)" || return 1
+  else
+    if [[ -z "$(find "$LITELLM_BACKUP_DIR" -mindepth 1 -print -quit)" ]]; then
+      printf 'Latest backup: none none\n'
+      return 0
+    fi
+    if ! docker image inspect projectslatte/litellm-postgres:18.6-trixie-pgbackrest-2.55.1 >/dev/null 2>&1; then
+      compose build postgres >/dev/null
+    fi
+    info="$(docker run --rm --volume "$LITELLM_BACKUP_DIR:/var/lib/pgbackrest:ro" \
+      --entrypoint pgbackrest projectslatte/litellm-postgres:18.6-trixie-pgbackrest-2.55.1 \
+      --stanza=litellm info --output=json)" || return 1
+  fi
+  summary="$(printf '%s' "$info" | backup_summary)" || return 1
+  IFS='|' read -r backup_type backup_time backup_choice <<< "$summary"
+  printf 'Latest backup: %s %s\n' "$backup_type" "$backup_time"
+}
+
+stop() {
+  require_docker
+  # Compose does not read the secret source values for down.
+  compose down
+}
+
+case "${1:-}" in
+  start) start ;;
+  status) status ;;
+  backup) backup ;;
+  stop) stop ;;
+  *) usage ;;
+esac
