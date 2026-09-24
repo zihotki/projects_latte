@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+set +x
+
+read_secret() {
+  local name="$1"
+  local secret_path="/run/secrets/$name"
+  local value
+
+  if [[ ! -r "$secret_path" ]]; then
+    printf 'Required LiteLLM secret is unavailable: %s\n' "$name" >&2
+    return 1
+  fi
+
+  value="$(<"$secret_path")"
+  if [[ -z "$value" ]]; then
+    printf 'Required LiteLLM secret is empty: %s\n' "$name" >&2
+    return 1
+  fi
+
+  printf '%s' "$value"
+}
+
+if ! LITELLM_MASTER_KEY="$(read_secret litellm_master_key)"; then
+  exit 1
+fi
+export LITELLM_MASTER_KEY
+
+if ! LITELLM_SALT_KEY="$(read_secret litellm_salt_key)"; then
+  exit 1
+fi
+export LITELLM_SALT_KEY
+
+if ! postgres_password="$(read_secret postgres_password)"; then
+  exit 1
+fi
+
+if ! OPENROUTER_API_KEY="$(read_secret openrouter_api_key)"; then
+  exit 1
+fi
+export OPENROUTER_API_KEY
+
+postgres_password_urlencoded="$(
+  printf '%s' "$postgres_password" \
+    | python3 -c 'from urllib.parse import quote; import sys; print(quote(sys.stdin.read(), safe=""))'
+)"
+unset postgres_password
+export DATABASE_URL="postgresql://litellm:${postgres_password_urlencoded}@postgres:5432/litellm"
+unset postgres_password_urlencoded
+
+exec "$@"
