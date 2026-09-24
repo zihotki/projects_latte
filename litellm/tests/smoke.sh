@@ -239,12 +239,18 @@ for (( i=0; i<100; i++ )); do
   sleep 0.1
 done
 [[ -f "$block.entered" ]] || { printf 'Timed out waiting for blocked manual backup.\n' >&2; exit 1; }
+cp -R "$project_dir" "$test_dir/other-checkout"
+"$test_dir/other-checkout/bin/litellm" status > "$test_dir/other-checkout-status.log" 2>&1 &
+status_pid=$!
 "$command" stop > "$test_dir/locked-stop.log" 2>&1 &
 stop_pid=$!
 sleep 1
+kill -0 "$status_pid" || { printf 'Status in another checkout did not wait for the lock.\n' >&2; exit 1; }
 kill -0 "$stop_pid" || { printf 'Stop did not wait for the running backup.\n' >&2; exit 1; }
 touch "$block.release"
 wait "$backup_pid" || { cat "$test_dir/locked-backup.log" >&2; exit 1; }
+wait "$status_pid" || { cat "$test_dir/other-checkout-status.log" >&2; exit 1; }
 wait "$stop_pid" || { cat "$test_dir/locked-stop.log" >&2; exit 1; }
+grep -q 'Latest backup: incr' "$test_dir/other-checkout-status.log"
 assert_stopped
-printf 'LiteLLM smoke passed: full/incremental backups, virtual key restore, live volume identity, failure cleanup, missing repository guard, serialized start, live mount check, private backup, and secret boundary.\n'
+printf 'LiteLLM smoke passed: full/incremental backups, virtual key restore, live volume identity, failure cleanup, missing repository guard, cross-checkout lock, live mount check, private backup, and secret boundary.\n'

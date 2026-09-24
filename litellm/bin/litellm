@@ -21,14 +21,22 @@ require_docker() {
 }
 
 acquire_lock() {
-  local lock_dir="$project_dir/../.local/litellm"
+  local lock_dir="$HOME/.local/state/projectslatte/litellm-locks" project_name owner mode
+  command -v docker >/dev/null || { printf 'Docker is not installed.\n' >&2; return 1; }
+  project_name="$(compose config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')" || return 1
+  [[ "$project_name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || {
+    printf 'Invalid Docker Compose project name for the LiteLLM lock.\n' >&2; return 1;
+  }
   mkdir -p -m 700 "$lock_dir"
-  [[ "$(stat -f '%u' "$lock_dir" 2>/dev/null || stat -c '%u' "$lock_dir")" == "$(id -u)" ]] || {
-    printf 'LiteLLM lock directory is not owned by you.\n' >&2; return 1;
+  owner="$(stat -f '%u' "$lock_dir" 2>/dev/null || stat -c '%u' "$lock_dir")" || return 1
+  mode="$(stat -f '%Lp' "$lock_dir" 2>/dev/null || stat -c '%a' "$lock_dir")" || return 1
+  [[ ! -L "$lock_dir" && "$owner" == "$(id -u)" && "$mode" == 700 ]] || {
+    printf 'LiteLLM lock directory must be owned by you and have mode 700: %s\n' "$lock_dir" >&2
+    return 1
   }
   # flock locks the shared open file description. The Bash process keeps it
   # open after Python exits, until the command and its cleanup have finished.
-  exec 9> "$lock_dir/session.lock"
+  exec 9> "$lock_dir/$project_name.lock"
   python3 - 9 <<'PY'
 import fcntl
 import sys
@@ -271,7 +279,7 @@ case "${1:-}" in
     (( $# == 1 )) || { (( $# == 2 )) && [[ "$2" == --reinitialize-backup-repo ]] || usage; }
     acquire_lock
     if (( $# == 2 )); then start yes; else start no; fi ;;
-  status) status ;;
+  status) acquire_lock; status ;;
   backup) acquire_lock; backup ;;
   stop) acquire_lock; stop ;;
   restore-check) acquire_lock; shift; restore_check "$@" ;;
