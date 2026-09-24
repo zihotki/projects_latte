@@ -7,7 +7,7 @@ LITELLM_COMPOSE_FILE="$project_dir/compose.yaml"
 source "$project_dir/lib/backup.sh"
 
 usage() {
-  printf 'Usage: %s start|status|backup|stop|restore-check [--expect-key-alias ALIAS]\n' "$0" >&2
+  printf 'Usage: %s start [--reinitialize-backup-repo]|status|backup|stop|restore-check [--expect-key-alias ALIAS]\n' "$0" >&2
   exit 2
 }
 
@@ -20,10 +20,36 @@ require_docker() {
   docker info >/dev/null 2>&1 || { printf 'Docker daemon is unavailable.\n' >&2; return 1; }
 }
 
+acquire_lock() {
+  local lock_dir="$project_dir/../.local/litellm"
+  mkdir -p -m 700 "$lock_dir"
+  [[ "$(stat -f '%u' "$lock_dir" 2>/dev/null || stat -c '%u' "$lock_dir")" == "$(id -u)" ]] || {
+    printf 'LiteLLM lock directory is not owned by you.\n' >&2; return 1;
+  }
+  # flock locks the shared open file description. The Bash process keeps it
+  # open after Python exits, until the command and its cleanup have finished.
+  exec 9> "$lock_dir/session.lock"
+  python3 - 9 <<'PY'
+import fcntl
+import sys
+fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX)
+PY
+}
+
+live_volume_exists() {
+  local volume
+  volume="$(compose config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["volumes"]["postgres-data"]["name"])')" || return 1
+  docker volume inspect "$volume" >/dev/null 2>&1
+}
+
 resolve_backup_dir() {
+  local create="${1:-no}"
   local backup_dir="${LITELLM_BACKUP_DIR:-$HOME/.local/share/projectslatte/litellm-backups}"
   [[ "$backup_dir" = /* ]] || { printf 'Backup path must be absolute.\n' >&2; return 1; }
-  mkdir -p -m 700 "$backup_dir" || { printf 'Cannot create backup directory.\n' >&2; return 1; }
+  if [[ "$create" == yes ]]; then
+    mkdir -p -m 700 "$backup_dir" || { printf 'Cannot create backup directory.\n' >&2; return 1; }
+  fi
+  [[ -d "$backup_dir" ]] || { printf 'Backup repository directory is missing: %s\n' "$backup_dir" >&2; return 1; }
   LITELLM_BACKUP_DIR="$(cd "$backup_dir" && pwd -P)" || return 1
   export LITELLM_BACKUP_DIR
   local mode owner
@@ -33,10 +59,21 @@ resolve_backup_dir() {
     printf 'Backup directory must be owned by you and have mode 700: %s\n' "$LITELLM_BACKUP_DIR" >&2
     return 1
   }
+}
+
+require_writable_backup_dir() {
   [[ -w "$LITELLM_BACKUP_DIR" ]] || { printf 'Backup directory is not writable.\n' >&2; return 1; }
   local probe="$LITELLM_BACKUP_DIR/.write-check-$$"
   ( umask 077; : > "$probe" ) || { printf 'Backup directory is not writable.\n' >&2; return 1; }
   rm -f "$probe"
+}
+
+repository_has_metadata() {
+  [[ -f "$LITELLM_BACKUP_DIR/backup/litellm/backup.info" && -f "$LITELLM_BACKUP_DIR/archive/litellm/archive.info" ]]
+}
+
+repository_is_empty() {
+  [[ -z "$(find "$LITELLM_BACKUP_DIR" -mindepth 1 -print -quit)" ]]
 }
 
 is_running() {
@@ -100,13 +137,37 @@ wait_proxy() {
 }
 
 start() {
+  local reinitialize="${1:-no}"
   require_docker
   if is_running proxy; then
+    [[ "$reinitialize" == no ]] || { printf 'Stop the gateway before reinitializing its backup repository.\n' >&2; return 1; }
+    LITELLM_BACKUP_DIR="$(running_backup_dir)" || return 1
+    resolve_backup_dir
+    repository_has_metadata || { printf 'Backup repository is missing or incomplete.\n' >&2; return 1; }
     printf 'LiteLLM is already running.\n'
     return 0
   fi
   source "$project_dir/lib/secrets.sh"
-  resolve_backup_dir
+  local volume_exists=0 create_stanza=0
+  if live_volume_exists; then volume_exists=1; fi
+  if [[ "$reinitialize" == yes ]]; then
+    (( volume_exists )) || { printf 'No live database volume exists; reinitialization is unnecessary.\n' >&2; return 1; }
+    is_running postgres && { printf 'Stop PostgreSQL before reinitializing the backup repository.\n' >&2; return 1; }
+    resolve_backup_dir yes
+    repository_is_empty || { printf 'Backup repository is not empty; preserve it before reinitialization.\n' >&2; return 1; }
+    create_stanza=1
+  else
+    if (( volume_exists )); then resolve_backup_dir; else resolve_backup_dir yes; fi
+    if repository_has_metadata; then
+      :
+    elif (( volume_exists )) || ! repository_is_empty; then
+      printf 'Backup repository is missing or incomplete. Restore it, or see the explicit reinitialization guide.\n' >&2
+      return 1
+    else
+      create_stanza=1
+    fi
+  fi
+  require_writable_backup_dir
   local postgres_before proxy_before postgres_was_running=0 success=0
   postgres_before="$(compose ps -aq postgres)"
   proxy_before="$(compose ps -aq proxy)"
@@ -127,10 +188,10 @@ start() {
   trap cleanup_start EXIT
   compose up -d --no-deps postgres
   wait_postgres
-  if ! compose exec -T --user postgres postgres pgbackrest --stanza=litellm check >/dev/null 2>&1; then
+  if (( create_stanza )); then
     compose exec -T --user postgres postgres pgbackrest --stanza=litellm stanza-create
-    compose exec -T --user postgres postgres pgbackrest --stanza=litellm check
   fi
+  compose exec -T --user postgres postgres pgbackrest --stanza=litellm check
   backup_run
   compose up -d --no-deps proxy
   wait_proxy
@@ -144,6 +205,8 @@ backup() {
   is_running postgres || { printf 'PostgreSQL is not running.\n' >&2; return 1; }
   resolve_backup_dir
   require_matching_backup_dir
+  repository_has_metadata || { printf 'Backup repository is missing or incomplete.\n' >&2; return 1; }
+  require_writable_backup_dir
   backup_run
 }
 
@@ -151,6 +214,7 @@ status() {
   require_docker
   if is_running postgres; then
     LITELLM_BACKUP_DIR="$(running_backup_dir)" || return 1
+    resolve_backup_dir
   else
     resolve_backup_dir
   fi
@@ -161,14 +225,21 @@ status() {
   done
   printf 'Backup directory: %s\n' "$LITELLM_BACKUP_DIR"
   if is_running postgres; then
+    repository_has_metadata || { printf 'Backup repository is missing or incomplete.\n' >&2; return 1; }
     info="$(backup_info)" || return 1
   else
-    if [[ -z "$(find "$LITELLM_BACKUP_DIR" -mindepth 1 -print -quit)" ]]; then
+    if repository_is_empty; then
+      if live_volume_exists; then
+        printf 'Backup repository is empty while the live database volume exists.\n' >&2
+        return 1
+      fi
       printf 'Latest backup: none none\n'
       return 0
     fi
+    repository_has_metadata || { printf 'Backup repository is incomplete.\n' >&2; return 1; }
     if ! docker image inspect projectslatte/litellm-postgres:18.6-trixie-pgbackrest-2.55.1 >/dev/null 2>&1; then
-      compose build postgres >/dev/null
+      printf 'PostgreSQL image is absent. Run start to build it before reading backup metadata.\n' >&2
+      return 1
     fi
     info="$(docker run --rm --volume "$LITELLM_BACKUP_DIR:/var/lib/pgbackrest:ro" \
       --entrypoint pgbackrest projectslatte/litellm-postgres:18.6-trixie-pgbackrest-2.55.1 \
@@ -188,6 +259,7 @@ stop() {
 restore_check() {
   require_docker
   resolve_backup_dir
+  repository_has_metadata || { printf 'Backup repository is missing or incomplete.\n' >&2; return 1; }
   if is_running postgres; then
     require_matching_backup_dir
   fi
@@ -195,10 +267,13 @@ restore_check() {
 }
 
 case "${1:-}" in
-  start) start ;;
+  start)
+    (( $# == 1 )) || { (( $# == 2 )) && [[ "$2" == --reinitialize-backup-repo ]] || usage; }
+    acquire_lock
+    if (( $# == 2 )); then start yes; else start no; fi ;;
   status) status ;;
-  backup) backup ;;
-  stop) stop ;;
-  restore-check) shift; restore_check "$@" ;;
+  backup) acquire_lock; backup ;;
+  stop) acquire_lock; stop ;;
+  restore-check) acquire_lock; shift; restore_check "$@" ;;
   *) usage ;;
 esac

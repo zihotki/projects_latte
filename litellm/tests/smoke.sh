@@ -30,6 +30,10 @@ chmod +x "$test_dir/bin/security"
 
 cat > "$test_dir/bin/docker" <<'MOCK'
 #!/usr/bin/env bash
+if [[ -n "${LITELLM_SMOKE_BLOCK_BACKUP:-}" && "$*" == *'--type=incr backup'* ]]; then
+  touch "$LITELLM_SMOKE_BLOCK_BACKUP.entered"
+  until [[ -f "$LITELLM_SMOKE_BLOCK_BACKUP.release" ]]; do sleep 0.1; done
+fi
 if [[ "${LITELLM_SMOKE_FAIL_BACKUP:-}" == yes && "$*" == *'--type=incr backup'* ]]; then
   printf 'Injected backup failure.\n' >&2
   exit 45
@@ -126,6 +130,10 @@ if LITELLM_BACKUP_DIR="$test_dir/other-backups" "$command" backup > "$test_dir/m
 fi
 grep -q 'Backup directory differs from the running PostgreSQL mount' "$test_dir/mismatched-backup.log"
 [[ "$(count_backups)" == 2 ]]
+if LITELLM_BACKUP_DIR="$test_dir/absent-backups" "$command" backup > "$test_dir/absent-backup.log" 2>&1; then
+  printf 'Backup accepted a missing repository directory.\n' >&2; exit 1
+fi
+[[ ! -e "$test_dir/absent-backups" ]]
 LITELLM_BACKUP_DIR="$test_dir/other-backups" "$command" status > "$test_dir/mismatched-status.log" 2>&1
 grep -Fxq "Backup directory: $test_dir/backups" "$test_dir/mismatched-status.log"
 if grep -Fxq "Backup directory: $test_dir/other-backups" "$test_dir/mismatched-status.log"; then
@@ -187,4 +195,56 @@ if LITELLM_SMOKE_FAIL_BACKUP=yes "$command" start > "$test_dir/failure.log" 2>&1
 fi
 assert_stopped
 [[ "$(count_backups)" == 4 ]]
-printf 'LiteLLM smoke passed: full/incremental backups, virtual key restore, live volume identity, failure cleanup, live mount check, private backup, and secret boundary.\n'
+mv "$test_dir/backups" "$test_dir/preserved-backups"
+if "$command" status > "$test_dir/lost-status.log" 2>&1; then
+  printf 'Status accepted a missing established repository.\n' >&2; exit 1
+fi
+[[ ! -e "$test_dir/backups" ]]
+if "$command" start > "$test_dir/lost-start.log" 2>&1; then
+  printf 'Start accepted a missing established repository.\n' >&2; exit 1
+fi
+assert_stopped
+[[ ! -e "$test_dir/backups" ]]
+"$command" start --reinitialize-backup-repo > "$test_dir/reinit.log" 2>&1 || {
+  cat "$test_dir/reinit.log" >&2; exit 1
+}
+grep -q 'Starting full backup.' "$test_dir/reinit.log"
+[[ "$(count_backups)" == 1 ]]
+"$command" stop > "$test_dir/reinit-stop.log" 2>&1
+
+block="$test_dir/blocked-backup"
+LITELLM_SMOKE_FAIL_BACKUP=yes LITELLM_SMOKE_BLOCK_BACKUP="$block" "$command" start > "$test_dir/locked-failure.log" 2>&1 &
+first_pid=$!
+for (( i=0; i<100; i++ )); do
+  [[ -f "$block.entered" ]] && break
+  sleep 0.1
+done
+[[ -f "$block.entered" ]] || { printf 'Timed out waiting for blocked backup.\n' >&2; exit 1; }
+"$command" start > "$test_dir/locked-retry.log" 2>&1 &
+second_pid=$!
+sleep 1
+kill -0 "$second_pid" || { printf 'Concurrent start did not wait for the lock.\n' >&2; exit 1; }
+touch "$block.release"
+if wait "$first_pid"; then
+  printf 'Injected backup failure did not stop the first start.\n' >&2; exit 1
+fi
+wait "$second_pid" || { cat "$test_dir/locked-retry.log" >&2; exit 1; }
+grep -q 'LiteLLM is ready' "$test_dir/locked-retry.log"
+[[ -n "$(compose ps --status running -q proxy)" ]]
+block="$test_dir/blocked-manual-backup"
+LITELLM_SMOKE_BLOCK_BACKUP="$block" "$command" backup > "$test_dir/locked-backup.log" 2>&1 &
+backup_pid=$!
+for (( i=0; i<100; i++ )); do
+  [[ -f "$block.entered" ]] && break
+  sleep 0.1
+done
+[[ -f "$block.entered" ]] || { printf 'Timed out waiting for blocked manual backup.\n' >&2; exit 1; }
+"$command" stop > "$test_dir/locked-stop.log" 2>&1 &
+stop_pid=$!
+sleep 1
+kill -0 "$stop_pid" || { printf 'Stop did not wait for the running backup.\n' >&2; exit 1; }
+touch "$block.release"
+wait "$backup_pid" || { cat "$test_dir/locked-backup.log" >&2; exit 1; }
+wait "$stop_pid" || { cat "$test_dir/locked-stop.log" >&2; exit 1; }
+assert_stopped
+printf 'LiteLLM smoke passed: full/incremental backups, virtual key restore, live volume identity, failure cleanup, missing repository guard, serialized start, live mount check, private backup, and secret boundary.\n'

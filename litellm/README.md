@@ -42,6 +42,8 @@ changes from the current session. `status` shows the latest successful backup
 time and type. `restore-check` restores the latest backup into a temporary
 Docker volume, runs a PostgreSQL query, and removes its temporary resources.
 It does not modify the live database volume.
+The session commands wait for one another. A second `start` cannot interrupt
+the first command's backup or failure cleanup.
 
 The backup repository defaults to
 `~/.local/share/projectslatte/litellm-backups`, outside Docker's data store.
@@ -49,6 +51,12 @@ Set `LITELLM_BACKUP_DIR` to a private, writable absolute directory to use a
 different location; use the same setting for every command. The directory
 must be owned by your user and have mode `700`. pgBackRest keeps two full
 backup chains and their dependent incremental backups.
+
+If the database volume already exists, `start` requires the established
+backup repository. It stops if that directory or its metadata is missing.
+`status` only reads the repository; it does not create a missing directory.
+First setup creates a new directory and repository when no database volume
+exists.
 
 ## App keys and local access
 
@@ -73,6 +81,17 @@ backup fails, inspect `docker compose -f litellm/compose.yaml logs postgres`,
 check that the backup directory is writable and has space, then retry `start`.
 If PostgreSQL does not start, inspect the same logs and run `restore-check`
 against the last backup before changing the live volume.
+
+If the backup directory disappears, stop the gateway and restore that directory
+from your separate copy. Check it with `litellm/bin/litellm restore-check`
+before `start`. If the repository cannot be recovered but the live database
+volume is intact, preserve any old repository files elsewhere and run
+`litellm/bin/litellm start --reinitialize-backup-repo`. This explicit command
+requires PostgreSQL to be stopped and the selected backup directory to be
+absent or empty. It creates a new full backup from the live database. Earlier
+backup points are unavailable from the new repository. If the first ever
+backup failed and left an empty repository with a database volume, use the
+same command to retry initialization.
 
 To restore a **lost** live volume, stop the stack, confirm a recent backup with
 `restore-check`, and use the commands below. They restore into a newly created
