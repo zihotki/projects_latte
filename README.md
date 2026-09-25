@@ -19,6 +19,18 @@ pnpm -C cut_on_eight dev
 pnpm -C cut_on_eight verify
 ```
 
+Run the LiteLLM gateway from the repository root. The command prints the next
+suggested action after each successful step:
+
+```bash
+./scripts/litellm.sh help
+./scripts/litellm.sh start
+./scripts/litellm.sh status
+./scripts/litellm.sh backup
+./scripts/litellm.sh restore-check
+./scripts/litellm.sh stop
+```
+
 ## Repository checks
 
 The repository keeps tool caches under `.local/`; nothing is installed globally.

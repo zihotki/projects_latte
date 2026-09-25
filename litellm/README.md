@@ -27,12 +27,16 @@ engine is ready, then run the commands below from the repository root.
 ## Session commands
 
 ```bash
-litellm/bin/litellm start
-litellm/bin/litellm status
-litellm/bin/litellm backup
-litellm/bin/litellm restore-check
-litellm/bin/litellm stop
+./scripts/litellm.sh help
+./scripts/litellm.sh start
+./scripts/litellm.sh status
+./scripts/litellm.sh backup
+./scripts/litellm.sh restore-check
+./scripts/litellm.sh stop
 ```
+
+Run these commands from the repository root. The wrapper shows available
+commands with `help` or no arguments and suggests a next command after success.
 
 `start` starts PostgreSQL, takes a backup, and then starts LiteLLM. It takes a
 full backup first and after seven days without a full backup. Other starts take
@@ -83,10 +87,10 @@ If PostgreSQL does not start, inspect the same logs and run `restore-check`
 against the last backup before changing the live volume.
 
 If the backup directory disappears, stop the gateway and restore that directory
-from your separate copy. Check it with `litellm/bin/litellm restore-check`
+from your separate copy. Check it with `./scripts/litellm.sh restore-check`
 before `start`. If the repository cannot be recovered but the live database
 volume is intact, preserve any old repository files elsewhere and run
-`litellm/bin/litellm start --reinitialize-backup-repo`. This explicit command
+`./scripts/litellm.sh start --reinitialize-backup-repo`. This explicit command
 requires PostgreSQL to be stopped and the selected backup directory to be
 absent or empty. It creates a new full backup from the live database. Earlier
 backup points are unavailable from the new repository. If the first ever
@@ -100,8 +104,8 @@ investigation before removing it; `docker volume rm` deletes its data. Use the
 same backup directory and Keychain items, especially the original salt key.
 
 ```bash
-litellm/bin/litellm stop
-litellm/bin/litellm restore-check
+./scripts/litellm.sh stop
+./scripts/litellm.sh restore-check
 export LITELLM_BACKUP_DIR="${LITELLM_BACKUP_DIR:-$HOME/.local/share/projectslatte/litellm-backups}"
 image=projectslatte/litellm-postgres:18.6-trixie-pgbackrest-2.55.1
 volume="$(docker compose -f litellm/compose.yaml config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["volumes"]["postgres-data"]["name"])')"
@@ -111,7 +115,7 @@ docker run --rm --volume "$volume:/var/lib/postgresql" --entrypoint sh "$image" 
 docker run --rm --user postgres --volume "$volume:/var/lib/postgresql" \
   --volume "$LITELLM_BACKUP_DIR:/var/lib/pgbackrest:ro" \
   --entrypoint pgbackrest "$image" --stanza=litellm restore
-litellm/bin/litellm start
+./scripts/litellm.sh start
 ```
 
 Use this sequence only when the named live volume is absent or empty. A full

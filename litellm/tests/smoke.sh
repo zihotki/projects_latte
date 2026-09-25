@@ -4,6 +4,7 @@ set -euo pipefail
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 root_dir="$(cd "$project_dir/.." && pwd)"
 command="$project_dir/bin/litellm"
+root_command="$root_dir/scripts/litellm.sh"
 test_dir="$root_dir/.local/litellm-smoke-$$"
 mkdir -p "$test_dir/bin" "$test_dir/backups" "$test_dir/other-backups" "$test_dir/public" "$test_dir/unwritable"
 chmod 700 "$test_dir/backups"
@@ -70,6 +71,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+"$root_command" help > "$test_dir/help.log"
+"$root_command" > "$test_dir/default-help.log"
+cmp "$test_dir/help.log" "$test_dir/default-help.log"
+grep -q 'restore-check' "$test_dir/help.log"
+
 compose build postgres >/dev/null
 "$command" status > "$test_dir/empty-status.log" 2>&1
 grep -q 'Latest backup: none none' "$test_dir/empty-status.log"
@@ -87,9 +93,10 @@ if LITELLM_BACKUP_DIR="$test_dir/unwritable" "$command" start > "$test_dir/unwri
 fi
 assert_stopped
 
-"$command" start > "$test_dir/first.log" 2>&1 || { cat "$test_dir/first.log" >&2; exit 1; }
+"$root_command" start > "$test_dir/first.log" 2>&1 || { cat "$test_dir/first.log" >&2; exit 1; }
 grep -q 'Starting full backup.' "$test_dir/first.log"
 grep -q 'LiteLLM is ready' "$test_dir/first.log"
+grep -q 'Next: ./scripts/litellm.sh status' "$test_dir/first.log"
 python3 - "$test_dir/first.log" <<'PY'
 import pathlib
 import sys
