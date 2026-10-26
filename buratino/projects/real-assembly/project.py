@@ -37,7 +37,7 @@ variables = {
     ],
     "assumptions": [
         (
-            "Both existing drawer cabinets use the same selected 720 x 920 x "
+            "Both existing drawer cabinets use the same selected 720 x 930 x "
             "510 mm carcass dimensions. The second cabinet fit is unverified."
         ),
         (
@@ -74,7 +74,7 @@ variables = {
         ),
     ],
     "width_mm": 720,
-    "height_mm": 920,
+    "height_mm": 930,
     "depth_mm": 510,
     "side_thickness_mm": 18,
     "top_thickness_mm": 18,

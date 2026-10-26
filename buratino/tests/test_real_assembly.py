@@ -12,7 +12,7 @@ def test_real_assembly_keeps_two_equal_independent_drawer_carcasses(root):
     result = calculation.result
 
     assert [config.width for config in calculation.configs] == [720, 720]
-    assert [config.height for config in calculation.configs] == [920, 920]
+    assert [config.height for config in calculation.configs] == [930, 930]
     assert [config.depth for config in calculation.configs] == [510, 510]
     assert [cabinet["id"] for cabinet in result["cabinets"]] == [
         "left-drawers",
@@ -22,10 +22,10 @@ def test_real_assembly_keeps_two_equal_independent_drawer_carcasses(root):
         0,
         720,
     ]
-    assert result["dimensions_mm"] == {"width": 1440, "height": 920, "depth": 510}
+    assert result["dimensions_mm"] == {"width": 1440, "height": 930, "depth": 510}
     assert result["overall_dimensions_mm"] == {
         "width": 1440,
-        "height": 920,
+        "height": 930,
         "depth": 530,
     }
 
@@ -86,7 +86,7 @@ def test_shared_root_height_updates_both_units_without_creating_site_width(
     shutil.copytree(root / "projects/real-assembly", path)
     source_path = path / "project.py"
     source_path.write_text(
-        source_path.read_text().replace('"height_mm": 920,', '"height_mm": 910,', 1)
+        source_path.read_text().replace('"height_mm": 930,', '"height_mm": 910,', 1)
     )
 
     project = load_project(path)
@@ -118,7 +118,7 @@ def test_real_assembly_front_gap_and_native_geometry(root):
     }
     for faces in faces_by_cabinet.values():
         assert [drawer["face_mm"]["width"] for drawer in faces] == [717] * 4
-        assert [drawer["face_mm"]["height"] for drawer in faces] == [227.5] * 4
+        assert [drawer["face_mm"]["height"] for drawer in faces] == [230] * 4
 
     left_face = faces_by_cabinet["left-drawers"][-1]
     right_face = faces_by_cabinet["right-drawers"][0]
