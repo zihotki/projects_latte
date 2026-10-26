@@ -8,6 +8,7 @@ A repository for small, focused software projects.
 | --- | --- |
 | [Cut on Eight](cut_on_eight/README.md) | Local browser-based dance-video segmentation and cataloguing. |
 | [LiteLLM gateway](litellm/README.md) | Local AI model gateway with per-app keys and PostgreSQL backups. |
+| [Buratino](buratino/README.md) | Local furniture design project with a pinned Cabineteer foundation. |
 
 ## Working with a project
 
@@ -31,12 +32,21 @@ suggested action after each successful step:
 ./scripts/litellm.sh stop
 ```
 
+Set up and run the first Buratino cabinet draft:
+
+```bash
+./buratino/bin/buratino setup
+./buratino/bin/buratino build projects/simple-cabinet
+./buratino/bin/buratino preview projects/simple-cabinet
+```
+
 ## Repository checks
 
 The repository keeps tool caches under `.local/`; nothing is installed globally.
 
 ```bash
 pnpm -C cut_on_eight install --frozen-lockfile
+./buratino/bin/buratino setup
 ./scripts/check.sh       # TypeScript build/type/lint/format and Python static checks
 ./scripts/test.sh        # Unit tests
 ./scripts/integration.sh # Docker PostgreSQL, Qdrant, and media integration tests

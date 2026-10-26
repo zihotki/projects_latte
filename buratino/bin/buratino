@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+buratino_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export BURATINO_ROOT="$buratino_root"
+export UV_CACHE_DIR="$buratino_root/.local/uv-cache"
+export UV_PYTHON_INSTALL_DIR="$buratino_root/.local/uv-python"
+export UV_PROJECT_ENVIRONMENT="$buratino_root/.local/venv"
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONNOUSERSITE=1
+export XDG_CACHE_HOME="$buratino_root/.local/cache"
+export MPLCONFIGDIR="$buratino_root/.local/cache/matplotlib"
+
+if [[ "${1:-}" == setup ]]; then
+  shift
+  exec python3 "$buratino_root/scripts/setup.py" "$@"
+fi
+
+if [[ ! -x "$UV_PROJECT_ENVIRONMENT/bin/python" ]]; then
+  echo 'Buratino is not installed. Run ./buratino/bin/buratino setup.' >&2
+  exit 1
+fi
+
+case "${1:-}" in
+  check)
+    cd "$buratino_root"
+    "$UV_PROJECT_ENVIRONMENT/bin/ruff" check .
+    exec "$UV_PROJECT_ENVIRONMENT/bin/ruff" format --check .
+    ;;
+  test)
+    cd "$buratino_root"
+    shift
+    exec "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest --basetemp .local/pytest "$@"
+    ;;
+esac
+
+exec "$UV_PROJECT_ENVIRONMENT/bin/python" -m buratino.cli "$@"

@@ -22,7 +22,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.pyright]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
-exclude = [".local", ".pnpm-store", ".venv", "cut_on_eight/node_modules"]
+exclude = ["**/.local", ".pnpm-store", ".venv", "cut_on_eight/node_modules", "buratino"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

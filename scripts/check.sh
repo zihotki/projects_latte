@@ -4,5 +4,6 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 "$root_dir/scripts/python.sh" check
+"$root_dir/buratino/bin/buratino" check
 PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false \
   pnpm -C "$root_dir/cut_on_eight" run ci:check

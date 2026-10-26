@@ -1,0 +1,1235 @@
+"""Native Cabineteer construction and ordered cabinet assemblies."""
+
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass
+
+from .drawers import (
+    EB20_SLIDE_KEYS,
+    HETTICH_PROFILES,
+    drawer_shapes,
+    register_eb20_profile,
+    validate_drawer_config,
+)
+from .grouping import group_cutting_blanks
+from .project import InputError, ProjectInputs
+
+register_eb20_profile()
+register_eb20_profile(480)
+
+
+@dataclass
+class Calculation:
+    configs: list
+    result: dict
+    drawer_instances: list
+
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_]+", "_", value).strip("_")
+
+
+def _drawer_key(cabinet_id: str, column_index: int, opening_index: int) -> str:
+    return f"{cabinet_id}/column-{column_index}/opening-{opening_index}"
+
+
+def _rear_relief_width(config):
+    return getattr(config, "buratino_rear_corner_clearance_width_mm", 0)
+
+
+def _require_nonnegative_mm(value, key):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        raise InputError(
+            "invalid_clearance", f"{key} must be a finite non-negative length.", key
+        )
+
+
+def _native_world_location(assembly, name, fallback):
+    """Return an object's accumulated local transform from a native assembly."""
+    obj = assembly.objects.get(name)
+    if obj is None:
+        return fallback
+    location = obj.loc
+    parent = obj.parent
+    while parent is not None:
+        location = parent.loc * location
+        parent = parent.parent
+    return location
+
+
+def _build_native_carcass(config):
+    """Build carcass solids through Cabineteer's matching native constructor."""
+    from cabineteer.cabinet import (
+        bays_from_config,
+        build_cabinet,
+        build_multi_bay_cabinet,
+    )
+
+    if config.columns:
+        return build_multi_bay_cabinet(
+            bays_from_config(config),
+            include_drawers=False,
+            include_faces=False,
+            include_feet=False,
+        )
+    return build_cabinet(config)
+
+
+def _local_columns(config):
+    from cabineteer.cabinet import bays_from_config
+
+    return bays_from_config(config)
+
+
+def _part_dimensions(part, config):
+    """Return the native finished dimensions for this carcass member."""
+    from cabineteer.cabinet import carcass_panel_dims
+
+    name = part.name.lower()
+    panels = carcass_panel_dims(config)
+    if "side" in name and "divider" not in name:
+        panel = next((p for p in panels if p.kind == "side"), None)
+    elif "divider" in name:
+        panel = next((p for p in panels if p.kind == "divider"), None)
+    elif "bottom" in name:
+        panel = next((p for p in panels if p.kind == "bottom"), None)
+    elif "top" in name:
+        panel = next((p for p in panels if p.kind == "top"), None)
+    elif "back" in name:
+        panel = next((p for p in panels if p.kind == "back"), None)
+    elif "shelf" in name:
+        panel = next((p for p in panels if p.kind == "shelf" and p.name in name), None)
+    else:
+        panel = None
+    if panel is not None:
+        return {
+            "length": panel.length,
+            "width": panel.width,
+            "thickness": panel.thickness,
+        }
+    bounds = part.shape.val().BoundingBox()
+    dims = sorted((bounds.xlen, bounds.ylen, bounds.zlen), reverse=True)
+    thickness = part.material_thickness
+    dims.remove(min(dims, key=lambda n: abs(n - thickness)))
+    return {"length": dims[0], "width": dims[1], "thickness": thickness}
+
+
+def _qualified_cabinet_affected(issue, cabinet_id, cabinet_parts):
+    """Map native issue labels to stable physical part IDs when possible."""
+    source = [value for value in (issue.part_a, issue.part_b) if value]
+    affected = []
+    components = {part["component"] for part in cabinet_parts}
+    for value in source:
+        if value in {part["id"] for part in cabinet_parts}:
+            affected.append(value)
+            continue
+        tokens = set(re.split(r"[-_ ]+", value.lower()))
+        candidates = set()
+        if "side" in tokens:
+            candidates.update({"left_side", "right_side"} & components)
+        for component in ("top", "bottom", "back", "divider"):
+            if component in tokens and component in components:
+                candidates.add(component)
+        if "shelf" in tokens:
+            candidates.update(
+                part["component"]
+                for part in cabinet_parts
+                if part["component"].startswith("shelf")
+            )
+        for component in sorted(candidates):
+            affected.extend(
+                part["id"] for part in cabinet_parts if part["component"] == component
+            )
+    return sorted(set(affected)), source
+
+
+def _cabinet_face_thicknesses(project, cabinet_id, config):
+    """Resolve overlay thickness from each native drawer or door opening."""
+    from cabineteer.cabinet import opening_stack
+
+    fallback = project.variables.get("drawer_face_thickness_mm", 18)
+    thicknesses = {}
+    for column_index, bay in enumerate(_local_columns(config)):
+        for opening_index, slot in enumerate(opening_stack(bay)):
+            opening = slot.opening
+            if opening.opening_type == "drawer":
+                drawer = project.drawer_configs.get(
+                    _drawer_key(cabinet_id, column_index, opening_index)
+                )
+                thickness = drawer.face_thickness if drawer else fallback
+            elif opening.opening_type in {"door", "door_pair"}:
+                thickness = opening.door_thickness or fallback
+            else:
+                continue
+            thicknesses[(column_index, opening_index)] = thickness
+    return thicknesses
+
+
+def _native_drawer_config(
+    project, cabinet_id, column_index, opening_index, cabinet, bay, opening
+):
+    key = _drawer_key(cabinet_id, column_index, opening_index)
+    cfg = project.drawer_configs.get(key)
+    if cfg is None:
+        from cabineteer.drawer import box_config_for_opening
+
+        cfg = box_config_for_opening(
+            cabinet,
+            bay.interior_width,
+            opening.height_mm,
+            cabinet.interior_depth,
+            opening,
+        )
+        cfg.applied_face = False
+        cfg.buratino_rear_corner_clearance_width_mm = 0
+        cfg.buratino_material = project.variables.get(
+            "drawer_material", "drawer_stock_unverified"
+        )
+    if cfg.slide_key != EB20_SLIDE_KEYS[project.variables.get("runner_length_mm", 450)]:
+        raise InputError(
+            "unsupported_drawer_profile",
+            "Use the registered Hettich EB20 profile for the selected length.",
+            key,
+        )
+    if not hasattr(cfg, "buratino_box_bottom_clearance_mm"):
+        cfg.buratino_box_bottom_clearance_mm = cfg.slide.min_bottom_clearance
+    if (
+        cfg.opening_width != bay.interior_width
+        or cfg.opening_height != opening.height_mm
+        or cfg.opening_depth != cabinet.interior_depth
+    ):
+        raise InputError(
+            "drawer_config_opening_mismatch",
+            "DrawerConfig must match its native opening width, height, and "
+            "cavity depth.",
+            key,
+        )
+    try:
+        validate_drawer_config(cfg)
+    except (ValueError, TypeError) as exc:
+        raise InputError("invalid_drawer_config", str(exc), key) from exc
+    if cfg.box_depth != project.variables.get("runner_length_mm", 450):
+        raise InputError(
+            "unsupported_runner_length",
+            "Drawer box depth must match the selected runner length.",
+            key,
+        )
+    return cfg
+
+
+def calculate(project: ProjectInputs) -> Calculation:
+    """Resolve native project configs into draft parts, checks, and placements."""
+    from cabineteer.cabinet import (
+        bay_x_offsets,
+        face_layout,
+        opening_stack,
+    )
+    from cabineteer.evaluation import (
+        check_drawer_hardware_clearances,
+        check_drawer_in_opening,
+        check_drawer_joinery,
+        evaluate_cabinet,
+    )
+
+    resolved = list(project.native_project.resolved())
+    if not resolved:
+        raise InputError(
+            "empty_project", "A project must contain at least one cabinet."
+        )
+    cabinet_gap = project.variables.get("cabinet_gap_mm", 0)
+    if project.variables.get("runner_length_mm", 450) not in HETTICH_PROFILES:
+        raise InputError(
+            "unsupported_runner_length",
+            "This profile supports only 450 or 480 mm runners.",
+            "runner_length_mm",
+        )
+    hardware_profile = HETTICH_PROFILES[project.variables.get("runner_length_mm", 450)]
+    face_gap = project.variables.get("front_gap_mm", 2)
+    edge_gap = project.variables.get("edge_gap_mm", 2)
+    front_projection = project.variables.get("face_to_carcass_gap_mm", 0)
+    for key, value in (
+        ("cabinet_gap_mm", cabinet_gap),
+        ("front_gap_mm", face_gap),
+        ("edge_gap_mm", edge_gap),
+        ("face_to_carcass_gap_mm", front_projection),
+    ):
+        _require_nonnegative_mm(value, key)
+
+    # Resolve and validate every actual drawer before any native CAD build.
+
+    drawer_configs = {}
+    for cabinet_id, config in resolved:
+        for ci, bay in enumerate(_local_columns(config)):
+            for oi, slot in enumerate(opening_stack(bay)):
+                if slot.opening.opening_type == "drawer":
+                    drawer_configs[_drawer_key(cabinet_id, ci, oi)] = (
+                        _native_drawer_config(
+                            project, cabinet_id, ci, oi, config, bay, slot.opening
+                        )
+                    )
+
+    parts: list[dict] = []
+    drawers: list[dict] = []
+    joints: list[dict] = []
+    hardware = [{"type": "domino", "size": "6x40", "quantity": None}]
+    issues: list[dict] = []
+    cabinet_entries = []
+    native_cabinets = []
+    drawer_instances = []
+    x_run = 0.0
+    global_front_plane = 0.0
+    face_offsets = []
+
+    # Align each cabinet's completed face plane. Face depth is a native
+    # project choice; carcass depth remains independent.
+    face_thickness_by_cabinet = []
+    for cabinet_id, config in resolved:
+        front_projection = project.variables.get("face_to_carcass_gap_mm", 0)
+        thicknesses = _cabinet_face_thicknesses(project, cabinet_id, config)
+        face_thickness_by_cabinet.append(thicknesses)
+        face_depth = max(thicknesses.values()) + front_projection if thicknesses else 0
+        face_offsets.append(face_depth)
+        global_front_plane = max(global_front_plane, face_depth)
+    for (cabinet_id, config), face_depth, face_thicknesses in zip(
+        resolved, face_offsets, face_thickness_by_cabinet, strict=True
+    ):
+        x0 = x_run
+        y0 = face_depth - global_front_plane
+        slug = _slug(cabinet_id)
+        bays = _local_columns(config)
+        bay_xs, _ = bay_x_offsets(bays)
+        try:
+            native_assy, native_parts = _build_native_carcass(config)
+        except Exception as exc:
+            raise InputError(
+                "native_carcass_build_failed", str(exc), cabinet_id
+            ) from exc
+        cabinet_records = []
+        for part in native_parts:
+            raw_name = part.name
+            if raw_name.startswith("drawer"):
+                continue
+            semantic = re.sub(r"^bay\d+_", "", raw_name.lower())
+            if semantic == "side":
+                side_records = ["side_left", "side_right"]
+            elif semantic.startswith("side_"):
+                side_records = [semantic]
+            else:
+                side_records = [semantic]
+            for role_part in side_records:
+                scene_name = f"cabinet_{slug}_{_slug(role_part)}"
+                if any(r["role"] == scene_name for r in parts):
+                    scene_name = f"{scene_name}_{len(cabinet_records) + 1}"
+                dim = _part_dimensions(part, config)
+                material = (
+                    project.variables.get("back_material", "back_stock_unverified")
+                    if "back" in role_part
+                    else config.carcass_material
+                )
+                component = "divider" if role_part.startswith("divider") else role_part
+                grain_axis = (
+                    "x"
+                    if role_part in {"top", "bottom"} or role_part.startswith("shelf")
+                    else "z"
+                )
+                normal_axis = (
+                    "x"
+                    if role_part.startswith(("side", "divider"))
+                    else "y"
+                    if role_part == "back"
+                    else "z"
+                )
+                record = {
+                    "id": f"{cabinet_id}.carcass.{role_part}",
+                    "role": scene_name,
+                    "scene_name": scene_name,
+                    "cabinet_id": cabinet_id,
+                    "component": component,
+                    "native_name": raw_name,
+                    "quantity": 1,
+                    "finished_mm": dim,
+                    "material": material,
+                    "edge_treatment": "unconfirmed",
+                    "grain_direction": "length",
+                    "grain_axis_local": grain_axis,
+                    "surface_normal_axis_local": normal_axis,
+                    "grain_status": "assumed",
+                }
+                parts.append(record)
+                cabinet_records.append((part, role_part, record))
+        cabinet_issues = evaluate_cabinet(config)
+        for issue in cabinet_issues:
+            if issue.check in {
+                "hardware_clearance",
+                "drawer_bottom_recess",
+                "drawer_joinery",
+                "drawer_fit",
+                "drawer_stack_order",
+            }:
+                continue
+            affected, source_affected = _qualified_cabinet_affected(
+                issue, cabinet_id, [record for _, _, record in cabinet_records]
+            )
+            issues.append(
+                {
+                    "code": f"cabineteer.{issue.check}",
+                    "severity": issue.severity.value,
+                    "message": issue.message,
+                    "cabinet_id": cabinet_id,
+                    "affected": affected,
+                    "source_affected": source_affected,
+                }
+            )
+        native_cabinets.append(
+            {
+                "id": cabinet_id,
+                "config": config,
+                "assembly": native_assy,
+                "parts": cabinet_records,
+                "x": x0,
+                "y": y0,
+            }
+        )
+        face_panels = face_layout(
+            bays,
+            face_thickness=max(face_thicknesses.values(), default=18),
+            outer_overlay=config.side_thickness - edge_gap,
+            inner_overlay=(config.side_thickness - face_gap) / 2,
+            face_gap=face_gap,
+            face_bottom_overhang=config.bottom_thickness - edge_gap,
+            face_top_overhang=config.top_thickness - edge_gap,
+        )
+        # Narrow placement adapter for the row: native face_layout owns every
+        # panel size, while this applies outside reveals and closes the selected
+        # total gap across separate carcasses.
+        row_index = len(cabinet_entries)
+        seam_adjust = (cabinet_gap + 2 * edge_gap - face_gap) / 2
+        from dataclasses import replace as dc_replace
+
+        positioned_faces = []
+        for panel in face_panels:
+            px, pw = panel.x, panel.width
+            if panel.bay == 0:
+                px += edge_gap
+                if row_index > 0:
+                    px -= seam_adjust
+                    pw += seam_adjust
+            if panel.bay == len(bays) - 1 and row_index < len(resolved) - 1:
+                pw += seam_adjust
+            positioned_faces.append(dc_replace(panel, x=px, width=pw))
+        faces = {
+            (panel.bay, panel.slot): panel
+            for panel in positioned_faces
+            if panel.kind == "drawer_face"
+        }
+        local_index = 0
+        for ci, bay in enumerate(bays):
+            slots = opening_stack(bay)
+            for oi, slot in enumerate(slots):
+                opening = slot.opening
+                if opening.opening_type != "drawer":
+                    continue
+                local_index += 1
+                face = faces.get((ci, oi))
+                if face is None:
+                    raise InputError(
+                        "drawer_face_unresolved",
+                        "Native face_layout did not produce a drawer front.",
+                        _drawer_key(cabinet_id, ci, oi),
+                    )
+                drawer_cfg = drawer_configs[_drawer_key(cabinet_id, ci, oi)]
+                face = dc_replace(face, thickness=drawer_cfg.face_thickness)
+                faces[(ci, oi)] = face
+                for check in (
+                    check_drawer_hardware_clearances(drawer_cfg),
+                    check_drawer_joinery(drawer_cfg),
+                ):
+                    for issue in check:
+                        issues.append(
+                            {
+                                "code": f"cabineteer.{issue.check}",
+                                "severity": issue.severity.value,
+                                "message": issue.message,
+                                "cabinet_id": cabinet_id,
+                                "affected": [
+                                    drawer_id
+                                    := f"{cabinet_id}.drawer.column-{ci}.opening-{oi}"
+                                ],
+                            }
+                        )
+                drawer_id = f"{cabinet_id}.drawer.column-{ci}.opening-{oi}"
+                role_prefix = f"cabinet_{slug}_drawer_col{ci + 1}_opening{oi + 1}"
+                bx = bay_xs[ci] + bay.side_thickness + drawer_cfg.side_gap
+                bz = slot.z + getattr(drawer_cfg, "buratino_box_bottom_clearance_mm", 0)
+                drawer_position = {"x": bx, "y": drawer_cfg.front_gap, "z": bz}
+                face_position = {
+                    "x": face.x,
+                    "y": -drawer_cfg.face_thickness - front_projection,
+                    "z": face.z,
+                }
+                shape_map, offsets = drawer_shapes(
+                    drawer_cfg,
+                    rear_corner_clearance_width_mm=getattr(
+                        drawer_cfg, "buratino_rear_corner_clearance_width_mm", 0
+                    ),
+                )
+                # The native fit check receives the actual per-opening config.
+                # Its local assembly has box origin at zero; placement clearance
+                # is recorded separately in the result.
+                from cabineteer.drawer import build_drawer
+
+                native_drawer_assy, _ = build_drawer(drawer_cfg)
+                for issue in check_drawer_in_opening(
+                    native_drawer_assy,
+                    drawer_cfg.opening_width,
+                    drawer_cfg.opening_height,
+                    drawer_cfg.opening_depth,
+                    drawer_cfg.slide,
+                    drawer_cfg.side_thickness,
+                ):
+                    issues.append(
+                        {
+                            "code": f"cabineteer.{issue.check}",
+                            "severity": issue.severity.value,
+                            "message": issue.message,
+                            "cabinet_id": cabinet_id,
+                            "affected": [drawer_id],
+                        }
+                    )
+                part_ids = []
+                specs = {
+                    "side_left": (
+                        drawer_cfg.side_panel_length,
+                        drawer_cfg.box_height,
+                        drawer_cfg.side_thickness,
+                    ),
+                    "side_right": (
+                        drawer_cfg.side_panel_length,
+                        drawer_cfg.box_height,
+                        drawer_cfg.side_thickness,
+                    ),
+                    "inner_front": (
+                        drawer_cfg.front_back_panel_length,
+                        drawer_cfg.box_height,
+                        drawer_cfg.front_back_thickness,
+                    ),
+                    "back": (
+                        drawer_cfg.front_back_panel_length,
+                        drawer_cfg.box_height,
+                        drawer_cfg.front_back_thickness,
+                    ),
+                    "bottom": (
+                        drawer_cfg.bottom_panel_width,
+                        drawer_cfg.bottom_panel_depth,
+                        drawer_cfg.bottom_thickness,
+                    ),
+                }
+                for component, _shape in shape_map.items():
+                    if component == "face":
+                        continue
+                    ident = f"{drawer_id}.{component}"
+                    role = f"{role_prefix}_{component}"
+                    part_ids.append(ident)
+                    length, width, thickness = specs[component]
+                    part_record = {
+                        "id": ident,
+                        "role": role,
+                        "scene_name": role,
+                        "cabinet_id": cabinet_id,
+                        "instance_id": drawer_id,
+                        "drawer_index": local_index,
+                        "column_index": ci,
+                        "opening_index": oi,
+                        "component": component,
+                        "quantity": 1,
+                        "finished_mm": {
+                            "length": length,
+                            "width": width,
+                            "thickness": thickness,
+                        },
+                        "material": getattr(
+                            drawer_cfg,
+                            "buratino_material",
+                            "drawer_stock_unverified",
+                        ),
+                        "edge_treatment": "unconfirmed",
+                        "grain_direction": "length",
+                        "grain_axis_local": "y"
+                        if component.startswith("side")
+                        else "x",
+                        "surface_normal_axis_local": "x"
+                        if component.startswith("side")
+                        else "z"
+                        if component == "bottom"
+                        else "y",
+                        "grain_status": "assumed",
+                    }
+                    if component == "back":
+                        relief_width = getattr(
+                            drawer_cfg,
+                            "buratino_rear_corner_clearance_width_mm",
+                            0,
+                        )
+                        if relief_width:
+                            part_record["rear_clearance_mm"] = {
+                                "width": relief_width,
+                                "height": drawer_cfg.bottom_dado_inset,
+                            }
+                            part_record["machining_assumptions"] = [
+                                {
+                                    "operation": "rear_corner_relief",
+                                    "dimensions_mm": {
+                                        "width": relief_width,
+                                        "height": drawer_cfg.bottom_dado_inset,
+                                        "depth": drawer_cfg.front_back_thickness,
+                                    },
+                                    "status": "unverified_draft_interpretation",
+                                    "basis": (
+                                        "Hettich EB20 sketch; confirm before machining"
+                                    ),
+                                }
+                            ]
+                    parts.append(part_record)
+                face_id = f"{drawer_id}.face"
+                face_role = f"{role_prefix}_face"
+                part_ids.append(face_id)
+                parts.append(
+                    {
+                        "id": face_id,
+                        "role": face_role,
+                        "scene_name": face_role,
+                        "cabinet_id": cabinet_id,
+                        "instance_id": drawer_id,
+                        "drawer_index": local_index,
+                        "column_index": ci,
+                        "opening_index": oi,
+                        "component": "face",
+                        "quantity": 1,
+                        "finished_mm": {
+                            "length": face.width,
+                            "width": face.height,
+                            "thickness": face.thickness,
+                        },
+                        "material": config.face_material
+                        or project.variables.get(
+                            "face_material", "face_stock_unverified"
+                        ),
+                        "edge_treatment": "unconfirmed",
+                        "grain_direction": "length",
+                        "grain_axis_local": "x",
+                        "surface_normal_axis_local": "y",
+                        "grain_status": "assumed",
+                    }
+                )
+                drawers.append(
+                    {
+                        "instance_id": drawer_id,
+                        "drawer_index": local_index,
+                        "column_index": ci,
+                        "opening_index": oi,
+                        "cabinet_id": cabinet_id,
+                        "part_ids": part_ids,
+                        "closed_position_mm": drawer_position,
+                        "face_position_mm": face_position,
+                        "face_mm": {
+                            "width": face.width,
+                            "height": face.height,
+                            "thickness": face.thickness,
+                        },
+                        "box_mm": {
+                            "width": drawer_cfg.box_width,
+                            "height": drawer_cfg.box_height,
+                            "depth": drawer_cfg.box_depth,
+                        },
+                    }
+                )
+                drawer_instances.append(
+                    {
+                        "cabinet_id": cabinet_id,
+                        "drawer_id": drawer_id,
+                        "config": drawer_cfg,
+                        "shapes": shape_map,
+                        "offsets": offsets,
+                        "box_position": drawer_position,
+                        "face_position": face_position,
+                        "face_panel": face,
+                        "role_prefix": role_prefix,
+                    }
+                )
+        # Carcass joinery is fixed at 6x40; positions and depths remain unverified.
+        for panel in ("bottom", "top"):
+            for side in ("left", "right"):
+                joints.append(
+                    {
+                        "id": f"{cabinet_id}.joint.{panel}.{side}",
+                        "cabinet_id": cabinet_id,
+                        "type": "domino",
+                        "tenon": "6x40",
+                        "parts": [
+                            f"{cabinet_id}.carcass.{panel}",
+                            f"{cabinet_id}.carcass.{side}_side",
+                        ],
+                        "positions_mm": None,
+                        "depths_mm": None,
+                        "quantity": None,
+                        "status": "unverified",
+                    }
+                )
+        cabinet_entries.append(
+            {
+                "id": cabinet_id,
+                "name": cabinet_id,
+                "placement_mm": {"x": x0, "y": y0, "z": 0},
+                "dimensions_mm": {
+                    "width": config.width,
+                    "height": config.height,
+                    "depth": config.depth,
+                },
+                "bounds_mm": {
+                    "min": {"x": x0, "y": y0 - face_depth, "z": 0},
+                    "max": {
+                        "x": x0 + config.width,
+                        "y": y0 + config.depth,
+                        "z": config.height,
+                    },
+                },
+            }
+        )
+        x_run += config.width + cabinet_gap
+
+    # Record named physical connections without claiming verified fasteners.
+    connections = project.variables.get("connections", [])
+    for connection in connections:
+        if isinstance(connection, dict):
+            left, right = connection.get("from"), connection.get("to")
+        elif isinstance(connection, list | tuple) and len(connection) == 2:
+            left, right = connection
+        else:
+            raise InputError(
+                "invalid_connection", "Connections must name two cabinets."
+            )
+        ids = [name for name, _ in resolved]
+        if left not in ids or right not in ids or left == right:
+            raise InputError(
+                "invalid_connection_target",
+                "Connection target must name two different project cabinets.",
+            )
+        left_index, right_index = ids.index(left), ids.index(right)
+        if abs(left_index - right_index) != 1:
+            raise InputError(
+                "invalid_connection_target",
+                "A side-to-side connection must join adjacent cabinets.",
+            )
+        if left_index < right_index:
+            left_id, right_id = left, right
+        else:
+            left_id, right_id = right, left
+        joints.append(
+            {
+                "id": f"connection.{left_id}.{right_id}",
+                "cabinet_id": left_id,
+                "cabinet_ids": [left_id, right_id],
+                "type": "cabinet_connection",
+                "parts": [
+                    f"{left_id}.carcass.right_side",
+                    f"{right_id}.carcass.left_side",
+                ],
+                "quantity": None,
+                "status": "unverified",
+            }
+        )
+        issues.append(
+            {
+                "code": "assembly.connection_unverified",
+                "severity": "unknown",
+                "message": (
+                    f"Fastening details for the connection between {left} and "
+                    f"{right}, and its capacity, are unverified."
+                ),
+                "cabinet_id": left,
+                "affected": [left, right],
+            }
+        )
+
+    if drawer_instances:
+        hardware.extend(
+            [
+                {
+                    "type": "drawer_runner",
+                    "model": hardware_profile["model"],
+                    "length_mm": hardware_profile["runner_length_mm"],
+                    "quantity": len(drawer_instances) * 2,
+                    "part_numbers": [
+                        hardware_profile["left_runner_sku"],
+                        hardware_profile["right_runner_sku"],
+                    ],
+                    "sources": hardware_profile["sources"],
+                },
+                {
+                    "type": "compatible_grooved_bottom_catch_pair",
+                    "model": "Hettich Quadro V6 grooved-bottom catch pair",
+                    "quantity": len(drawer_instances),
+                    "part_numbers": ["9144830", "9144841"],
+                    "quantity_by_part_number": {
+                        "9144830": len(drawer_instances),
+                        "9144841": len(drawer_instances),
+                    },
+                    "sources": [
+                        "https://shop.hettich.com/in_EN/-/Catches-for-Quadro-drawer-runners/bp/variant93961068929464",
+                        "https://shop.hettich.com/es_ES/Sistemas-de-correderas/Correderas-ocultas/Correderas-Quadro/Accesorios/Gatillos/Gatillos-para-cajones-de-madera-con-fondo-acanalado-%28Quadro-25-y-Quadro-V6%29-a-la-izquierda/p/9144830",
+                        "https://shop.hettich.com/es_ES/Sistemas-de-correderas/Correderas-ocultas/Correderas-Quadro/Accesorios/Gatillos/Gatillos-para-cajones-de-madera-con-fondo-acanalado-%28Quadro-25-y-Quadro-V6%29-a-la-derecha/p/9144841",
+                    ],
+                },
+            ]
+        )
+        issues.extend(
+            [
+                {
+                    "code": "drawer.bottom_groove_assumption",
+                    "severity": "unknown",
+                    "message": (
+                        "Groove depth is a draft choice. Hettich does not specify "
+                        "its width or depth. Bottom stock is unverified."
+                    ),
+                    "cabinet_id": x["cabinet_id"],
+                    "affected": [f"{x['drawer_id']}.bottom"],
+                }
+                for x in drawer_instances
+            ]
+        )
+        issues.extend(
+            [
+                {
+                    "code": "drawer.rear_corner_clearance_assumption",
+                    "severity": "unknown",
+                    "message": (
+                        f"Draft rear-corner relief is "
+                        f"{_rear_relief_width(x['config'])} "
+                        f"mm wide by {x['config'].bottom_dado_inset} mm high, "
+                        f"through {x['config'].front_back_thickness} mm back stock. "
+                        "This is an unverified reading of the Hettich sketch; "
+                        "confirm before machining."
+                    ),
+                    "cabinet_id": x["cabinet_id"],
+                    "affected": [f"{x['drawer_id']}.back"],
+                }
+                for x in drawer_instances
+                if getattr(x["config"], "buratino_rear_corner_clearance_width_mm", 0)
+            ]
+        )
+        issues.extend(
+            [
+                {
+                    "code": "drawer.fastening_unverified",
+                    "severity": "unknown",
+                    "message": (
+                        "Butt-corner fastening and face attachment are not "
+                        "selected or modeled."
+                    ),
+                    "cabinet_id": x["cabinet_id"],
+                    "affected": [x["drawer_id"]],
+                }
+                for x in drawer_instances
+            ]
+        )
+        issues.extend(
+            [
+                {
+                    "code": "drawer.bracing_unmodeled",
+                    "severity": "unknown",
+                    "message": (
+                        "Planned manual bottom bracing is not modeled. Fit and "
+                        "load path are unverified."
+                    ),
+                    "cabinet_id": x["cabinet_id"],
+                    "affected": [f"{x['drawer_id']}.bottom"],
+                }
+                for x in drawer_instances
+            ]
+        )
+        issues.extend(
+            [
+                {
+                    "code": "drawer.vertical_recipe_unverified",
+                    "severity": "unknown",
+                    "message": (
+                        "Box height and opening clearances are project choices. "
+                        "Confirm runner fit and catch adjustment."
+                    ),
+                    "cabinet_id": x["cabinet_id"],
+                    "affected": [x["drawer_id"]],
+                }
+                for x in drawer_instances
+            ]
+        )
+        issues.extend(
+            [
+                {
+                    "code": "drawer.runner_mounting_unverified",
+                    "severity": "unknown",
+                    "message": (
+                        "Runner mounting, screws and catch machining are not "
+                        "modeled or approved."
+                    ),
+                    "cabinet_id": x["cabinet_id"],
+                    "affected": [x["drawer_id"]],
+                }
+                for x in drawer_instances
+            ]
+        )
+        issues.extend(
+            [
+                {
+                    "code": "drawer.load_capacity_unverified",
+                    "severity": "unknown",
+                    "message": "No assembled-drawer load capacity is established.",
+                    "cabinet_id": x["cabinet_id"],
+                    "affected": [x["drawer_id"]],
+                }
+                for x in drawer_instances
+            ]
+        )
+        issues.append(
+            {
+                "code": "drawer.hardware_limits_unverified",
+                "severity": "unknown",
+                "message": (
+                    "The selected 20 mm width is recorded. Minimum and maximum "
+                    "clearance limits are unresolved."
+                ),
+                "affected": [x["drawer_id"] for x in drawer_instances],
+            }
+        )
+        issues.append(
+            {
+                "code": "drawer.hardware_pack_unverified",
+                "severity": "unknown",
+                "message": "Runner pack sizes and included catches are not confirmed.",
+                "affected": [],
+            }
+        )
+        issues.append(
+            {
+                "code": "drawer.material_unverified",
+                "severity": "unknown",
+                "message": "Drawer stock and measured thicknesses are not confirmed.",
+                "affected": [x["drawer_id"] for x in drawer_instances],
+            }
+        )
+
+    assumptions = project.variables.get("assumptions", [])
+    for assumption in assumptions:
+        issues.append(
+            {
+                "code": "draft.assumption",
+                "severity": "unknown",
+                "message": str(assumption),
+                "affected": [],
+            }
+        )
+    issues.append(
+        {
+            "code": "machining.unverified",
+            "severity": "unknown",
+            "message": (
+                "6x40 Domino selection is fixed. Verify mortise dimensions, "
+                "depths, spacing and quantities before machining."
+            ),
+            "affected": [p["id"] for p in parts if p["component"] != "back"],
+        }
+    )
+    issues.append(
+        {
+            "code": "grain.direction_assumed",
+            "severity": "unknown",
+            "message": (
+                "Grain direction follows native panel length as a draft choice. "
+                "The board product and grain direction are unverified."
+            ),
+            "affected": [p["id"] for p in parts],
+        }
+    )
+
+    space = project.variables.get("space_mm", {})
+    max_width = space.get("width") if isinstance(space, dict) else None
+    max_height = space.get("height") if isinstance(space, dict) else None
+    min_depth = space.get("depth_min") if isinstance(space, dict) else None
+    max_depth = space.get("depth_max") if isinstance(space, dict) else None
+    overall_width = x_run - cabinet_gap
+    overall_height = max(cfg.height for _, cfg in resolved)
+    carcass_depth = max(cfg.depth for _, cfg in resolved)
+    overall_depth = max(
+        entry["bounds_mm"]["max"]["y"] for entry in cabinet_entries
+    ) - min(entry["bounds_mm"]["min"]["y"] for entry in cabinet_entries)
+    if max_width is not None and overall_width > max_width:
+        issues.append(
+            {
+                "code": "survey.width_exceeded",
+                "severity": "error",
+                "message": "Cabinet row exceeds the reported available width.",
+                "affected": ["overall_dimensions_mm.width"],
+            }
+        )
+    if max_height is not None and overall_height > max_height:
+        issues.append(
+            {
+                "code": "survey.height_exceeded",
+                "severity": "error",
+                "message": "Cabinet row exceeds the reported available height.",
+                "affected": ["overall_dimensions_mm.height"],
+            }
+        )
+    overall_closed_depth = overall_depth
+    if min_depth is not None and overall_closed_depth > min_depth:
+        issues.append(
+            {
+                "code": "survey.depth_unconfirmed",
+                "severity": "unknown",
+                "message": (
+                    "Closed overall depth exceeds the reported minimum. Confirm "
+                    "available space."
+                ),
+                "affected": ["overall_dimensions_mm.depth"],
+            }
+        )
+    if max_depth is not None and overall_closed_depth > max_depth:
+        issues.append(
+            {
+                "code": "survey.depth_exceeded",
+                "severity": "error",
+                "message": (
+                    "Closed overall depth exceeds the maximum reported available depth."
+                ),
+                "affected": ["overall_dimensions_mm.depth"],
+            }
+        )
+
+    for item in drawer_instances:
+        if item["config"].opening_depth < hardware_profile["minimum_body_depth_mm"]:
+            issues.append(
+                {
+                    "code": "drawer.runner_depth_does_not_fit",
+                    "severity": "error",
+                    "message": (
+                        "The usable cavity is shorter than the "
+                        f"{hardware_profile['runner_length_mm']} mm runner "
+                        "requirement."
+                    ),
+                    "cabinet_id": item["cabinet_id"],
+                    "affected": [item["drawer_id"]],
+                }
+            )
+
+    grouped = group_cutting_blanks(parts)
+    return Calculation(
+        [cfg for _, cfg in resolved],
+        {
+            "schema_version": 2,
+            "name": project.native_project.name,
+            "input_identity": project.identity,
+            "status": "draft",
+            "validation_status": "blocked",
+            "manufacturing_ready": False,
+            "dimensions_mm": {
+                "width": overall_width,
+                "height": overall_height,
+                "depth": carcass_depth,
+            },
+            "overall_dimensions_mm": {
+                "width": overall_width,
+                "height": overall_height,
+                "depth": overall_depth,
+            },
+            "internal_mm": (
+                {
+                    "width": resolved[0][1].interior_width,
+                    "height": resolved[0][1].interior_height,
+                    "depth": resolved[0][1].interior_depth,
+                }
+                if len(resolved) == 1
+                else None
+            ),
+            "variables": project.variables,
+            "calculated": project.calculated,
+            "cabinets": cabinet_entries,
+            "parts": parts,
+            "drawers": drawers,
+            "drawer_layout": {
+                "display_open_distance_mm": hardware_profile["box_length_mm"],
+                "face_gap_mm": face_gap,
+                "face_thickness_mm": max(
+                    (
+                        panel.thickness
+                        for item in drawer_instances
+                        for panel in [item["face_panel"]]
+                    ),
+                    default=18,
+                ),
+                "face_thickness_by_cabinet_mm": {
+                    cabinet_id: max(thicknesses.values(), default=0)
+                    for (cabinet_id, _), thicknesses in zip(
+                        resolved, face_thickness_by_cabinet, strict=True
+                    )
+                },
+                "face_to_carcass_gap_mm": front_projection,
+            }
+            if drawers
+            else None,
+            "hardware_profile": hardware_profile if drawers else None,
+            "drawer_inputs": None,
+            "grouping_scope": "cutting_blank",
+            "cutting_groups": grouped,
+            "joints": joints,
+            "hardware": hardware,
+            "checks": issues,
+            "explanations": {
+                "carcass_panels": (
+                    "cabineteer.cabinet.carcass_panel_dims and build_cabinet"
+                ),
+                "drawer_dimensions": (
+                    "cabineteer.drawer.DrawerConfig and native part makers"
+                ),
+                "face_dimensions": "cabineteer.cabinet.face_layout",
+            },
+        },
+        drawer_instances,
+    )
+
+
+def make_geometry(calculation: Calculation):
+    """Assemble native cabinet and drawer solids under the stable viewer root."""
+    from dataclasses import replace
+
+    import cadquery as cq
+    from cabineteer.drawer import make_drawer_face
+
+    assembly = cq.Assembly(name="base_cabinet")
+    geometry = []
+    cabinet_x = {
+        entry["id"]: entry["placement_mm"]["x"]
+        for entry in calculation.result["cabinets"]
+    }
+    cabinet_y = {
+        entry["id"]: entry["placement_mm"]["y"]
+        for entry in calculation.result["cabinets"]
+    }
+    # Calculate configs are in project order; cabinet records preserve that order.
+    for cfg, cabinet in zip(
+        calculation.configs, calculation.result["cabinets"], strict=True
+    ):
+        cabinet_id = cabinet["id"]
+        native_assembly, native_parts = _build_native_carcass(cfg)
+        for native_part in native_parts:
+            raw = native_part.name
+            if raw.startswith("drawer"):
+                continue
+            candidates = [
+                p
+                for p in calculation.result["parts"]
+                if p["cabinet_id"] == cabinet_id and p.get("native_name") == raw
+            ]
+            selected = candidates
+            if not selected:
+                selected = [
+                    p
+                    for p in calculation.result["parts"]
+                    if p["cabinet_id"] == cabinet_id
+                    and p["role"].endswith("_" + _slug(raw))
+                ]
+            for record in selected[:2]:
+                obj_name = raw if raw in native_assembly.objects else None
+                if obj_name is None and raw.startswith("bay"):
+                    match = __import__("re").fullmatch(
+                        r"bay(\d+)_(left_side|right_side)", raw
+                    )
+                    if match:
+                        obj_name = f"bay_{match.group(1)}/{match.group(2)}"
+                loc = _native_world_location(native_assembly, obj_name, cq.Location())
+                loc = (
+                    cq.Location((cabinet_x[cabinet_id], cabinet_y[cabinet_id], 0)) * loc
+                )
+                assembly.add(
+                    native_part.shape,
+                    name=record["role"],
+                    loc=loc,
+                    color=cq.Color(0.91, 0.92, 0.90, 1),
+                )
+                geometry.append(native_part)
+    for item in calculation.drawer_instances:
+        cfg = item["config"]
+        cabinet_id = item["cabinet_id"]
+        root = (cabinet_x[cabinet_id], cabinet_y[cabinet_id], 0)
+        for component, shape in item["shapes"].items():
+            if component == "face":
+                continue
+            role = f"{item['role_prefix']}_{component}"
+            offset = item["offsets"][component]
+            position = tuple(
+                root[i] + item["box_position"][axis] + offset[i]
+                for i, axis in enumerate(("x", "y", "z"))
+            )
+            record = next(p for p in calculation.result["parts"] if p["role"] == role)
+            assembly.add(
+                shape,
+                name=role,
+                loc=cq.Location(position),
+                color=cq.Color(0.87, 0.72, 0.53, 1),
+            )
+            from cabineteer.cabinet import PartInfo
+
+            geometry.append(
+                PartInfo(
+                    name=role,
+                    shape=shape,
+                    material_thickness=record["finished_mm"]["thickness"],
+                    grain_direction="length",
+                )
+            )
+        face = item["face_panel"]
+        overlay_x = max(0, (face.width - cfg.opening_width) / 2)
+        overlay_top = calculation.result["variables"].get(
+            "drawer_face_overlay_top_mm", 3
+        )
+        overlay_bottom = calculation.result["variables"].get(
+            "drawer_face_overlay_bottom_mm", 3
+        )
+        face_cfg = replace(
+            cfg,
+            opening_height=face.height - overlay_top - overlay_bottom,
+            face_overlay_sides=overlay_x,
+            face_overlay_top=overlay_top,
+            face_overlay_bottom=overlay_bottom,
+            applied_face=True,
+        )
+        face_shape = make_drawer_face(face_cfg)
+        face_role = f"{item['role_prefix']}_face"
+        face_position = (
+            root[0] + item["face_position"]["x"],
+            root[1] + item["face_position"]["y"],
+            item["face_position"]["z"],
+        )
+        assembly.add(
+            face_shape,
+            name=face_role,
+            loc=cq.Location(face_position),
+            color=cq.Color(0.87, 0.72, 0.53, 1),
+        )
+        from cabineteer.cabinet import PartInfo
+
+        record = next(p for p in calculation.result["parts"] if p["role"] == face_role)
+        geometry.append(
+            PartInfo(
+                name=face_role,
+                shape=face_shape,
+                material_thickness=record["finished_mm"]["thickness"],
+                grain_direction="width",
+            )
+        )
+    return assembly, geometry

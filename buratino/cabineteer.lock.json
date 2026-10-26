@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/chemrich/cabineteer.git",
+  "commit": "191ab1f9cf8ab9c3c9425312cbef07457db99b15",
+  "selected_from": "refs/heads/main",
+  "selected_on": "2026-10-26",
+  "checkout": ".local/cabineteer"
+}

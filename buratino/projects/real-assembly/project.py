@@ -1,0 +1,237 @@
+"""Two equal four-drawer cabinets for a draft side-by-side assembly."""
+
+from dataclasses import replace
+
+from cabineteer.cabinet import CabinetConfig, OpeningConfig
+from cabineteer.joinery import CarcassJoinery, DominoSpec, DrawerJoineryStyle
+from cabineteer.project import CabinetProject, ProjectCabinet, SharedDesign
+
+from buratino.drawers import make_eb20_drawer_config
+
+variables = {
+    # No total installation envelope has been reported for this assembly.
+    "space_mm": {},
+    "first_compartment_space_mm": {
+        "width": 720,
+        "height": 970,
+        "depth_min": 500,
+        "depth_max": 550,
+    },
+    "observations": [
+        (
+            "User-reported space the furniture must fit within; "
+            "this is not a measured fit survey."
+        ),
+        "Depth is reported as 500 to 550 mm. Exact clear depth remains open.",
+    ],
+    "notes": [
+        "The reported 720 x 970 mm space belongs to the first compartment only.",
+        "Available width for the second cabinet and total assembly is unmeasured.",
+        "Final fitting allowance is unmeasured.",
+        "The 1440 mm body width is computed from two selected 720 mm cabinets.",
+        "The two carcasses are intended to be fastened side-to-side.",
+        (
+            "The user has a router and suitable jig for the 6x40 Domino mortises. "
+            "Mortise dimensions, depth, and reference surfaces remain unverified."
+        ),
+    ],
+    "assumptions": [
+        (
+            "Both existing drawer cabinets use the same selected 720 x 920 x "
+            "510 mm carcass dimensions. The second cabinet fit is unverified."
+        ),
+        (
+            "510 mm is the selected carcass depth. The 18 mm faces plus a 2 mm "
+            "face-to-carcass gap make the overall depth 530 mm."
+        ),
+        (
+            "The 6 mm back, its unmachined pocket beneath the top, and its "
+            "fastening are provisional."
+        ),
+        "Runner mounting and box-to-face fastening are not specified for machining.",
+        (
+            "A 180 mm box height and 30 mm base box-bottom clearance are draft "
+            "geometry choices, not Hettich manufacturing dimensions. Calculated "
+            "opening clearances preserve the earlier box positions with the "
+            "native equal-face layout."
+        ),
+        (
+            "The 6 mm bottom groove and 30 x 13 mm rear back-corner clearances "
+            "are draft geometry assumptions, not Hettich manufacturing dimensions."
+        ),
+        (
+            "The 6x40 Domino selection is fixed. The router and suitable jig are "
+            "user-provided; mortise dimensions, depth, and reference surfaces "
+            "remain unverified."
+        ),
+        (
+            "The carcasses are intended to be fastened side-to-side. Fastener "
+            "selection, quantity, capacity, and position remain unverified."
+        ),
+        (
+            "Two future upper cabinets are planned. Their dimensions and connection "
+            "are unknown; they are not modeled."
+        ),
+    ],
+    "width_mm": 720,
+    "height_mm": 920,
+    "depth_mm": 510,
+    "side_thickness_mm": 18,
+    "top_thickness_mm": 18,
+    "bottom_thickness_mm": 18,
+    "back_thickness_mm": 6,
+    "carcass_material": "Melamine-faced board; core and measured thickness unverified",
+    "back_material": "6 mm board; material and fastening unconfirmed",
+    "cabinet_gap_mm": 0,
+    "connections": [
+        {"from": "left-drawers", "to": "right-drawers", "type": "side_to_side"}
+    ],
+    "edge_gap_mm": 2,
+    "front_gap_mm": 2,
+    "drawer_count": 4,
+    "drawer_side_thickness_mm": 16,
+    "drawer_inner_front_back_thickness_mm": 18,
+    "drawer_bottom_thickness_mm": 12,
+    "drawer_bottom_recess_mm": 13,
+    "drawer_bottom_groove_depth_mm": 6,
+    "rear_corner_clearance_width_mm": 30,
+    "runner_length_mm": 480,
+    "drawer_box_height_mm": 180,
+    "drawer_box_bottom_clearance_mm": 30,
+    "drawer_face_thickness_mm": 18,
+    "face_to_carcass_gap_mm": 2,
+    "drawer_face_overlay_top_mm": 3,
+    "drawer_face_overlay_bottom_mm": 3,
+    "drawer_material": "Melamine-faced board; core and measured thickness unverified",
+    "future_upper_cabinet_count": 2,
+    "future_upper_dimensions_mm": None,
+    "future_upper_connection": None,
+}
+variables["face_material"] = variables["drawer_material"]
+
+
+_shared = SharedDesign(
+    side_thickness=variables["side_thickness_mm"],
+    top_thickness=variables["top_thickness_mm"],
+    bottom_thickness=variables["bottom_thickness_mm"],
+    back_thickness=variables["back_thickness_mm"],
+    carcass_material=variables["carcass_material"],
+    face_material=variables["face_material"],
+    drawer_box_thickness=variables["drawer_side_thickness_mm"],
+    drawer_joinery=DrawerJoineryStyle.BUTT,
+    face_gap_mm=variables["front_gap_mm"],
+    face_top_style="plain",
+    face_bottom_style="plain",
+    carcass_joinery=CarcassJoinery.FLOATING_TENON,
+    back_style="under_top",
+    back_capture="pocket",
+    domino_spec=DominoSpec(size_key="6x40"),
+)
+_base_config = CabinetConfig(
+    width=variables["width_mm"],
+    height=variables["height_mm"],
+    depth=variables["depth_mm"],
+    openings=[],
+    columns=[],
+    leg_count=0,
+)
+_base_project = CabinetProject(
+    name="real-assembly",
+    cabinets=(
+        ProjectCabinet(name="left-drawers", config=_base_config),
+        ProjectCabinet(name="right-drawers", config=_base_config),
+    ),
+    shared=_shared,
+)
+_resolved = dict(_base_project.resolved())
+_left = _resolved["left-drawers"]
+
+# Use the same native opening and box layout for each cabinet.
+calculated = {
+    "body_assembly_width_mm": 2 * variables["width_mm"],
+    "closed_depth_mm": (
+        variables["depth_mm"]
+        + variables["drawer_face_thickness_mm"]
+        + variables["face_to_carcass_gap_mm"]
+    ),
+    "interior_mm": {
+        "width": _left.interior_width,
+        "height": _left.interior_height,
+        "depth": _left.interior_depth,
+    },
+    "front_height_mm": (
+        variables["height_mm"]
+        - 2 * variables["edge_gap_mm"]
+        - (variables["drawer_count"] - 1) * variables["front_gap_mm"]
+    )
+    / variables["drawer_count"],
+}
+_opening_start = _left.bottom_thickness
+_opening_boundaries = [
+    _opening_start,
+    *(
+        variables["edge_gap_mm"]
+        + index * (calculated["front_height_mm"] + variables["front_gap_mm"])
+        - variables["front_gap_mm"] / 2
+        for index in range(1, variables["drawer_count"])
+    ),
+    _left.height - _left.top_thickness,
+]
+calculated["opening_heights_mm"] = [
+    _opening_boundaries[index + 1] - _opening_boundaries[index]
+    for index in range(variables["drawer_count"])
+]
+calculated["box_bottom_clearances_mm"] = [
+    _left.bottom_thickness
+    + index * calculated["interior_mm"]["height"] / variables["drawer_count"]
+    + variables["drawer_box_bottom_clearance_mm"]
+    - _opening_boundaries[index]
+    for index in range(variables["drawer_count"])
+]
+
+
+def _cabinet(name):
+    openings = tuple(
+        OpeningConfig(
+            height_mm=calculated["opening_heights_mm"][index],
+            opening_type="drawer",
+            slide_key="buratino_hettich_quadro_v6_eb20_480",
+        )
+        for index in range(variables["drawer_count"])
+    )
+    return ProjectCabinet(
+        name=name, config=replace(_base_config, openings=list(openings))
+    )
+
+
+project = CabinetProject(
+    name="real-assembly",
+    cabinets=(_cabinet("left-drawers"), _cabinet("right-drawers")),
+    shared=_shared,
+)
+
+drawer_configs = {
+    f"{cabinet_name}/column-0/opening-{index}": make_eb20_drawer_config(
+        opening_width=calculated["interior_mm"]["width"],
+        opening_height=calculated["opening_heights_mm"][index],
+        opening_depth=calculated["interior_mm"]["depth"],
+        side_thickness=variables["drawer_side_thickness_mm"],
+        front_back_thickness=variables["drawer_inner_front_back_thickness_mm"],
+        bottom_thickness=variables["drawer_bottom_thickness_mm"],
+        bottom_dado_depth=variables["drawer_bottom_groove_depth_mm"],
+        bottom_dado_inset=variables["drawer_bottom_recess_mm"],
+        box_height=variables["drawer_box_height_mm"],
+        vertical_gap=calculated["box_bottom_clearances_mm"][index],
+        front_gap=0,
+        face_thickness=variables["drawer_face_thickness_mm"],
+        face_overlay_sides=_left.side_thickness - variables["edge_gap_mm"],
+        face_overlay_top=variables["drawer_face_overlay_top_mm"],
+        face_overlay_bottom=variables["drawer_face_overlay_bottom_mm"],
+        material=variables["drawer_material"],
+        joinery_style=DrawerJoineryStyle.BUTT,
+        rear_corner_clearance_width_mm=variables["rear_corner_clearance_width_mm"],
+        runner_length_mm=variables["runner_length_mm"],
+    )
+    for cabinet_name in ("left-drawers", "right-drawers")
+    for index in range(variables["drawer_count"])
+}

@@ -1,0 +1,37 @@
+[project]
+name = "buratino"
+version = "0.1.0"
+description = "Local file-driven cabinet design based on Cabineteer"
+requires-python = ">=3.12,<3.13"
+dependencies = ["cabineteer[cad]", "cadquery==2.5.2"]
+
+[project.scripts]
+buratino = "buratino.cli:main"
+
+[dependency-groups]
+dev = ["pytest==8.4.1", "ruff==0.12.8"]
+
+[tool.uv.sources]
+cabineteer = { path = ".local/cabineteer" }
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+buratino = ["assets/*.js", "assets/*.css"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -p no:cacheprovider"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+extend-exclude = [".local"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
