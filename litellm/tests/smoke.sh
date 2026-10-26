@@ -19,11 +19,18 @@ export PATH="$test_dir/bin:$PATH"
 cat > "$test_dir/bin/security" <<'MOCK'
 #!/usr/bin/env bash
 if [[ "${LITELLM_SMOKE_KEYCHAIN:-}" == missing ]]; then exit 44; fi
+if [[ "$*" == *projectslatte.litellm.mistral* ]]; then
+  case "${LITELLM_SMOKE_KEYCHAIN:-}" in
+    missing-mistral) exit 44 ;;
+    empty-mistral) exit 0 ;;
+  esac
+fi
 case "$*" in
   *projectslatte.litellm.master*) printf 'sk-local-smoke-master-1234567890\n' ;;
   *projectslatte.litellm.salt*) printf 'local-smoke-salt-1234567890\n' ;;
   *projectslatte.litellm.postgres*) printf 'local-smoke-postgres-password\n' ;;
   *projectslatte.litellm.openrouter*) printf 'sk-local-smoke-openrouter\n' ;;
+  *projectslatte.litellm.mistral*) printf 'local-smoke-mistral\n' ;;
   *) exit 44 ;;
 esac
 MOCK
@@ -84,6 +91,13 @@ if LITELLM_SMOKE_KEYCHAIN=missing "$command" start > "$test_dir/missing.log" 2>&
   printf 'Missing Keychain item did not stop startup.\n' >&2; exit 1
 fi
 assert_stopped
+for keychain_case in missing-mistral empty-mistral; do
+  if LITELLM_SMOKE_KEYCHAIN="$keychain_case" "$command" start > "$test_dir/$keychain_case.log" 2>&1; then
+    printf 'Unavailable Mistral key did not stop startup.\n' >&2; exit 1
+  fi
+  grep -q 'Keychain item: projectslatte.litellm.mistral' "$test_dir/$keychain_case.log"
+  assert_stopped
+done
 if LITELLM_BACKUP_DIR="$test_dir/public" "$command" start > "$test_dir/public.log" 2>&1; then
   printf 'Public backup directory did not stop startup.\n' >&2; exit 1
 fi
@@ -110,9 +124,17 @@ PY
 first_type="$(compose exec -T --user postgres postgres pgbackrest --stanza=litellm info --output=json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["backup"][-1]["type"])')"
 [[ "$first_type" == full ]]
 
+# No provider request: an unauthenticated native call must be rejected locally.
+status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  -X POST http://127.0.0.1:4000/mistral/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"zai-glm-5-3","messages":[{"role":"user","content":"hello"}]}')"
+[[ "$status" == 401 ]]
+compose exec -T proxy python -c 'from pathlib import Path; assert b"MISTRAL_API_KEY=local-smoke-mistral" in Path("/proc/1/environ").read_bytes().split(b"\0")'
+
 proxy_id="$(compose ps -q proxy)"
 postgres_id="$(compose ps -q postgres)"
-for value in 'sk-local-smoke-master-1234567890' 'local-smoke-salt-1234567890' 'local-smoke-postgres-password' 'sk-local-smoke-openrouter'; do
+for value in 'sk-local-smoke-master-1234567890' 'local-smoke-salt-1234567890' 'local-smoke-postgres-password' 'sk-local-smoke-openrouter' 'local-smoke-mistral'; do
   if "$DOCKER_REAL" inspect "$proxy_id" "$postgres_id" | grep -Fq "$value"; then
     printf 'A secret value appeared in docker inspect.\n' >&2; exit 1
   fi
@@ -151,7 +173,7 @@ key_response="$(curl --silent --show-error --fail \
   -X POST http://127.0.0.1:4000/key/generate \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer sk-local-smoke-master-1234567890' \
-  -d "{\"key_alias\":\"$key_alias\",\"models\":[\"agent-cheap\"]}")"
+  -d "{\"key_alias\":\"$key_alias\",\"models\":[\"agent-fast\"]}")"
 printf '%s' "$key_response" | python3 -c 'import json,sys; assert json.load(sys.stdin).get("key")'
 unset key_response
 has_key_alias() {
@@ -167,7 +189,7 @@ has_key_alias
 grep -q 'Starting incr backup.' "$test_dir/manual.log"
 [[ "$(count_backups)" == 3 ]]
 
-for value in 'sk-local-smoke-master-1234567890' 'local-smoke-salt-1234567890' 'local-smoke-postgres-password' 'sk-local-smoke-openrouter'; do
+for value in 'sk-local-smoke-master-1234567890' 'local-smoke-salt-1234567890' 'local-smoke-postgres-password' 'sk-local-smoke-openrouter' 'local-smoke-mistral'; do
   if grep -Fq "$value" "$test_dir"/*.log; then
     printf 'A secret value appeared in command output.\n' >&2; exit 1
   fi

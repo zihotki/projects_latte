@@ -30,8 +30,9 @@ load_keychain_secret master LITELLM_MASTER_KEY \
   && load_keychain_secret salt LITELLM_SALT_KEY \
   && load_keychain_secret postgres POSTGRES_PASSWORD \
   && load_keychain_secret openrouter OPENROUTER_API_KEY \
+  && load_keychain_secret mistral MISTRAL_API_KEY \
   || {
-    unset LITELLM_MASTER_KEY LITELLM_SALT_KEY POSTGRES_PASSWORD OPENROUTER_API_KEY
+    unset LITELLM_MASTER_KEY LITELLM_SALT_KEY POSTGRES_PASSWORD OPENROUTER_API_KEY MISTRAL_API_KEY
     unset -f load_keychain_secret
     return 1
   }

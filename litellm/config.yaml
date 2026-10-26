@@ -1,13 +1,111 @@
+# Task aliases keep model and provider routing outside client agents.
 model_list:
-  - model_name: agent-cheap
-    litellm_params:
+  - model_name: agent-fast
+    litellm_params: &qwen_flash
+      model: openrouter/qwen/qwen3.8-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      order: 1
+      num_retries: 0
+      extra_body:
+        provider:
+          require_parameters: true
+          only: [alibaba]
+          allow_fallbacks: false
+          max_price: {prompt: 0.23}
+          # Alibaba reports unknown precision. This is an explicit exception.
+
+  - model_name: agent-code
+    litellm_params: &deepseek_flash
+      model: openrouter/deepseek/deepseek-v4-flash-0731
+      api_key: os.environ/OPENROUTER_API_KEY
+      order: 1
+      num_retries: 0
+      extra_body:
+        provider:
+          require_parameters: true
+          quantizations: [fp8]
+          order: [baseten/fp8, deepinfra/fp8]
+          only: [baseten/fp8, deepinfra/fp8]
+          allow_fallbacks: true
+          max_price: {prompt: 0.23}
+
+  - model_name: agent-tools
+    litellm_params: &mimo_flash
+      model: openrouter/xiaomi/mimo-v2.6-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      order: 1
+      num_retries: 0
+      extra_body:
+        provider:
+          require_parameters: true
+          quantizations: [fp8]
+          order: [inference-net/fp8, xiaomi/fp8]
+          only: [inference-net/fp8, xiaomi/fp8]
+          allow_fallbacks: true
+          max_price: {prompt: 0.23}
+
+  - model_name: agent-review
+    litellm_params: &glm_flash
       model: openrouter/z-ai/glm-5.3-flash
       api_key: os.environ/OPENROUTER_API_KEY
-  - model_name: agent-strong
-    litellm_params:
+      order: 1
+      num_retries: 0
+      extra_body:
+        provider:
+          require_parameters: true
+          quantizations: [fp8]
+          order: [baseten/fp8, nextbit/fp8]
+          only: [baseten/fp8, nextbit/fp8]
+          allow_fallbacks: true
+          max_price: {prompt: 0.23}
+
+  - model_name: agent-reasoning
+    litellm_params: &glm_reasoning
       model: openrouter/z-ai/glm-5.3
       api_key: os.environ/OPENROUTER_API_KEY
+      order: 1
+      num_retries: 0
+      extra_body:
+        provider:
+          require_parameters: true
+          quantizations: [fp8]
+          order: [sail-research/fp8, morph/fp8]
+          only: [sail-research/fp8, morph/fp8]
+          allow_fallbacks: true
+          max_price: {prompt: 0.23}
+
+  # Each alias has one fallback model. Anchors share backend policy.
+  - model_name: agent-fast
+    litellm_params:
+      <<: *mimo_flash
+      order: 2
+  - model_name: agent-code
+    litellm_params:
+      <<: *mimo_flash
+      order: 2
+  - model_name: agent-tools
+    litellm_params:
+      <<: *deepseek_flash
+      order: 2
+  - model_name: agent-review
+    litellm_params:
+      <<: *deepseek_flash
+      order: 2
+  - model_name: agent-reasoning
+    litellm_params:
+      <<: *glm_flash
+      order: 2
+
+router_settings:
+  max_fallbacks: 1
+  model_group_retry_policy:
+    agent-fast: {DefaultRetries: 0}
+    agent-code: {DefaultRetries: 0}
+    agent-tools: {DefaultRetries: 0}
+    agent-review: {DefaultRetries: 0}
+    agent-reasoning: {DefaultRetries: 0}
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL
+  disable_env_credential_login: true

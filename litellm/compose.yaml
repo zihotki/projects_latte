@@ -53,6 +53,7 @@ services:
       - litellm_salt_key
       - postgres_password
       - openrouter_api_key
+      - mistral_api_key
     volumes:
       - ./bin/proxy-entrypoint:/usr/local/bin/proxy-entrypoint:ro
       - ./config.yaml:/app/config.yaml:ro
@@ -66,6 +67,8 @@ secrets:
     environment: POSTGRES_PASSWORD
   openrouter_api_key:
     environment: OPENROUTER_API_KEY
+  mistral_api_key:
+    environment: MISTRAL_API_KEY
 
 volumes:
   postgres-data:

@@ -7,7 +7,7 @@ installation is required.
 
 ## First setup
 
-Create four generic-password items in macOS Keychain. Run each command and
+Create five generic-password items in macOS Keychain. Run each command and
 enter the secret at the prompt. The final `-w` is intentional: it prompts for
 the value, so the value is absent from the command arguments and shell history.
 Use long, distinct random values. The master key must start with `sk-`. Keep
@@ -18,6 +18,7 @@ security add-generic-password -a "$USER" -s projectslatte.litellm.master -w
 security add-generic-password -a "$USER" -s projectslatte.litellm.salt -w
 security add-generic-password -a "$USER" -s projectslatte.litellm.postgres -w
 security add-generic-password -a "$USER" -s projectslatte.litellm.openrouter -w
+security add-generic-password -a "$USER" -s projectslatte.litellm.mistral -w
 ```
 
 These commands do not replace an existing item. Import the original salt key
@@ -68,10 +69,137 @@ Open the LiteLLM Admin UI at `http://127.0.0.1:4000/ui` while the gateway runs.
 Use the Keychain master key only for administration. Create one virtual key
 for each app, limit it to the required model aliases, and set a budget as
 needed. Give the app its own key and the base URL
-`http://127.0.0.1:4000/v1`. The tracked aliases are `agent-cheap` and
-`agent-strong` in [`config.yaml`](config.yaml). Changing a route there does
-not change stored virtual keys. OpenRouter requests can spend provider credit;
-the automated checks do not send one.
+`http://127.0.0.1:4000/v1`. Grant the required task aliases from
+[`config.yaml`](config.yaml) on that key. A config change does not change
+stored virtual-key permissions. OpenRouter requests can spend provider
+credit; the automated checks do not send one.
+
+## Mistral native pass-through
+
+Use the connection name `mistral-native` for clients and a dedicated virtual
+key. This name identifies the connection; it is not a LiteLLM model alias.
+
+| Setting | Value |
+| --- | --- |
+| Connection name / virtual-key alias | `mistral-native` |
+| Client base URL | `http://127.0.0.1:4000/mistral/v1` |
+| Chat Completions endpoint | `http://127.0.0.1:4000/mistral/v1/chat/completions` |
+| Model ID | `zai-glm-5-3` |
+| Reasoning effort | `low` (send `reasoning_effort` in each request) |
+| Client authentication | LiteLLM virtual key |
+| Provider key | Keychain item `projectslatte.litellm.mistral` |
+
+The secret loader reads the provider key from Keychain. Compose mounts it as
+`mistral_api_key`, and the entrypoint exports `MISTRAL_API_KEY` inside the
+proxy process. No `.env` file or second copy in the UI is needed. The key is
+required at startup, like the other gateway secrets.
+
+The built-in `/mistral/*` route forwards native requests to Mistral without
+LiteLLM model routing or format translation. Use Mistral's exact model ID in
+the request. A model registration in the UI or `model_list` creates a separate
+standard API route; it does not create an alias for native pass-through.
+Existing OpenRouter routes and registrations are separate.
+
+Set `reasoning_effort` to `low` in the client request defaults. Native
+pass-through does not apply defaults from a LiteLLM model registration.
+Clients must handle Mistral's native response format, including content
+chunks when present.
+
+Create a dedicated virtual key with alias `mistral-native` and
+`allowed_routes: ["/mistral/*"]`. This permits native Mistral routes and blocks
+the standard LiteLLM API. Check its access before giving it to a client. Do not
+assume that permissions for the `agent-*` aliases grant native access or that
+model restrictions have the same effect on both routes. LiteLLM documents
+logging and streaming support for Mistral pass-through, but no cost tracking.
+Do not rely on this route for cost-based budget enforcement.
+
+After adding the Keychain item and changing Compose, recreate only the proxy
+while PostgreSQL is running. Run this from the repository root with no other
+session command in progress. It loads the current `config.yaml` too.
+
+```bash
+(
+  set -e
+  source litellm/lib/secrets.sh
+  docker compose -f litellm/compose.yaml up -d --no-deps --force-recreate proxy
+)
+```
+
+For a new session, use `./scripts/litellm.sh start` as usual. `start` does not
+recreate a proxy that is already running.
+
+Example native request (uses provider credit). Set `LITELLM_API_KEY` to the
+client's virtual key before running it.
+
+```bash
+curl --fail-with-body --silent --show-error \
+  http://127.0.0.1:4000/mistral/v1/chat/completions \
+  -H "Authorization: Bearer $LITELLM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"zai-glm-5-3","messages":[{"role":"user","content":"Reply with OK."}],"reasoning_effort":"low","max_tokens":128}'
+```
+
+See [LiteLLM Mistral pass-through](https://docs.litellm.ai/docs/pass_through/mistral)
+and [Mistral GLM 5.3](https://docs.mistral.ai/models/zai-glm-5-3).
+
+## Model routing for agents
+
+The gateway exposes five task aliases. Each has a different primary model
+and one fallback. The roles are intended uses, not measured quality rankings.
+
+| Alias | Intended use | Primary model | Fallback model |
+| --- | --- | --- | --- |
+| `agent-fast` | Extraction, classification, short text | Qwen 3.8 Flash | MiMo 2.6 Flash |
+| `agent-code` | Python, SQL, code generation | DeepSeek V4 Flash 0731 | MiMo 2.6 Flash |
+| `agent-tools` | Tool calls and agent workflows | MiMo 2.6 Flash | DeepSeek V4 Flash 0731 |
+| `agent-review` | Code review and verification | GLM 5.3 Flash | DeepSeek V4 Flash 0731 |
+| `agent-reasoning` | Complex analysis and planning | GLM 5.3 | GLM 5.3 Flash |
+
+Each alias has two `model_list` entries with the same `model_name`. The
+primary has `litellm_params.order: 1`; its fallback has `order: 2`. Backend
+settings are shared through YAML anchors. kagent needs the gateway URL,
+its virtual key, and one task alias. Model and provider selection stay in
+LiteLLM.
+
+All OpenRouter task routes require support for the request parameters and
+limit input pricing to $0.23 per million tokens. There is no output-price cap. GLM 5.3
+currently costs about $3.07-$3.40 per million output tokens on the approved
+endpoints, so use `agent-reasoning` only when that cost is justified.
+Prices can change; the input cap applies to each OpenRouter request.
+
+Open-weight backends require FP8. Qwen uses Alibaba only, whose reported
+precision is unknown; this is the one explicit precision exception.
+Provider order and allowlists are defined in `config.yaml`. MiMo prefers
+InferenceNet, then Xiaomi. DeepSeek prefers Baseten, then DeepInfra. GLM
+Flash prefers Baseten, then NextBit. GLM 5.3 prefers Sail Research, then
+Morph. These choices use current endpoint metadata and still need live
+quality tests.
+
+There are zero retries within a deployment and one fallback model per
+alias. Fallback applies to errors other than HTTP 429 too. If both models
+fail, the error returns to the app. OpenRouter may also try the second
+approved provider for a model. Client-supplied routing or retry overrides
+are not blocked by this configuration; use key restrictions and request
+validation when a strict access boundary is required.
+
+### Alias migration
+
+The old aliases have been removed. Existing agents and their virtual-key
+grants must be updated separately before they can use this catalog.
+These mappings are starting points; choose the alias for the agent's task.
+
+| Removed alias | Suggested task alias |
+| --- | --- |
+| `custodea-python-author`, `agent-author` | `agent-code` |
+| `custodea-fast`, `agent-cheap`, `agent-qwen-flash` | `agent-fast` |
+| `custodea-capable` | `agent-review` |
+| `agent-strong` | `agent-reasoning` |
+| `agent-mimo-flash-fp8` | `agent-tools` |
+
+Do not put upstream model IDs, provider keys, or fallback lists in kagent.
+After an edit to `config.yaml`, restart the proxy to load the file. Its
+Compose configuration loads this file at startup and has no live reload
+endpoint. A proxy restart leaves PostgreSQL and its data volume running.
 
 The host port is bound to loopback. Other computers cannot reach it through
 the host network. Anyone with local Docker control or access to the running

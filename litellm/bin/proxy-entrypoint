@@ -40,6 +40,11 @@ if ! OPENROUTER_API_KEY="$(read_secret openrouter_api_key)"; then
 fi
 export OPENROUTER_API_KEY
 
+if ! MISTRAL_API_KEY="$(read_secret mistral_api_key)"; then
+  exit 1
+fi
+export MISTRAL_API_KEY
+
 postgres_password_urlencoded="$(
   printf '%s' "$postgres_password" \
     | python3 -c 'from urllib.parse import quote; import sys; print(quote(sys.stdin.read(), safe=""))'
