@@ -22,12 +22,38 @@ def test_real_assembly_keeps_two_equal_independent_drawer_carcasses(root):
         0,
         720,
     ]
-    assert result["dimensions_mm"] == {"width": 1440, "height": 930, "depth": 510}
+    assert result["dimensions_mm"] == {"width": 1440, "height": 1030, "depth": 510}
     assert result["overall_dimensions_mm"] == {
         "width": 1440,
-        "height": 930,
+        "height": 1030,
         "depth": 530,
     }
+    assert [cabinet["placement_mm"]["z"] for cabinet in result["cabinets"]] == [
+        50,
+        50,
+    ]
+    assert [cabinet["bounds_mm"]["max"]["z"] for cabinet in result["cabinets"]] == [
+        980,
+        980,
+    ]
+
+    frames = {frame["id"]: frame for frame in result["frames"]}
+    assert set(frames) == {"bottom", "top"}
+    assert {
+        frame_id: (
+            frame["width"],
+            frame["depth"],
+            frame["height"],
+            frame["thickness"],
+            frame["z"],
+        )
+        for frame_id, frame in frames.items()
+    } == {
+        "bottom": (1440, 510, 50, 18, 0),
+        "top": (1440, 380, 50, 18, 980),
+    }
+    assert all("plywood" in frame["material"].lower() for frame in frames.values())
+    assert frames["top"]["y"] + frames["top"]["depth"] == 510
 
     carcass_sides = [
         part
@@ -45,7 +71,22 @@ def test_real_assembly_keeps_two_equal_independent_drawer_carcasses(root):
     )
     assert runner["length_mm"] == 480
     assert runner["part_numbers"] == ["9047756", "9047757"]
-    assert len(result["parts"]) == 58
+    frame_ids = {
+        f"frame.{frame_id}.{rail}"
+        for frame_id in ("bottom", "top")
+        for rail in ("front", "back", "left", "right")
+    }
+    assert frame_ids <= {part["id"] for part in result["parts"]}
+    assert len(result["parts"]) == 66
+
+    frame_cut_groups = [
+        group for group in result["cutting_groups"] if set(group["members"]) & frame_ids
+    ]
+    assert sorted(group["quantity"] for group in frame_cut_groups) == [2, 2, 4]
+    grouped_frame_ids = set().union(
+        *(set(group["members"]) for group in frame_cut_groups)
+    )
+    assert grouped_frame_ids == frame_ids
 
     connection = next(
         joint for joint in result["joints"] if joint["type"] == "cabinet_connection"
@@ -137,3 +178,40 @@ def test_real_assembly_front_gap_and_native_geometry(root):
     assert sorted((box.xmin, box.xmax) for box in side_boxes) == pytest.approx(
         [(0, 18), (702, 720), (720, 738), (1422, 1440)]
     )
+
+
+def test_real_assembly_frame_rails_have_native_geometry(root):
+    calculation = calculate(load_project(root / "projects/real-assembly"))
+    result = calculation.result
+    assembly, geometry = make_geometry(calculation)
+
+    frame_parts = [part for part in result["parts"] if part["id"].startswith("frame.")]
+    assert len(frame_parts) == 8
+    assert len(geometry) == len(result["parts"])
+    expected_rails = {
+        "frame.bottom.front": ((0, 0, 0), (1440, 18, 50)),
+        "frame.bottom.back": ((0, 492, 0), (1440, 18, 50)),
+        "frame.bottom.left": ((0, 18, 0), (18, 474, 50)),
+        "frame.bottom.right": ((1422, 18, 0), (18, 474, 50)),
+        "frame.top.front": ((0, 130, 980), (1440, 18, 50)),
+        "frame.top.back": ((0, 492, 980), (1440, 18, 50)),
+        "frame.top.left": ((0, 148, 980), (18, 344, 50)),
+        "frame.top.right": ((1422, 148, 980), (18, 344, 50)),
+    }
+    for part in frame_parts:
+        box = assembly.objects[part["role"]].toCompound().BoundingBox()
+        pos = part["position_mm"]
+        size = part["size_mm"]
+        expected_pos, expected_size = expected_rails[part["id"]]
+        assert tuple(pos[axis] for axis in ("x", "y", "z")) == expected_pos
+        assert tuple(size[axis] for axis in ("x", "y", "z")) == expected_size
+        assert (box.xmin, box.ymin, box.zmin) == pytest.approx(
+            (pos["x"], pos["y"], pos["z"])
+        )
+        assert (box.xmax, box.ymax, box.zmax) == pytest.approx(
+            (
+                pos["x"] + size["x"],
+                pos["y"] + size["y"],
+                pos["z"] + size["z"],
+            )
+        )

@@ -7,9 +7,8 @@ import re
 from dataclasses import dataclass
 
 from .drawers import (
-    EB20_SLIDE_KEYS,
-    HETTICH_PROFILES,
     drawer_shapes,
+    eb20_profile_for_key,
     register_eb20_profile,
     validate_drawer_config,
 )
@@ -192,10 +191,14 @@ def _native_drawer_config(
         cfg.buratino_material = project.variables.get(
             "drawer_material", "drawer_stock_unverified"
         )
-    if cfg.slide_key != EB20_SLIDE_KEYS[project.variables.get("runner_length_mm", 450)]:
+    try:
+        profile = eb20_profile_for_key(cfg.slide_key)
+    except ValueError as exc:
+        raise InputError("unsupported_drawer_profile", str(exc), key) from exc
+    if opening.slide_key is not None and cfg.slide_key != opening.slide_key:
         raise InputError(
-            "unsupported_drawer_profile",
-            "Use the registered Hettich EB20 profile for the selected length.",
+            "drawer_config_slide_mismatch",
+            "DrawerConfig slide_key must match the opening slide_key.",
             key,
         )
     if not hasattr(cfg, "buratino_box_bottom_clearance_mm"):
@@ -215,7 +218,7 @@ def _native_drawer_config(
         validate_drawer_config(cfg)
     except (ValueError, TypeError) as exc:
         raise InputError("invalid_drawer_config", str(exc), key) from exc
-    if cfg.box_depth != project.variables.get("runner_length_mm", 450):
+    if cfg.box_depth != profile["runner_length_mm"]:
         raise InputError(
             "unsupported_runner_length",
             "Drawer box depth must match the selected runner length.",
@@ -244,13 +247,8 @@ def calculate(project: ProjectInputs) -> Calculation:
             "empty_project", "A project must contain at least one cabinet."
         )
     cabinet_gap = project.variables.get("cabinet_gap_mm", 0)
-    if project.variables.get("runner_length_mm", 450) not in HETTICH_PROFILES:
-        raise InputError(
-            "unsupported_runner_length",
-            "This profile supports only 450 or 480 mm runners.",
-            "runner_length_mm",
-        )
-    hardware_profile = HETTICH_PROFILES[project.variables.get("runner_length_mm", 450)]
+    cabinet_z = project.variables.get("cabinet_base_z_mm", 0)
+    _require_nonnegative_mm(cabinet_z, "cabinet_base_z_mm")
     face_gap = project.variables.get("front_gap_mm", 2)
     edge_gap = project.variables.get("edge_gap_mm", 2)
     front_projection = project.variables.get("face_to_carcass_gap_mm", 0)
@@ -265,15 +263,27 @@ def calculate(project: ProjectInputs) -> Calculation:
     # Resolve and validate every actual drawer before any native CAD build.
 
     drawer_configs = {}
+    cabinet_slide_keys = {}
     for cabinet_id, config in resolved:
         for ci, bay in enumerate(_local_columns(config)):
             for oi, slot in enumerate(opening_stack(bay)):
                 if slot.opening.opening_type == "drawer":
-                    drawer_configs[_drawer_key(cabinet_id, ci, oi)] = (
-                        _native_drawer_config(
-                            project, cabinet_id, ci, oi, config, bay, slot.opening
-                        )
+                    drawer_key = _drawer_key(cabinet_id, ci, oi)
+                    drawer = _native_drawer_config(
+                        project, cabinet_id, ci, oi, config, bay, slot.opening
                     )
+                    if (
+                        cabinet_id in cabinet_slide_keys
+                        and cabinet_slide_keys[cabinet_id] != drawer.slide_key
+                    ):
+                        raise InputError(
+                            "cabinet_runner_profile_mismatch",
+                            "All drawers in a cabinet must use the same "
+                            "runner profile.",
+                            cabinet_id,
+                        )
+                    cabinet_slide_keys[cabinet_id] = drawer.slide_key
+                    drawer_configs[drawer_key] = drawer
 
     parts: list[dict] = []
     drawers: list[dict] = []
@@ -631,6 +641,8 @@ def calculate(project: ProjectInputs) -> Calculation:
                 drawers.append(
                     {
                         "instance_id": drawer_id,
+                        "slide_key": drawer_cfg.slide_key,
+                        "hardware_profile": eb20_profile_for_key(drawer_cfg.slide_key),
                         "drawer_index": local_index,
                         "column_index": ci,
                         "opening_index": oi,
@@ -686,23 +698,138 @@ def calculate(project: ProjectInputs) -> Calculation:
             {
                 "id": cabinet_id,
                 "name": cabinet_id,
-                "placement_mm": {"x": x0, "y": y0, "z": 0},
+                "slide_key": cabinet_slide_keys.get(cabinet_id),
+                "hardware_profile": (
+                    eb20_profile_for_key(cabinet_slide_keys[cabinet_id])
+                    if cabinet_id in cabinet_slide_keys
+                    else None
+                ),
+                "placement_mm": {"x": x0, "y": y0, "z": cabinet_z},
                 "dimensions_mm": {
                     "width": config.width,
                     "height": config.height,
                     "depth": config.depth,
                 },
                 "bounds_mm": {
-                    "min": {"x": x0, "y": y0 - face_depth, "z": 0},
+                    "min": {"x": x0, "y": y0 - face_depth, "z": cabinet_z},
                     "max": {
                         "x": x0 + config.width,
                         "y": y0 + config.depth,
-                        "z": config.height,
+                        "z": cabinet_z + config.height,
                     },
                 },
             }
         )
         x_run += config.width + cabinet_gap
+
+    # Frames are authored separately from native cabinets. Each is four butt rails.
+    frames = project.variables.get("frames", [])
+    if not isinstance(frames, list):
+        raise InputError("invalid_frames", "frames must be a list.", "frames")
+    seen_frames = set()
+    for frame in frames:
+        if not isinstance(frame, dict):
+            raise InputError("invalid_frames", "Each frame must be a map.", "frames")
+        frame_id = frame.get("id")
+        if (
+            not isinstance(frame_id, str)
+            or not frame_id
+            or _slug(frame_id) != frame_id
+            or frame_id in seen_frames
+        ):
+            raise InputError(
+                "invalid_frames", "Frame IDs must be unique simple names.", "frames"
+            )
+        seen_frames.add(frame_id)
+        for key in ("width", "depth", "height", "thickness", "x", "y", "z"):
+            _require_nonnegative_mm(frame.get(key), f"frames.{frame_id}.{key}")
+        width, depth, height, thickness = (
+            frame[k] for k in ("width", "depth", "height", "thickness")
+        )
+        if (
+            height <= 0
+            or thickness <= 0
+            or width <= 2 * thickness
+            or depth <= 2 * thickness
+        ):
+            raise InputError(
+                "invalid_frames",
+                "Frame dimensions must leave an open center.",
+                f"frames.{frame_id}",
+            )
+        material = frame.get("material")
+        if not isinstance(material, str) or not material:
+            raise InputError(
+                "invalid_frames",
+                "Frame material must be described.",
+                f"frames.{frame_id}.material",
+            )
+        x, y, z = (frame[k] for k in ("x", "y", "z"))
+        for rail, length, position, size, axis, normal in (
+            ("front", width, (x, y, z), (width, thickness, height), "x", "y"),
+            (
+                "back",
+                width,
+                (x, y + depth - thickness, z),
+                (width, thickness, height),
+                "x",
+                "y",
+            ),
+            (
+                "left",
+                depth - 2 * thickness,
+                (x, y + thickness, z),
+                (thickness, depth - 2 * thickness, height),
+                "y",
+                "x",
+            ),
+            (
+                "right",
+                depth - 2 * thickness,
+                (x + width - thickness, y + thickness, z),
+                (thickness, depth - 2 * thickness, height),
+                "y",
+                "x",
+            ),
+        ):
+            role = f"frame_{frame_id}_{rail}"
+            parts.append(
+                {
+                    "id": f"frame.{frame_id}.{rail}",
+                    "role": role,
+                    "scene_name": role,
+                    "frame_id": frame_id,
+                    "component": "frame_rail",
+                    "quantity": 1,
+                    "finished_mm": {
+                        "length": length,
+                        "width": height,
+                        "thickness": thickness,
+                    },
+                    "material": material,
+                    "edge_treatment": "unconfirmed",
+                    "grain_direction": "length",
+                    "grain_axis_local": axis,
+                    "surface_normal_axis_local": normal,
+                    "grain_status": "assumed",
+                    "position_mm": dict(zip(("x", "y", "z"), position, strict=True)),
+                    "size_mm": dict(zip(("x", "y", "z"), size, strict=True)),
+                }
+            )
+        issues.append(
+            {
+                "code": "frame.construction_unverified",
+                "severity": "unknown",
+                "message": (
+                    "Frame butt-joint fastening and attachment are not "
+                    "specified or modeled."
+                ),
+                "affected": [
+                    f"frame.{frame_id}.{rail}"
+                    for rail in ("front", "back", "left", "right")
+                ],
+            }
+        )
 
     # Record named physical connections without claiming verified fasteners.
     connections = project.variables.get("connections", [])
@@ -758,20 +885,37 @@ def calculate(project: ProjectInputs) -> Calculation:
             }
         )
 
+    selected_profiles = {
+        item["config"].slide_key: eb20_profile_for_key(item["config"].slide_key)
+        for item in drawer_instances
+    }
+    hardware_profile = (
+        next(iter(selected_profiles.values())) if len(selected_profiles) == 1 else None
+    )
     if drawer_instances:
-        hardware.extend(
-            [
+        for slide_key, profile in selected_profiles.items():
+            count = sum(
+                item["config"].slide_key == slide_key for item in drawer_instances
+            )
+            hardware.append(
                 {
                     "type": "drawer_runner",
-                    "model": hardware_profile["model"],
-                    "length_mm": hardware_profile["runner_length_mm"],
-                    "quantity": len(drawer_instances) * 2,
+                    "model": profile["model"],
+                    "length_mm": profile["runner_length_mm"],
+                    "quantity": count * 2,
+                    "quantity_by_part_number": {
+                        profile["left_runner_sku"]: count,
+                        profile["right_runner_sku"]: count,
+                    },
                     "part_numbers": [
-                        hardware_profile["left_runner_sku"],
-                        hardware_profile["right_runner_sku"],
+                        profile["left_runner_sku"],
+                        profile["right_runner_sku"],
                     ],
-                    "sources": hardware_profile["sources"],
-                },
+                    "sources": profile["sources"],
+                }
+            )
+        hardware.extend(
+            [
                 {
                     "type": "compatible_grooved_bottom_catch_pair",
                     "model": "Hettich Quadro V6 grooved-bottom catch pair",
@@ -942,7 +1086,11 @@ def calculate(project: ProjectInputs) -> Calculation:
                 "6x40 Domino selection is fixed. Verify mortise dimensions, "
                 "depths, spacing and quantities before machining."
             ),
-            "affected": [p["id"] for p in parts if p["component"] != "back"],
+            "affected": [
+                p["id"]
+                for p in parts
+                if p.get("cabinet_id") and p["component"] != "back"
+            ],
         }
     )
     issues.append(
@@ -962,12 +1110,28 @@ def calculate(project: ProjectInputs) -> Calculation:
     max_height = space.get("height") if isinstance(space, dict) else None
     min_depth = space.get("depth_min") if isinstance(space, dict) else None
     max_depth = space.get("depth_max") if isinstance(space, dict) else None
-    overall_width = x_run - cabinet_gap
-    overall_height = max(cfg.height for _, cfg in resolved)
+    overall_width = max(
+        [entry["bounds_mm"]["max"]["x"] for entry in cabinet_entries]
+        + [frame["x"] + frame["width"] for frame in frames]
+    ) - min(
+        [entry["bounds_mm"]["min"]["x"] for entry in cabinet_entries]
+        + [frame["x"] for frame in frames]
+    )
+    overall_height = max(
+        [entry["bounds_mm"]["max"]["z"] for entry in cabinet_entries]
+        + [f["z"] + f["height"] for f in frames]
+    ) - min(
+        [entry["bounds_mm"]["min"]["z"] for entry in cabinet_entries]
+        + [f["z"] for f in frames]
+    )
     carcass_depth = max(cfg.depth for _, cfg in resolved)
     overall_depth = max(
-        entry["bounds_mm"]["max"]["y"] for entry in cabinet_entries
-    ) - min(entry["bounds_mm"]["min"]["y"] for entry in cabinet_entries)
+        [entry["bounds_mm"]["max"]["y"] for entry in cabinet_entries]
+        + [f["y"] + f["depth"] for f in frames]
+    ) - min(
+        [entry["bounds_mm"]["min"]["y"] for entry in cabinet_entries]
+        + [f["y"] for f in frames]
+    )
     if max_width is not None and overall_width > max_width:
         issues.append(
             {
@@ -1012,14 +1176,15 @@ def calculate(project: ProjectInputs) -> Calculation:
         )
 
     for item in drawer_instances:
-        if item["config"].opening_depth < hardware_profile["minimum_body_depth_mm"]:
+        profile = eb20_profile_for_key(item["config"].slide_key)
+        if item["config"].opening_depth < profile["minimum_body_depth_mm"]:
             issues.append(
                 {
                     "code": "drawer.runner_depth_does_not_fit",
                     "severity": "error",
                     "message": (
                         "The usable cavity is shorter than the "
-                        f"{hardware_profile['runner_length_mm']} mm runner "
+                        f"{profile['runner_length_mm']} mm runner "
                         "requirement."
                     ),
                     "cabinet_id": item["cabinet_id"],
@@ -1059,10 +1224,13 @@ def calculate(project: ProjectInputs) -> Calculation:
             "variables": project.variables,
             "calculated": project.calculated,
             "cabinets": cabinet_entries,
+            "frames": frames,
             "parts": parts,
             "drawers": drawers,
             "drawer_layout": {
-                "display_open_distance_mm": hardware_profile["box_length_mm"],
+                "display_open_distance_mm": (
+                    hardware_profile["box_length_mm"] if hardware_profile else None
+                ),
                 "face_gap_mm": face_gap,
                 "face_thickness_mm": max(
                     (
@@ -1082,7 +1250,8 @@ def calculate(project: ProjectInputs) -> Calculation:
             }
             if drawers
             else None,
-            "hardware_profile": hardware_profile if drawers else None,
+            "hardware_profile": hardware_profile,
+            "hardware_profiles": selected_profiles,
             "drawer_inputs": None,
             "grouping_scope": "cutting_blank",
             "cutting_groups": grouped,
@@ -1120,6 +1289,10 @@ def make_geometry(calculation: Calculation):
         entry["id"]: entry["placement_mm"]["y"]
         for entry in calculation.result["cabinets"]
     }
+    cabinet_z = {
+        entry["id"]: entry["placement_mm"]["z"]
+        for entry in calculation.result["cabinets"]
+    }
     # Calculate configs are in project order; cabinet records preserve that order.
     for cfg, cabinet in zip(
         calculation.configs, calculation.result["cabinets"], strict=True
@@ -1133,14 +1306,14 @@ def make_geometry(calculation: Calculation):
             candidates = [
                 p
                 for p in calculation.result["parts"]
-                if p["cabinet_id"] == cabinet_id and p.get("native_name") == raw
+                if p.get("cabinet_id") == cabinet_id and p.get("native_name") == raw
             ]
             selected = candidates
             if not selected:
                 selected = [
                     p
                     for p in calculation.result["parts"]
-                    if p["cabinet_id"] == cabinet_id
+                    if p.get("cabinet_id") == cabinet_id
                     and p["role"].endswith("_" + _slug(raw))
                 ]
             for record in selected[:2]:
@@ -1153,7 +1326,14 @@ def make_geometry(calculation: Calculation):
                         obj_name = f"bay_{match.group(1)}/{match.group(2)}"
                 loc = _native_world_location(native_assembly, obj_name, cq.Location())
                 loc = (
-                    cq.Location((cabinet_x[cabinet_id], cabinet_y[cabinet_id], 0)) * loc
+                    cq.Location(
+                        (
+                            cabinet_x[cabinet_id],
+                            cabinet_y[cabinet_id],
+                            cabinet_z[cabinet_id],
+                        )
+                    )
+                    * loc
                 )
                 assembly.add(
                     native_part.shape,
@@ -1165,7 +1345,7 @@ def make_geometry(calculation: Calculation):
     for item in calculation.drawer_instances:
         cfg = item["config"]
         cabinet_id = item["cabinet_id"]
-        root = (cabinet_x[cabinet_id], cabinet_y[cabinet_id], 0)
+        root = (cabinet_x[cabinet_id], cabinet_y[cabinet_id], cabinet_z[cabinet_id])
         for component, shape in item["shapes"].items():
             if component == "face":
                 continue
@@ -1213,7 +1393,7 @@ def make_geometry(calculation: Calculation):
         face_position = (
             root[0] + item["face_position"]["x"],
             root[1] + item["face_position"]["y"],
-            item["face_position"]["z"],
+            root[2] + item["face_position"]["z"],
         )
         assembly.add(
             face_shape,
@@ -1230,6 +1410,28 @@ def make_geometry(calculation: Calculation):
                 shape=face_shape,
                 material_thickness=record["finished_mm"]["thickness"],
                 grain_direction="width",
+            )
+        )
+    from cabineteer.cabinet import PartInfo
+
+    for record in calculation.result["parts"]:
+        if "frame_id" not in record:
+            continue
+        size = record["size_mm"]
+        pos = record["position_mm"]
+        shape = cq.Workplane("XY").box(size["x"], size["y"], size["z"], centered=False)
+        assembly.add(
+            shape,
+            name=record["role"],
+            loc=cq.Location((pos["x"], pos["y"], pos["z"])),
+            color=cq.Color(0.65, 0.65, 0.65, 1),
+        )
+        geometry.append(
+            PartInfo(
+                name=record["role"],
+                shape=shape,
+                material_thickness=record["finished_mm"]["thickness"],
+                grain_direction="length",
             )
         )
     return assembly, geometry

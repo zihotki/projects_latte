@@ -62,13 +62,14 @@ button:focus-visible, tr:focus-visible, input:focus-visible { outline: 2px solid
   border: 0; color: #536367; font-size: 10px;
 }
 #visibility-controls legend { float: left; margin-right: 9px; color: var(--muted); font-size: 10px; }
-#visibility-options { display: flex; flex: 1 1 0; flex-wrap: wrap; align-items: flex-start; gap: 6px 13px; min-width: 0; }
-#visibility-options .visibility-cabinet { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; gap: 5px 8px; max-width: 100%; min-width: 0; margin: 0; padding: 0; border: 0; }
+#visibility-options { display: flex; flex: 1 1 0; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; }
+#visibility-options .visibility-cabinet { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; gap: 5px 8px; width: 100%; max-width: 100%; min-width: 0; margin: 0; padding: 0; border: 0; }
+#visibility-options .visibility-frames { align-items: center; }
 #visibility-options .visibility-cabinet legend {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
-#visibility-options .visibility-children { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: 5px 8px; min-width: 0; padding-left: 8px; border-left: 1px solid var(--line); }
+#visibility-options .visibility-children { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; gap: 5px 8px; min-width: 0; padding-left: 8px; border-left: 1px solid var(--line); }
 #visibility-options label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; cursor: pointer; }
 #visibility-options input { width: 13px; height: 13px; margin: 0; accent-color: var(--accent); }
 #visibility-options input:focus-visible { outline: 2px solid #397d70; outline-offset: 2px; }

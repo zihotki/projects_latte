@@ -168,6 +168,18 @@ function renderVisibilityControls() {
     visibilityControls.set(key, true);
   }
 
+  if (result.frames?.length) {
+    const section = document.createElement('fieldset');
+    section.className = 'visibility-cabinet visibility-frames';
+    const heading = document.createElement('legend');
+    heading.textContent = 'Frames';
+    section.appendChild(heading);
+    for (const frame of result.frames) {
+      addToggle(section, `frame:${frame.id}`, `${frame.id} frame`);
+    }
+    ui.visibility.appendChild(section);
+  }
+
   for (const cabinet of cabinets) {
     const partsForCabinet = parts.filter(part => (part.cabinet_id ?? 'cabinet') === cabinet.id);
     const section = document.createElement('fieldset');
@@ -175,7 +187,7 @@ function renderVisibilityControls() {
     const heading = document.createElement('legend');
     heading.textContent = cabinet.label;
     section.appendChild(heading);
-    addToggle(section, `cabinet:${cabinet.id}`, `Show ${cabinet.label}`);
+    addToggle(section, `cabinet:${cabinet.id}`, cabinet.label);
     const children = document.createElement('div');
     children.className = 'visibility-children';
     addToggle(children, `carcass:${cabinet.id}`, 'Carcass');
@@ -200,10 +212,12 @@ function applyPartVisibility() {
     const root = partRoots.get(part.role);
     const cabinetId = part.cabinet_id ?? 'cabinet';
     const instanceId = part.instance_id;
-    const cabinetVisible = visibilityControls.get(`cabinet:${cabinetId}`) !== false;
-    const subgroupVisible = instanceId
+    const cabinetVisible = part.frame_id
+      ? visibilityControls.get(`frame:${part.frame_id}`) !== false
+      : visibilityControls.get(`cabinet:${cabinetId}`) !== false;
+    const subgroupVisible = part.frame_id || (instanceId
       ? visibilityControls.get(`drawer:${instanceId}`) !== false
-      : visibilityControls.get(`carcass:${cabinetId}`) !== false;
+      : visibilityControls.get(`carcass:${cabinetId}`) !== false);
     const frontVisible = part.component !== 'face' ||
       visibilityControls.get(`fronts:${cabinetId}`) !== false;
     const group = groupByPartId.get(part.id);

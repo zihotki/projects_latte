@@ -6,7 +6,7 @@ from cabineteer.cabinet import CabinetConfig, OpeningConfig
 from cabineteer.joinery import CarcassJoinery, DominoSpec, DrawerJoineryStyle
 from cabineteer.project import CabinetProject, ProjectCabinet, SharedDesign
 
-from buratino.drawers import make_eb20_drawer_config
+from buratino.drawers import EB20_SLIDE_KEYS, make_eb20_drawer_config
 
 variables = {
     # No total installation envelope has been reported for this assembly.
@@ -73,6 +73,11 @@ variables = {
             "are unknown; they are not modeled."
         ),
     ],
+    "frame_height_mm": 50,
+    "frame_thickness_mm": 18,
+    "frame_material": "18 mm plywood",
+    "top_frame_depth_mm": 380,
+    "bottom_frame_depth_mm": 510,
     "width_mm": 720,
     "height_mm": 930,
     "depth_mm": 510,
@@ -89,13 +94,17 @@ variables = {
     "edge_gap_mm": 2,
     "front_gap_mm": 2,
     "drawer_count": 4,
+    # Each cabinet uses one runner length for all its drawers.
+    "runner_length_mm": 480,
+    "runner_length_by_cabinet_mm": {
+        # "left-drawers": 450,
+    },
     "drawer_side_thickness_mm": 16,
     "drawer_inner_front_back_thickness_mm": 18,
     "drawer_bottom_thickness_mm": 12,
     "drawer_bottom_recess_mm": 13,
     "drawer_bottom_groove_depth_mm": 6,
     "rear_corner_clearance_width_mm": 30,
-    "runner_length_mm": 480,
     "drawer_box_height_mm": 180,
     "drawer_box_bottom_clearance_mm": 30,
     "drawer_face_thickness_mm": 18,
@@ -108,6 +117,36 @@ variables = {
     "future_upper_connection": None,
 }
 variables["face_material"] = variables["drawer_material"]
+# The top frame is flush with the cabinet backs.
+variables["cabinet_base_z_mm"] = variables["frame_height_mm"]
+variables["frames"] = [
+    {
+        "id": name,
+        "width": 2 * variables["width_mm"],
+        "depth": depth,
+        "height": variables["frame_height_mm"],
+        "thickness": variables["frame_thickness_mm"],
+        "material": variables["frame_material"],
+        "x": 0,
+        "y": variables["depth_mm"] - depth,
+        "z": z,
+    }
+    for name, depth, z in (
+        ("bottom", variables["bottom_frame_depth_mm"], 0),
+        (
+            "top",
+            variables["top_frame_depth_mm"],
+            variables["frame_height_mm"] + variables["height_mm"],
+        ),
+    )
+]
+variables["assumptions"].extend(
+    [
+        "The top frame is flush with the cabinet backs.",
+        "Bottom frame depth is provisionally 510 mm.",
+        "Frame butt-joint fastening and attachment to the carcasses are unverified.",
+    ]
+)
 
 
 _shared = SharedDesign(
@@ -149,6 +188,7 @@ _left = _resolved["left-drawers"]
 # Use the same native opening and box layout for each cabinet.
 calculated = {
     "body_assembly_width_mm": 2 * variables["width_mm"],
+    "assembly_height_mm": variables["height_mm"] + 2 * variables["frame_height_mm"],
     "closed_depth_mm": (
         variables["depth_mm"]
         + variables["drawer_face_thickness_mm"]
@@ -190,12 +230,18 @@ calculated["box_bottom_clearances_mm"] = [
 ]
 
 
+def _runner_length_mm(cabinet_name):
+    return variables["runner_length_by_cabinet_mm"].get(
+        cabinet_name, variables["runner_length_mm"]
+    )
+
+
 def _cabinet(name):
     openings = tuple(
         OpeningConfig(
             height_mm=calculated["opening_heights_mm"][index],
             opening_type="drawer",
-            slide_key="buratino_hettich_quadro_v6_eb20_480",
+            slide_key=EB20_SLIDE_KEYS[_runner_length_mm(name)],
         )
         for index in range(variables["drawer_count"])
     )
@@ -230,7 +276,7 @@ drawer_configs = {
         material=variables["drawer_material"],
         joinery_style=DrawerJoineryStyle.BUTT,
         rear_corner_clearance_width_mm=variables["rear_corner_clearance_width_mm"],
-        runner_length_mm=variables["runner_length_mm"],
+        runner_length_mm=_runner_length_mm(cabinet_name),
     )
     for cabinet_name in ("left-drawers", "right-drawers")
     for index in range(variables["drawer_count"])

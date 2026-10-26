@@ -28,6 +28,8 @@ def _label(parts: list[dict]) -> str:
     is_drawer_part = any(
         "instance_id" in part or "drawer_index" in part for part in parts
     )
+    if components == {"frame_rail"}:
+        return "Frame rails"
     if is_drawer_part and components and components <= {"side_left", "side_right"}:
         return "Drawer sides"
     if is_drawer_part and components and components <= {"inner_front", "back"}:

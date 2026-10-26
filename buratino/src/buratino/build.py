@@ -79,7 +79,10 @@ def _drawer_summary(result: dict) -> str:
         or result.get("overall_dimensions_mm")
         or result["dimensions_mm"]
     )
-    distance = layout.get("display_open_distance_mm", "unknown")
+    distance = layout.get("display_open_distance_mm")
+    pose = (
+        f"{distance} mm" if distance is not None else "the nominal depth of each drawer"
+    )
     face_thickness = layout.get("face_thickness_mm", "unknown")
     face_gap = layout.get("face_to_carcass_gap_mm", "unknown")
     parts = sum(len(drawer.get("part_ids", [])) for drawer in drawers)
@@ -91,7 +94,7 @@ def _drawer_summary(result: dict) -> str:
         f"fronts and a {face_gap} mm face-to-carcass gap: "
         f"{dims['width']:g} wide × {dims['height']:g} high × "
         f"{dims['depth']:g} deep, mm. The preview opens the drawers by "
-        f"{html.escape(str(distance))} mm, using nominal drawer depth as an "
+        f"{html.escape(pose)}, using nominal drawer depth as an "
         "approximation; actual "
         "runner travel is unverified. This pose does not change "
         "exported coordinates.</p><h2>Drawer layout</h2><ul>"

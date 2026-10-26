@@ -246,7 +246,7 @@ def native_snapshot(
     """Return JSON-ready records of native configs resolved from this source."""
     from cabineteer.project import project_to_dict
 
-    from .drawers import HETTICH_PROFILES, register_eb20_profile
+    from .drawers import EB20_SLIDE_KEYS, eb20_profile_for_key, register_eb20_profile
 
     def plain(value):
         if isinstance(value, Enum):
@@ -263,6 +263,38 @@ def native_snapshot(
             return [plain(item) for item in value]
         return value
 
+    configs = (
+        built_drawer_configs
+        if built_drawer_configs is not None
+        else project.drawer_configs
+    )
+    keys = {cfg.slide_key for cfg in configs.values()}
+    # Retain the historical default snapshot entry for projects with no drawers.
+    if not keys:
+        keys = {EB20_SLIDE_KEYS[project.variables.get("runner_length_mm", 450)]}
+    profiles = {
+        key: {
+            "source_data": plain(eb20_profile_for_key(key)),
+            "native_slide_spec": plain(
+                register_eb20_profile(eb20_profile_for_key(key)["runner_length_mm"])
+            ),
+        }
+        for key in sorted(keys)
+    }
+    if len(profiles) == 1:
+        profiles["hettich_quadro_v6_eb20"] = next(iter(profiles.values()))
+
+    cabinet_profiles = {}
+    for name, _ in project.native_project.resolved():
+        prefix = f"{name}.drawer." if built_drawer_configs is not None else f"{name}/"
+        matching = [cfg for key, cfg in configs.items() if key.startswith(prefix)]
+        if matching:
+            slide_key = matching[0].slide_key
+            cabinet_profiles[name] = {
+                "slide_key": slide_key,
+                "source_data": plain(eb20_profile_for_key(slide_key)),
+            }
+
     return {
         "project": plain(project_to_dict(project.native_project)),
         "resolved_cabinets": [
@@ -271,16 +303,6 @@ def native_snapshot(
         ],
         "drawer_configs": plain(project.drawer_configs),
         "built_drawer_configs": plain(built_drawer_configs or {}),
-        "hardware_profiles": {
-            "hettich_quadro_v6_eb20": {
-                "source_data": plain(
-                    HETTICH_PROFILES[project.variables.get("runner_length_mm", 450)]
-                ),
-                "native_slide_spec": plain(
-                    register_eb20_profile(
-                        project.variables.get("runner_length_mm", 450)
-                    )
-                ),
-            }
-        },
+        "hardware_profiles": profiles,
+        "cabinet_hardware_profiles": cabinet_profiles,
     }

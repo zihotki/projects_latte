@@ -56,6 +56,14 @@ EB20_SLIDE_KEY = "buratino_hettich_quadro_v6_eb20"
 EB20_SLIDE_KEYS = {450: EB20_SLIDE_KEY, 480: f"{EB20_SLIDE_KEY}_480"}
 
 
+def eb20_profile_for_key(slide_key):
+    """Return sourced metadata for a registered EB20 slide key."""
+    for length, key in EB20_SLIDE_KEYS.items():
+        if slide_key == key:
+            return HETTICH_PROFILES[length]
+    raise ValueError("Unsupported EB20 slide profile.")
+
+
 def register_eb20_profile(runner_length_mm=450):
     """Register a sourced length and explicit design allowances."""
     from cabineteer.hardware import (
@@ -214,13 +222,7 @@ def validate_drawer_config(cfg):
         raise ValueError("This adapter supports only native butt-corner drawer boxes.")
     if cfg.side_thickness > HETTICH_PROFILE["side_thickness_max_mm"]:
         raise ValueError("EB20 drawer sides must be 16 mm or thinner.")
-    length = next(
-        (length for length, key in EB20_SLIDE_KEYS.items() if key == cfg.slide_key),
-        None,
-    )
-    if length is None:
-        raise ValueError("Unsupported EB20 slide profile.")
-    minimum_depth = HETTICH_PROFILES[length]["minimum_body_depth_mm"]
+    minimum_depth = eb20_profile_for_key(cfg.slide_key)["minimum_body_depth_mm"]
     if cfg.opening_depth < minimum_depth:
         raise ValueError(
             f"EB20 needs at least {minimum_depth} mm usable cavity depth "
