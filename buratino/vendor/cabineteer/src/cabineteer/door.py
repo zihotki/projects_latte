@@ -1,0 +1,367 @@
+"""
+Parametric door generator for frameless (Euro-style) cabinets.
+
+Supports three Blum Clip Top overlay types:
+  Full overlay  — door overlaps the cabinet side by 16 mm per edge (most common)
+  Half overlay  — 9.5 mm overlap for shared partitions between adjacent cabinets
+  Inset         — door sits inside the opening with a reveal gap on all sides
+
+Hinge cup borings (35 mm diameter, 13 mm deep, 22.5 mm from door edge) are cut
+into the door model when CadQuery is available.
+
+All dimensions in millimeters.  Door orientation:
+  X axis : width (left to right)
+  Y axis : thickness (front = y=0, back = y=door_thickness)
+  Z axis : height (bottom to top)
+  Origin : front-bottom-left exterior corner of the door panel
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Optional
+
+try:
+    import cadquery as cq
+except ImportError:
+    cq = None
+
+from .hardware import HingeSpec, OverlayType, get_hinge, get_pull
+from .cabinet import CabinetConfig, PartInfo
+from .pulls import PullPlacement, VerticalPolicy, HingeSide, pull_positions, door_pull_x_center
+
+
+@dataclass
+class DoorConfig:
+    """Configuration for one or two doors covering a single cabinet opening.
+
+    Parameters
+    ----------
+    opening_width :
+        Interior opening width (between the two cabinet side panels, in mm).
+    opening_height :
+        Vertical height of the opening being covered (mm).
+    num_doors :
+        1 = single door; 2 = a pair of doors side-by-side.
+    hinge_key :
+        Key into the HINGES dict — selects overlay type and soft-close variant.
+    door_thickness :
+        Door panel thickness (mm).  Typical: 18 mm (3/4″).
+    door_weight_kg :
+        Estimated door weight used for hinge-count calculation (kg).
+        Default 0 lets the count be driven by height alone.
+    gap_top, gap_bottom :
+        Clearance between door top/bottom and adjacent shelf or cabinet edge.
+        For full/half overlay these are the expansion reveal built into the
+        face edges; for inset they are the swing clearance inside the opening.
+        Subtracted from opening_height in both cases (see ``door_height``).
+    gap_side :
+        Side reveal for *inset* doors only (applied to each side).
+    gap_between :
+        Gap between the two door panels in a *pair*.  Applied symmetrically
+        so each door loses gap_between/2 from its inner edge.
+    """
+
+    # Opening / structural dimensions
+    opening_width: float
+    opening_height: float
+
+    # Door arrangement
+    num_doors: int = 1
+
+    # Hardware
+    hinge_key: str = "blum_clip_top_blumotion_110_full"
+
+    # Materials
+    door_thickness: float = 18.0
+
+    # Weight (for hinge count)
+    door_weight_kg: float = 0.0
+
+    # Gaps / reveals
+    gap_top: float = 2.0
+    gap_bottom: float = 2.0
+    gap_side: float = 2.0       # inset only — each side
+    gap_between: float = 2.0    # pairs only
+
+    # Pull hardware (optional).  ``pull_key`` is a key into the PULLS registry
+    # (see ``hardware.PULLS`` / ``cabineteer/data/pulls_catalog.json``).
+    # When ``None``, no pull is placed on the door and the BOM omits it.
+    # ``pull_count`` of 0 defers to :func:`pulls.recommend_pull_count`.
+    # Doors are usually fitted with a single pull; surface/edge pulls on doors
+    # narrower than 600 mm (the usual case for cabinet doors) get one pull, and
+    # most doors use the ``"center"`` vertical policy.  Tall dresser doors may
+    # look better with ``"upper_third"`` so the pull is within arm's reach.
+    pull_key: Optional[str] = None
+    pull_count: int = 0
+    pull_vertical: VerticalPolicy = "center"
+    hinge_side: HingeSide = "left"
+    pull_inset_mm: float = 50.0  # gap from latch edge to near end of pull body
+
+    # ── Computed properties ───────────────────────────────────────────────
+
+    @property
+    def hinge(self) -> HingeSpec:
+        """Return the hinge specification."""
+        return get_hinge(self.hinge_key)
+
+    @property
+    def door_width(self) -> float:
+        """Width of *each* door panel (mm).
+
+        Full / Half overlay
+        -------------------
+        The door covers the opening *and* overlaps the cabinet sides:
+          single : opening_width + 2 × overlay
+          pair   : opening_width / 2 + overlay − gap_between / 2
+          (two leaves plus the centre gap span opening_width + 2 × overlay)
+
+        Inset
+        -----
+        Door sits inside the opening with a gap on each side:
+          single : opening_width − 2 × gap_side
+          pair   : (opening_width − gap_between) / 2 − gap_side
+        """
+        ov = self.hinge.overlay
+        if self.hinge.overlay_type == OverlayType.INSET:
+            if self.num_doors == 1:
+                return self.opening_width - (2 * self.gap_side)
+            else:
+                return (self.opening_width - self.gap_between) / 2 - self.gap_side
+        else:
+            # Full or half overlay
+            if self.num_doors == 1:
+                return self.opening_width + (2 * ov)
+            else:
+                # Each door: half the opening + outer overlay - half the center gap
+                return self.opening_width / 2 + ov - self.gap_between / 2
+
+    @property
+    def door_height(self) -> float:
+        """Height of each door panel (mm).
+
+        In all overlay types the door height is the opening height less the
+        top and bottom reveal.  For full/half overlay the door face sits proud
+        of the opening, so gap_top/gap_bottom act as the expansion reveal built
+        into the face edges (default 2 mm each); for inset they are the
+        clearance the door needs to swing inside the opening.
+        """
+        return self.opening_height - self.gap_top - self.gap_bottom
+
+    @property
+    def hinge_count(self) -> int:
+        """Number of hinges on each door panel."""
+        return self.hinge.hinges_for_height(self.door_height, self.door_weight_kg)
+
+    @property
+    def hinge_positions_z(self) -> list[float]:
+        """Z-positions (from door bottom) for each hinge centre on the door."""
+        return self.hinge.hinge_positions(self.door_height, self.door_weight_kg)
+
+    @property
+    def total_hinge_count(self) -> int:
+        """Total hinges needed across *all* doors in this DoorConfig."""
+        return self.hinge_count * self.num_doors
+
+    @property
+    def pull_placements(self) -> list[PullPlacement]:
+        """Pull placements on a single door panel, in face-local coords.
+
+        Returns an empty list when ``pull_key`` is ``None``.  For ``num_doors=2``
+        the caller is responsible for duplicating (or mirroring) these
+        placements onto the second door — each door has the same placements in
+        its own face-local frame, because both doors have the same width and
+        height.
+        """
+        if self.pull_key is None:
+            return []
+        pull = get_pull(self.pull_key)
+        cx = door_pull_x_center(self.door_width, pull, self.hinge_side, self.pull_inset_mm)
+        return pull_positions(
+            self.door_width,
+            self.door_height,
+            pull,
+            self.pull_key,
+            vertical=self.pull_vertical,
+            x_override_mm=cx,
+        )
+
+    @property
+    def total_pull_count(self) -> int:
+        """Total pulls needed across *all* doors in this DoorConfig."""
+        return len(self.pull_placements) * self.num_doors
+
+
+# ─── CadQuery helpers ─────────────────────────────────────────────────────────
+
+
+def _require_cq() -> None:
+    if cq is None:
+        raise ImportError("cadquery is required for 3D modeling. Install with: pip install cadquery")
+
+
+def make_door_panel(cfg: DoorConfig) -> "cq.Workplane":
+    """Create a door panel with hinge cup borings.
+
+    The cup borings are drilled from the *back* face of the door (y = door_thickness)
+    with centres at x = cup_boring_distance from the *hinge side* (x = 0) and z
+    positions given by ``cfg.hinge_positions_z``.
+
+    Returns a CadQuery Workplane representing the door solid.
+    """
+    _require_cq()
+
+    h = cfg.hinge
+    w = cfg.door_width
+    ht = cfg.door_height
+    t = cfg.door_thickness
+
+    # Solid door panel
+    panel = cq.Workplane("XY").box(w, t, ht, centered=False)
+
+    # Cup borings from the back face of the door (y = t)
+    cup_r = h.cup_diameter / 2
+    cup_depth = h.cup_depth
+    boring_x = h.cup_boring_distance  # from hinge-side edge
+
+    # The XZ workplane has local x → global X, local y → global Z, normal → −Y.
+    # Offsetting local z by −t starts the bore at the back face (y = t) and the
+    # cylinder extends cup_depth toward the door front (−Y direction).
+    for z_pos in cfg.hinge_positions_z:
+        cup = (
+            cq.Workplane("XZ")
+            .transformed(offset=(boring_x, z_pos, -t))
+            .cylinder(cup_depth, cup_r, centered=(True, True, False))
+        )
+        panel = panel.cut(cup)
+
+    return panel
+
+
+def build_door(cfg: DoorConfig) -> tuple["cq.Assembly", list[PartInfo]]:
+    """Build a single door assembly (one panel with PartInfo).
+
+    Returns:
+        (cq.Assembly, [PartInfo])
+    """
+    _require_cq()
+
+    panel = make_door_panel(cfg)
+
+    parts = [
+        PartInfo(
+            name="door",
+            shape=panel,
+            material_thickness=cfg.door_thickness,
+            grain_direction="length",   # grain runs vertically (height direction)
+            edge_band=["all"],          # all four edges typically banded on finished doors
+        )
+    ]
+
+    assy = cq.Assembly(name="door")
+    assy.add(panel, name="door", loc=cq.Location((0, 0, 0)),
+             color=cq.Color(0.55, 0.38, 0.22, 1.0))
+
+    return assy, parts
+
+
+def build_door_pair(cfg: DoorConfig) -> tuple["cq.Assembly", list[PartInfo]]:
+    """Build a matched door pair assembly (two panels positioned side by side).
+
+    Left door hinge side is at x=0; right door hinge side is at the far right
+    of the opening.  The gap_between gap is maintained at the centre.
+
+    Returns:
+        (cq.Assembly, [PartInfo for left, PartInfo for right])
+    """
+    if cfg.num_doors != 2:
+        raise ValueError("build_door_pair requires num_doors=2")
+    _require_cq()
+
+    panel = make_door_panel(cfg)
+    dw = cfg.door_width
+    ov = cfg.hinge.overlay
+    gap = cfg.gap_between
+
+    parts = [
+        PartInfo(
+            name="door_left",
+            shape=panel,
+            material_thickness=cfg.door_thickness,
+            grain_direction="length",
+            edge_band=["all"],
+        ),
+        PartInfo(
+            name="door_right",
+            shape=panel,
+            material_thickness=cfg.door_thickness,
+            grain_direction="length",
+            edge_band=["all"],
+        ),
+    ]
+
+    assy = cq.Assembly(name="door_pair")
+
+    # Left door: hinge on left, door face at y=0
+    left_x = -ov  # left edge starts overlay amount to the left of the opening
+    assy.add(panel, name="door_left",
+             loc=cq.Location((left_x, 0, 0)),
+             color=cq.Color(0.55, 0.38, 0.22, 1.0))
+
+    # Right door: mirrored.  Its right edge extends overlay past the right side.
+    # Right door left edge = left_x + dw + gap
+    right_x = left_x + dw + gap
+    assy.add(panel, name="door_right",
+             loc=cq.Location((right_x, 0, 0)),
+             color=cq.Color(0.55, 0.38, 0.22, 1.0))
+
+    return assy, parts
+
+
+# ─── Cabinet-level door generation ───────────────────────────────────────────
+
+
+def doors_from_cabinet_config(
+    cab_cfg: CabinetConfig,
+) -> list[tuple["cq.Assembly", list[PartInfo], float]]:
+    """Generate door assemblies from a cabinet's drawer_config.
+
+    Entries whose slot_type is ``"door"`` get a single door; ``"door_pair"``
+    gets a matched pair.  Other slot types (drawer, shelf, open) are skipped.
+
+    Returns:
+        List of (assembly, parts, z_bottom_of_opening) tuples.
+    """
+    if not cab_cfg.openings:
+        return []
+
+    doors = []
+    current_z = cab_cfg.bottom_thickness
+
+    for op in cab_cfg.openings:
+        opening_height = op.height_mm
+        if op.opening_type in ("door", "door_pair"):
+            # Per-opening overrides win over cabinet-level defaults — same
+            # resolution the evaluator and hinge/pull BOM walkers apply.
+            num_doors = op.num_doors or (2 if op.opening_type == "door_pair" else 1)
+            dcfg = DoorConfig(
+                opening_width=cab_cfg.interior_width,
+                opening_height=opening_height,
+                num_doors=num_doors,
+                hinge_key=op.hinge_key
+                or getattr(cab_cfg, "door_hinge", "blum_clip_top_blumotion_110_full"),
+                pull_key=op.pull_key or getattr(cab_cfg, "door_pull", None),
+                hinge_side=op.hinge_side
+                or getattr(cab_cfg, "door_hinge_side", "left"),
+                **({"door_thickness": op.door_thickness}
+                   if op.door_thickness is not None else {}),
+            )
+            if num_doors == 1:
+                assy, parts = build_door(dcfg)
+            else:
+                assy, parts = build_door_pair(dcfg)
+            doors.append((assy, parts, current_z))
+
+        current_z += opening_height
+
+    return doors

@@ -19,8 +19,9 @@ packages and integrity-checked Three.js assets into `buratino/.local/`.
 
 The drawer example uses the same commands with `projects/drawer-cabinet`.
 The two-cabinet draft uses `projects/real-assembly`.
-Open the loopback URL printed by `preview`. The preview shows one captured
-build. Rotate or zoom the model, or choose a standard view. Drawer controls
+Open the loopback URL printed by `preview`. Each page shows one captured build.
+After a new build, refresh the page to load it; the server can stay running.
+Rotate or zoom the model, or choose a standard view. Drawer controls
 change the display pose only. Select a model part or cut-list row to highlight
 matching parts. Visibility controls hide cabinets, carcasses, drawers, or
 fronts. These display controls do not change geometry or cutting quantities.
@@ -51,14 +52,14 @@ divider. They do not select a final construction for a future cabinet.
 Each build writes a new folder under that project's `build/` directory. It
 contains `result.json`, `parts.csv`, the combined 3D preview, review report,
 assembly guide, captured source and provenance. Previous builds stay in place.
-Failed exports do not replace the latest completed build.
+Failed exports do not replace the latest completed build. The build command
+prints the output folder. Add `--json` for the full result and checks.
 
-The package is diagnostic. In particular, the selected 6×40 Domino creates
-known panel-thickness errors. Mortise positions, depths, settings, and
-quantities remain unverified. The assembly guide gives an order of work, not
-drilling instructions. Drawer mounting, fastening, clearances, and measured
-stock also need confirmation. A successful build does not approve
-manufacturing.
+The package is diagnostic. The 6×40 Domino face and edge plunge depths have
+not been selected. Candidate centers are calculated, but jig registration,
+depths and settings remain open. The assembly guide is not a machining
+instruction. Drawer mounting, fastening, clearances and measured stock also
+need confirmation. A successful build does not approve manufacturing.
 
 ## Check the project
 
@@ -67,7 +68,8 @@ manufacturing.
 ./buratino/bin/buratino test
 ```
 
-Root `./scripts/check.sh` and `./scripts/test.sh` include Buratino. Run
-`./scripts/integration.sh` when Docker is available. `doctor` checks the
-Cabineteer source pin, local runtime, and viewing assets. Keep the pinned
-Cabineteer source clean. Do not edit its ignored checkout.
+`doctor` checks Cabineteer provenance, the editable source location, the local
+runtime, and viewing assets. Cabineteer source is tracked in `vendor/cabineteer`.
+Its lock records the upstream commit and the patch applied before import. Builds
+capture the engine source and include its content in their input identity. The
+old `.local/cabineteer` checkout is a recovery copy and is not used.

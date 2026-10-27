@@ -66,12 +66,23 @@ def test_blank_variants_do_not_merge_and_group_ids_ignore_input_order(project):
     for variant in (
         changed_dimension,
         changed_material,
-        changed_grain,
         changed_thickness,
-        changed_grain_status,
     ):
         assert len(group_cutting_blanks([left, variant])) == 2
-    assert len(group_cutting_blanks([left, changed_axis])) == 1
+    for variant in (changed_axis, changed_grain, changed_grain_status):
+        assert len(group_cutting_blanks([left, variant])) == 1
+    mixed_status = group_cutting_blanks([left, changed_grain_status])[0]
+    assert mixed_status["grain_status"] == "mixed"
+    assert {member["grain_status"] for member in mixed_status["member_details"]} == {
+        "assumed",
+        "confirmed",
+    }
+    mixed = group_cutting_blanks([left, changed_grain])[0]
+    assert mixed["grain_direction"] == "mixed"
+    assert {member["grain_direction"] for member in mixed["member_details"]} == {
+        "length",
+        "width",
+    }
 
     forward = group_cutting_blanks([left, right])
     reverse = group_cutting_blanks([right, left])
@@ -166,3 +177,19 @@ def test_drawer_components_group_with_useful_labels_and_keep_all_physical_ids():
         "Drawer bottoms": 4,
         "Overlay fronts": 4,
     }
+
+
+def test_real_assembly_confirms_grain_without_changing_grouping(root):
+    result = calculate(load_project(root / "projects/real-assembly")).result
+
+    assert result["parts"]
+    assert all(part["grain_status"] == "confirmed" for part in result["parts"])
+    assert all(
+        group["grain_status"] == "confirmed" for group in result["cutting_groups"]
+    )
+    assert sum(group["quantity"] for group in result["cutting_groups"]) == len(
+        result["parts"]
+    )
+    assert not any(
+        issue["code"] == "grain.direction_assumed" for issue in result["checks"]
+    )

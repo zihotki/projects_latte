@@ -18,7 +18,9 @@ RUNNER_KEYS = {
 
 def _mixed_project(root, tmp_path):
     path = tmp_path / "mixed-real-assembly"
-    shutil.copytree(root / "projects/real-assembly", path)
+    shutil.copytree(
+        root / "projects/real-assembly", path, ignore=shutil.ignore_patterns("build")
+    )
     source_path = path / "project.py"
     source = source_path.read_text(encoding="utf-8")
     source = source.replace(

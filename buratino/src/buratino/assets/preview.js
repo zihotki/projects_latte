@@ -3,6 +3,7 @@ const ui = {
   dimensions: document.getElementById('project-dimensions'),
   status: document.getElementById('draft-badge'),
   table: document.getElementById('parts-body'),
+  tableHint: document.getElementById('table-hint'),
   caption: document.getElementById('selection-caption'),
   message: document.getElementById('viewer-message'),
   grain: document.getElementById('grain-toggle'),
@@ -60,7 +61,7 @@ function selectGroup(group) {
     ?.map(member => `${member.label}${member.profile ? ` · ${profileLabel(member.profile)}` : ''}`)
     .filter(Boolean);
   ui.caption.textContent = selected
-    ? `${selected.label} · ${selected.quantity} ${selected.quantity === 1 ? 'panel' : 'panels'} · ${selected.material} · ${selected.edge_treatment ?? 'Edge treatment unverified'} · ${selected.grain_status === 'assumed' ? 'Grain direction assumed' : 'Grain direction recorded'} · Blank dimensions only; profile is not a machining instruction${memberProfiles?.length ? ` · Members: ${[...new Set(memberProfiles)].join('; ')}` : ''}`
+    ? `${selected.label} · ${selected.quantity} ${selected.quantity === 1 ? 'panel' : 'panels'} · ${selected.material} · ${selected.edge_treatment ?? 'Edge treatment unverified'}${selected.grain_status === 'confirmed' ? '' : ' · Grain direction unverified'} · Blank dimensions only; profile is not a machining instruction${memberProfiles?.length ? ` · Members: ${[...new Set(memberProfiles)].join('; ')}` : ''}`
     : 'Select a part name or a panel to inspect its cutting blank.';
 }
 
@@ -81,8 +82,16 @@ function addCell(row, value, className = '') {
   row.appendChild(cell);
 }
 
+function hasAssumedGrain(group) {
+  return group.grain_status === 'assumed' ||
+    (group.member_details ?? []).some(member => member.grain_status === 'assumed');
+}
+
 function renderTable() {
   ui.table.replaceChildren();
+  ui.tableHint.textContent = result.cutting_groups.some(hasAssumedGrain)
+    ? 'Equal blanks are grouped. * Grain direction is assumed.'
+    : 'Equal blanks are grouped.';
   cuttingGroupVisibility = new Map(result.cutting_groups.map(group => [group.id, true]));
   groupByPartId = new Map(result.cutting_groups.flatMap(group =>
     group.members.map(partId => [partId, group])));
@@ -109,7 +118,10 @@ function renderTable() {
     addCell(row, number(dims.length), 'numeric');
     addCell(row, number(dims.width), 'numeric');
     addCell(row, number(dims.thickness), 'numeric');
-    addCell(row, group.grain_direction === 'length' ? 'Length*' : '—');
+    const grain = group.grain_direction === 'mixed' ? 'Mixed'
+      : group.grain_direction === 'length' ? 'Length'
+      : group.grain_direction === 'width' ? 'Width' : '—';
+    addCell(row, `${grain}${hasAssumedGrain(group) ? '*' : ''}`);
     const visibilityCell = document.createElement('td');
     visibilityCell.className = 'group-visibility-cell';
     const toggle = document.createElement('button');
@@ -173,10 +185,11 @@ function renderVisibilityControls() {
     : [...new Set(parts.map(part => part.cabinet_id ?? 'cabinet'))]
       .map(id => ({id, label: humanizeProjectName(id)}));
 
-  function addToggle(container, key, labelText) {
+  function addToggle(container, key, labelText, accessibleName = labelText) {
     const label = document.createElement('label');
     const input = document.createElement('input');
     input.type = 'checkbox';
+    input.setAttribute('aria-label', accessibleName);
     input.checked = true;
     input.dataset.visibilityGroup = key;
     input.addEventListener('change', () => {
@@ -226,7 +239,8 @@ function renderVisibilityControls() {
     const heading = document.createElement('legend');
     heading.textContent = cabinet.label;
     section.appendChild(heading);
-    addToggle(section, `cabinet:${cabinet.id}`, cabinet.label);
+    const cabinetLabel = humanizeProjectName(cabinet.label);
+    addToggle(section, `cabinet:${cabinet.id}`, cabinetLabel);
     const children = document.createElement('div');
     children.className = 'visibility-children';
     addToggle(children, `carcass:${cabinet.id}`, 'Carcass');
@@ -236,7 +250,8 @@ function renderVisibilityControls() {
       .filter(Boolean))].sort();
     for (const instanceId of instances) {
       const drawer = result.drawers?.find(item => item.instance_id === instanceId);
-      addToggle(children, `drawer:${instanceId}`, `Drawer ${drawer?.drawer_index ?? instanceId}`);
+      const drawerNumber = drawer?.drawer_index ?? instanceId;
+      addToggle(children, `drawer:${instanceId}`, `D${drawerNumber}`, `Drawer ${drawerNumber}`);
     }
     if (partsForCabinet.some(part => part.component === 'face')) {
       addToggle(children, `fronts:${cabinet.id}`, 'Fronts');
@@ -721,7 +736,6 @@ function setDrawerPose(open) {
     const {distance} = drawerPoseDistance(part);
     node.position.y = closedY - (open ? distance : 0);
   }
-  ui.drawerPose.textContent = open ? 'Drawers open' : 'Drawers closed';
   const distancesText = descriptions.join(', ');
   const caveat = 'Illustrative pose only; actual runner stroke and full-extension travel are unverified.';
   ui.drawerPose.title = `Open pose uses ${distancesText}. ${caveat}`;
@@ -761,7 +775,6 @@ function setDoorPose(open) {
       closedPosition.z,
     );
   }
-  ui.doorPose.textContent = open ? 'Upper doors open' : 'Upper doors closed';
   const caveat = 'Illustrative 75° preview pose about each right edge; hinge hardware, clearances, and actual travel are unverified.';
   ui.doorPose.title = caveat;
   ui.doorPose.setAttribute('aria-label', `${ui.doorPose.textContent}. ${caveat}`);
@@ -832,7 +845,7 @@ async function refreshStatus() {
     const {status} = await response.json();
     ui.status.textContent = status === 'current'
       ? 'DRAFT · NOT FOR MANUFACTURING'
-      : `${String(status).toUpperCase()} INPUTS · Previous draft shown`;
+      : `${String(status).toUpperCase()} INPUTS · Old draft`;
     ui.status.dataset.state = status;
   } catch {
     ui.status.textContent = 'DRAFT SNAPSHOT · NOT FOR MANUFACTURING';
@@ -904,7 +917,7 @@ for (const button of document.querySelectorAll('[data-view]')) {
 ui.grain.addEventListener('click', () => {
   grainVisible = !grainVisible;
   ui.grain.setAttribute('aria-pressed', String(grainVisible));
-  ui.grain.textContent = grainVisible ? 'Grain marks on' : 'Grain marks off';
+  ui.grain.textContent = grainVisible ? 'Grain on' : 'Grain off';
   applyPartVisibility();
 });
 ui.drawerPose?.addEventListener('click', () => {

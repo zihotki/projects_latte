@@ -1,0 +1,632 @@
+diff --git a/src/cabineteer/assembly.py b/src/cabineteer/assembly.py
+index bedce0d..dca40f1 100644
+--- a/src/cabineteer/assembly.py
++++ b/src/cabineteer/assembly.py
+@@ -24,6 +24,7 @@ Conventions
+ from __future__ import annotations
+ 
+ from dataclasses import dataclass, field
++import math
+ from typing import Optional
+ 
+ from .joinery import (
+@@ -280,6 +281,9 @@ def build_assembly_plan(
+     cabinet_name: str = "Cabinet",
+     copies: int = 1,
+     id_map: Optional[dict] = None,
++    *,
++    domino_spec: Optional[DominoSpec] = None,
++    candidate_positions: Optional[tuple[float, ...]] = None,
+ ) -> AssemblyPlan:
+     """Build the carcass assembly plan for one cabinet design.
+ 
+@@ -297,12 +301,15 @@ def build_assembly_plan(
+         )
+ 
+     side_t = float(getattr(cab_cfg, "side_thickness", 18.0))
+-    size_key = carcass_domino_size_for_thickness(side_t)
++    spec = domino_spec or DominoSpec(
++        size_key=carcass_domino_size_for_thickness(side_t), max_spacing=150.0
++    )
++    size_key = spec.size_key
+     size = get_domino_size(size_key)
+-    spec = DominoSpec(size_key=size_key, max_spacing=150.0)
+ 
+     span = float(cab_cfg.interior_depth)
+-    positions = tuple(round(p, 1) for p in spec.positions_for_span(span))
++    positions = (candidate_positions if candidate_positions is not None else
++                 tuple(round(p, 1) for p in spec.positions_for_span(span)))
+     per_joint = len(positions)
+ 
+     corner_style = getattr(cab_cfg, "carcass_corner_style", "butt")
+@@ -421,7 +428,7 @@ def build_assembly_plan(
+     # seats it inside the perimeter, with the top full depth either way.
+     under_top = (getattr(cab_cfg, "back_style", "full_height") == "under_top"
+                  and not miter)
+-    caps_back = under_top and not geo.machined
++    caps_back = under_top and not geo.machined and geo.capture != "overlay"
+     height = float(cab_cfg.height)
+     bottom_t = float(getattr(cab_cfg, "bottom_thickness", side_t))
+     top_t = float(getattr(cab_cfg, "top_thickness", side_t))
+@@ -709,7 +716,8 @@ def build_assembly_plan(
+     )
+     plan.face_mortised_thicknesses = tuple(
+         _face_mortised_thicknesses(plan, cab_cfg))
+-    plan.steps = _build_steps(plan, cab_cfg)
++    plan.steps = (_build_steps(plan, cab_cfg)
++                  if plan.size.mortise_depth_per_side is not None else [])
+     plan.drawer_boxes = build_drawer_box_plans(cab_cfg, id_map)
+     plan.box_steps = _build_box_steps(plan.drawer_boxes, cab_cfg)
+     return plan
+@@ -1362,7 +1370,9 @@ def _build_steps(plan: AssemblyPlan, cab_cfg) -> list[AssemblyStep]:
+     # the interior panels.
+     from .cabinet import back_capture_geometry
+     geo = back_capture_geometry(cab_cfg)
+-    if geo.machined:
++    if geo.capture == "overlay":
++        back_seat_txt = "test-fit the full-width back against the rear edges of the carcass"
++    elif geo.machined:
+         seat = "grooves" if geo.capture == "dado" else "rabbets"
+         back_seat_txt = (
+             f"test-fit the back panel in its {seat} — it seats "
+@@ -1582,6 +1592,8 @@ def _build_steps(plan: AssemblyPlan, cab_cfg) -> list[AssemblyStep]:
+               "race. Either way its edges are buried in the rabbets, so "
+               "nothing shows from any angle.")
+              if geo.machined else
++             "Fit the full-width back against the rear edges of the carcass and check the diagonals. Back fastening remains to be specified."
++             if geo.capture == "overlay" else
+              "While the clamps are on, slide the back panel up into its "
+              "pocket from the carcass's bottom end until it seats against "
+              "the underside of the full-depth top, then glue/pin it into "
+@@ -1954,91 +1966,276 @@ def _scene_svg(scene: dict) -> str:
+     return "".join(out)
+ 
+ 
+-def _panel_svg(pm: PanelMortiseMap) -> str:
+-    """Render one panel mortise map as an inline SVG string."""
++def _panel_svg(pm: PanelMortiseMap, *, precise_ticks: bool = False,
++               front_at_right: bool = False,
++               panel_thickness: Optional[float] = None,
++               reference_back: bool = False,
++               drawer_map: bool = False) -> str:
++    """Draw a panel and dimension candidate centers from its FRONT datum.
++
++    Slot marks remain schematic. Dimensions locate their centers and do not
++    imply a cutter diameter, slot length or plunge depth.
++    """
+     from xml.sax.saxutils import escape
+ 
+-    pad = 46.0
+-    scale = (_SVG_W - 2 * pad) / max(pm.draw_width, 1.0)
+-    ph = pm.draw_height * scale
+-    # Keep tall panels readable but bounded.
+-    max_h = 360.0
+-    if ph > max_h:
+-        scale *= max_h / ph
+-        ph = max_h
+-    pw = pm.draw_width * scale
+-    W = pw + 2 * pad
+-    H = ph + 2 * pad
++    horizontal = any(row.axis == "h" for row in pm.rows)
++    positions = sorted({p for row in pm.rows for p in row.positions})
++    left = 52.0 if horizontal else 58.0 + 18.0 * len(positions)
++    top = 52.0
++    scale = min(340.0 / max(pm.draw_width, 1.0),
++                360.0 / max(pm.draw_height, 1.0))
++    pw, ph = pm.draw_width * scale, pm.draw_height * scale
++    right, bottom = left + pw, top + ph
++    W = right + 144.0
++    H = bottom + (54.0 + 18.0 * len(positions) if horizontal else 62.0)
+ 
+     def X(mm: float) -> float:
+-        return pad + mm * scale
++        return left + mm * scale
+ 
+-    def Y(mm: float) -> float:      # mm measured from panel BOTTOM edge
+-        return pad + ph - mm * scale
++    def Y(mm: float) -> float:
++        return bottom - mm * scale
+ 
+-    parts: list[str] = [
+-        f'<svg viewBox="0 0 {W:.0f} {H:.0f}" '
++    parts = [
++        f'<svg viewBox="0 0 {W:.1f} {H:.1f}" '
+         f'style="max-width:{W:.0f}px" xmlns="http://www.w3.org/2000/svg">',
+-        f'<rect x="{pad}" y="{pad}" width="{pw:.1f}" height="{ph:.1f}" '
+-        'fill="#f7efd8" stroke="#7a6a4f" stroke-width="1" rx="3"/>',
++        '<g fill="none" stroke="#333" stroke-width="0.7">',
++        f'<rect x="{left:.1f}" y="{top:.1f}" width="{pw:.1f}" '
++        f'height="{ph:.1f}" fill="#fff"/>',
++        '</g>',
+     ]
++
++    def line(x1, y1, x2, y2, *, kind="extension"):
++        parts.append(
++            f'<line class="{kind}" x1="{x1:.1f}" y1="{y1:.1f}" '
++            f'x2="{x2:.1f}" y2="{y2:.1f}" stroke="#333" '
++            'stroke-width="0.6"/>')
++
++    def text(x, y, label, *, anchor="middle", size=9):
++        parts.append(
++            f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="{anchor}" '
++            f'font-size="{size}" fill="#222">{escape(label)}</text>')
++
++    def dimension(x1, y1, x2, y2):
++        line(x1, y1, x2, y2, kind="dimension")
++        for x, y in ((x1, y1), (x2, y2)):
++            line(x - 2.5, y + 2.5, x + 2.5, y - 2.5, kind="dimension-tick")
++
++    # Overall dimensions use the same transformation as the panel outline.
++    for x in (left, right):
++        line(x, top - 3, x, 27)
++    dimension(left, 31, right, 31)
++    text((left + right) / 2, 25, f"{pm.draw_width:g} mm")
++    for y in (top, bottom):
++        line(right + 3, y, right + 20, y)
++    dimension(right + 16, top, right + 16, bottom)
++    text(right + 23, (top + bottom) / 2, f"{pm.draw_height:g} mm", anchor="start")
++
+     for row in pm.rows:
+         colour = _ROW_COLOURS.get(row.kind, "#2471a3")
+         if row.axis == "h":
+             y = Y(row.offset)
+-            y = min(max(y, pad + 3), pad + ph - 3)
+             parts.append(
+-                f'<line x1="{pad}" y1="{y:.1f}" x2="{pad + pw:.1f}" '
+-                f'y2="{y:.1f}" stroke="{colour}" stroke-width="0.7" '
++                f'<line x1="{left:.1f}" y1="{y:.1f}" x2="{right:.1f}" '
++                f'y2="{y:.1f}" stroke="{colour}" stroke-width="0.6" '
+                 'stroke-dasharray="4 3"/>')
+             for p in row.positions:
+-                cx = X(p)
++                x = X(pm.draw_width - p if front_at_right != reference_back else p)
+                 parts.append(
+-                    f'<ellipse cx="{cx:.1f}" cy="{y:.1f}" rx="6" ry="2.6" '
++                    f'<ellipse cx="{x:.1f}" cy="{y:.1f}" rx="5" ry="2" '
+                     f'fill="{colour}"/>')
+-            if row.label:
+-                parts.append(
+-                    f'<text x="{pad + pw + 4:.1f}" y="{y + 3:.1f}" '
+-                    f'font-size="9" fill="{colour}">{escape(row.label)}</text>')
++            # Measure an end row from its nearest end; internal rows from BOTTOM.
++            from_top = row.offset > pm.draw_height / 2 and "top" in row.label
++            datum = top if from_top else bottom
++            offset = pm.draw_height - row.offset if from_top else row.offset
++            dx = right + 40
++            line(right + 3, datum, dx + 3, datum)
++            line(right + 3, y, dx + 3, y)
++            dimension(dx, datum, dx, y)
++            label_y = min(max((datum + y) / 2 + 3, top + 7), bottom - 3)
++            text(dx + 7, label_y, f"{offset:g}", anchor="start")
++            text(dx + 7, label_y + (12 if from_top else -12),
++                 row.label, anchor="start", size=8)
+         else:
+             x = X(row.offset)
+-            x = min(max(x, pad + 3), pad + pw - 3)
+             parts.append(
+-                f'<line x1="{x:.1f}" y1="{pad}" x2="{x:.1f}" '
+-                f'y2="{pad + ph:.1f}" stroke="{colour}" stroke-width="0.7" '
++                f'<line x1="{x:.1f}" y1="{top:.1f}" x2="{x:.1f}" '
++                f'y2="{bottom:.1f}" stroke="{colour}" stroke-width="0.6" '
+                 'stroke-dasharray="4 3"/>')
+             for p in row.positions:
+-                cy = Y(p)
+-                parts.append(
+-                    f'<ellipse cx="{x:.1f}" cy="{cy:.1f}" rx="2.6" ry="6" '
+-                    f'fill="{colour}"/>')
+-            if row.label:
+-                parts.append(
+-                    f'<text x="{x:.1f}" y="{pad - 6:.1f}" font-size="9" '
+-                    f'fill="{colour}" text-anchor="middle">'
+-                    f'{escape(row.label)}</text>')
+-    # Position ticks along the front edge (bottom of drawing for "v" rows,
+-    # left edge for "h" rows) — one dimension set serves every row.
+-    axis_h = any(r.axis == "h" for r in pm.rows)
+-    for p in pm.rows[0].positions:
+-        if axis_h:
+-            cx = X(p)
+-            parts.append(
+-                f'<text x="{cx:.1f}" y="{pad + ph + 14:.1f}" font-size="8.5" '
+-                f'fill="#333" text-anchor="middle">{p:.0f}</text>')
++                y = Y(pm.draw_height - p if reference_back else p)
++                if row.kind == "edge":
++                    parts.append(
++                        f'<line x1="{x:.1f}" y1="{y - 5:.1f}" '
++                        f'x2="{x:.1f}" y2="{y + 5:.1f}" '
++                        f'stroke="{colour}" stroke-width="3"/>')
++                else:
++                    parts.append(
++                        f'<ellipse cx="{x:.1f}" cy="{y:.1f}" rx="2" ry="5" '
++                        f'fill="{colour}"/>')
++            if row.label and not drawer_map:
++                text(x, top - 8, row.label, size=8)
++
++    # Separate baseline lanes prevent overlapping center distances. Each line
++    # starts at FRONT, including the mirrored right-side inner-face view.
++    for index, p in enumerate(positions):
++        label = f"{p:g}" if precise_ticks else f"{p:.0f}"
++        if horizontal:
++            x = X(pm.draw_width - p if front_at_right != reference_back else p)
++            datum = right if front_at_right != reference_back else left
++            y = bottom + 27 + index * 18
++            line(datum, bottom + 3, datum, y + 3)
++            line(x, bottom + 3, x, y + 3)
++            dimension(datum, y, x, y)
++            text(x, y - 4, label)
+         else:
+-            cy = Y(p)
+-            parts.append(
+-                f'<text x="{pad - 5:.1f}" y="{cy + 3:.1f}" font-size="8.5" '
+-                f'fill="#333" text-anchor="end">{p:.0f}</text>')
+-    lbl = "mortise centres, mm from front edge"
+-    parts.append(
+-        f'<text x="{W / 2:.1f}" y="{H - 4:.1f}" font-size="8.5" '
+-        f'fill="#666" text-anchor="middle">{lbl}</text>')
++            y = Y(pm.draw_height - p if reference_back else p)
++            x = left - 22 - index * 18
++            datum = top if reference_back else bottom
++            line(left - 3, datum, x - 3, datum)
++            line(left - 3, y, x - 3, y)
++            dimension(x, datum, x, y)
++            text(x - 4, y + 3, label, anchor="end")
++
++    if horizontal:
++        datum_right = front_at_right != reference_back
++        datum_x = right if datum_right else left
++        reference = "BACK" if reference_back else "FRONT"
++        text(datum_x + (-5 if datum_right else 5), top + 15, reference,
++             anchor="end" if datum_right else "start", size=8)
++        text((left + right) / 2, H - 19, f"INNER FACE · center distances from {reference} (mm)", size=8)
++    elif drawer_map:
++        text(left + 5, top + 15, "FRONT" if pm.canonical == "drawer_side" else "LEFT", anchor="start", size=8)
++        text(right - 5, top + 15, "BACK" if pm.canonical == "drawer_side" else "RIGHT", anchor="end", size=8)
++        text((left + right) / 2, H - 19, "Mortise centers from BOTTOM (mm)", size=8)
++        if pm.canonical == "drawer_side":
++            offsets = sorted({min(row.offset, pm.draw_width - row.offset) for row in pm.rows})
++            text((left + right) / 2, bottom + 16,
++                 "Face rows from ends: " + ", ".join(f"{offset:g}" for offset in offsets) + " mm", size=8)
++    else:
++        text((left + right) / 2, top + 15, "BACK", size=8)
++        text(left + 5, top + 27, "LEFT SIDE", anchor="start", size=8)
++        text(right - 5, top + 27, "RIGHT SIDE", anchor="end", size=8)
++        text((left + right) / 2, bottom + 16, "FRONT", size=8)
++        reference = "BACK" if reference_back else "FRONT"
++        text((left + right) / 2, H - 19, f"EDGE mortise centers from {reference} (mm)", size=8)
++    if panel_thickness is not None:
++        text((left + right) / 2, H - 5, f"Thickness {panel_thickness:g} mm", size=8)
+     parts.append("</svg>")
+     return "".join(parts)
+ 
+ 
++def _candidate_positions(span: float, spec: DominoSpec) -> tuple[float, ...]:
++    """Place candidate centers on a 10 mm grid with nominal tenon clearance."""
++    if not math.isfinite(span) or not math.isfinite(spec.max_spacing) or spec.max_spacing <= 0:
++        return ()
++    size = spec.size
++    length = size.mortise_length if size.mortise_length is not None else size.nominal_width
++    clearance = max(40.0, size.min_edge_distance + length / 2)
++    first = math.ceil(clearance / 10)
++    last = math.floor((span - clearance) / 10)
++    if first > last:
++        return ()
++    distance = last - first
++    min_step = math.ceil(length / 10)
++    if distance < min_step:
++        # Choose the available grid point nearest the middle of the span.
++        center = min(last, max(first, math.floor(span / 20 + 0.5)))
++        return (float(center * 10),)
++    max_step = math.floor(spec.max_spacing / 10)
++    if max_step < min_step:
++        return ()
++    # Maximise coverage while keeping every interval within both limits.
++    # Some grid distances cannot be partitioned into legal intervals, so
++    # move the backmost center inward until a valid layout exists.
++    for covered in range(distance, min_step - 1, -1):
++        intervals = math.ceil(covered / max_step)
++        if covered // intervals >= min_step:
++            return tuple(float((first + (i * covered // intervals)) * 10)
++                         for i in range(intervals + 1))
++    return ()
++
++
++def draft_mortise_panel_maps(cab_cfg, *, centered_face_rows: bool = False) -> dict[str, PanelMortiseMap]:
++    """Return draft perimeter maps; centered side rows are an explicit design choice.
++
++    Side coordinates are measured from the front edge. Render the left inner
++    face with front at left and the right inner face with front at right.
++    """
++    from dataclasses import replace
++    from .cabinet import CarcassJoinery
++
++    if (getattr(cab_cfg, "carcass_joinery", CarcassJoinery.FLOATING_TENON) != CarcassJoinery.FLOATING_TENON
++            or getattr(cab_cfg, "carcass_corner_style", "butt") != "butt"):
++        return {}
++    positions = _candidate_positions(float(cab_cfg.interior_depth), cab_cfg.domino_spec)
++    if not positions:
++        return {}
++    plan = build_assembly_plan(cab_cfg, domino_spec=cab_cfg.domino_spec,
++                               candidate_positions=positions)
++    maps = {}
++    for panel in plan.panels:
++        if panel.canonical in {"top", "bottom"}:
++            rows = tuple(row for row in panel.rows if row.kind == "edge")
++        elif panel.canonical == "side" and centered_face_rows:
++            bottom = float(cab_cfg.bottom_thickness) / 2
++            top = float(cab_cfg.height) - float(cab_cfg.top_thickness) / 2
++            rows = (MortiseRow("bottom", "h", bottom, positions, "face"),
++                    MortiseRow("top", "h", top, positions, "face"))
++        else:
++            continue
++        if rows:
++            maps[panel.canonical] = replace(panel, rows=rows, note="")
++    return maps
++
++
++def generate_draft_mortise_maps(
++    cab_cfg, cabinet_name: str = "Cabinet", *, settings_supplied: bool = False
++) -> str:
++    """Render candidate carcass edge centers without machine setup claims.
++
++    The configured DominoSpec and native interior depth determine centers from
++    the back edge. Face registration, plunge depth and cutter settings remain
++    unknown. Only the perimeter top and bottom edge rows are displayed.
++    """
++    from dataclasses import replace
++    from html import escape
++    from .cabinet import CarcassJoinery
++
++    if getattr(cab_cfg, "carcass_joinery", CarcassJoinery.FLOATING_TENON) != CarcassJoinery.FLOATING_TENON:
++        return "<p>Candidate maps are unavailable for this joinery.</p>"
++    if getattr(cab_cfg, "carcass_corner_style", "butt") != "butt":
++        return "<p>Candidate maps are unavailable for mitered carcasses.</p>"
++    positions = _candidate_positions(float(cab_cfg.interior_depth), cab_cfg.domino_spec)
++    if not positions:
++        return "<p>Candidate maps are unavailable for this span and Domino spacing.</p>"
++    plan = build_assembly_plan(
++        cab_cfg, cabinet_name, domino_spec=cab_cfg.domino_spec,
++        candidate_positions=positions,
++    )
++    centers = ", ".join(f"{p:g}" for p in plan.positions)
++    out = [
++        f"<h3>{escape(cabinet_name)}</h3>",
++        "<p>Layout: calculated centers, not for machining. "
++        f"Domino {escape(plan.size_key)}, span {plan.span:g} mm; "
++        f"centers {centers} mm from the back edge. "
++        + ("Marks are schematic; slot length, fit and glue clearance need confirmation. "
++           "Confirm registration. " if settings_supplied else
++           "Marks are schematic; actual slot dimensions and clearance are unknown. "
++           "Confirm registration, depth, tool settings and fit. ")
++        + "Face-row offsets are not specified.</p>",
++    ]
++    for panel in plan.panels:
++        if panel.canonical not in {"bottom", "top"}:
++            continue
++        rows = tuple(row for row in panel.rows if row.kind == "edge")
++        if not rows:
++            continue
++        safe_panel = replace(panel, rows=rows, note="")
++        out.append(f"<h4>{escape(panel.panel)}</h4>")
++        out.append(_panel_svg(safe_panel, precise_ticks=True, reference_back=True))
++    return "\n".join(out)
++
++
+ # ─── HTML renderer ────────────────────────────────────────────────────────────
+ 
+ 
+@@ -2046,6 +2243,8 @@ def generate_assembly_html(
+     plans: list[AssemblyPlan],
+     project_name: str = "Cabinet",
+ ) -> str:
++    if any(plan.size_key == "6x40" for plan in plans):
++        raise ValueError("6x40 machining dimensions and depths are unknown")
+     from datetime import date
+     from xml.sax.saxutils import escape
+ 
+@@ -2246,6 +2445,8 @@ def generate_assembly_pdf(
+ ) -> bytes:
+     """Portrait PDF mirroring the HTML content — US Letter by default,
+     ``paper="a4"`` for A4."""
++    if any(plan.size_key == "6x40" for plan in plans):
++        raise ValueError("6x40 machining dimensions and depths are unknown")
+     from .cutlist import _REPORTLAB_AVAILABLE
+     if not _REPORTLAB_AVAILABLE:
+         raise ImportError(
+diff --git a/src/cabineteer/cabinet.py b/src/cabineteer/cabinet.py
+index 1d65d20..a0dbca1 100644
+--- a/src/cabineteer/cabinet.py
++++ b/src/cabineteer/cabinet.py
+@@ -76,7 +76,7 @@ DEFAULT_FACE_GAP_MM: float = 4.0
+ #:                glue-up and is trapped on four edges: nothing shows from
+ #:                any angle, no fasteners, and an unglued solid-wood back can
+ #:                float in the groove and move seasonally.
+-BACK_CAPTURES: tuple[str, ...] = ("pocket", "rabbet", "half_lap", "dado")
++BACK_CAPTURES: tuple[str, ...] = ("pocket", "overlay", "rabbet", "half_lap", "dado")
+ 
+ #: A half lap splits the back's thickness in two, so a thin back leaves
+ #: nothing to lap. Below this the evaluator rejects "half_lap".
+@@ -513,7 +513,7 @@ class BackCapture:
+     @property
+     def machined(self) -> bool:
+         """True when the capture cuts into the case members."""
+-        return self.capture != "pocket"
++        return self.capture not in ("pocket", "overlay")
+ 
+ 
+ def back_capture_geometry(cfg: CabinetConfig) -> BackCapture:
+@@ -537,6 +537,14 @@ def back_capture_geometry(cfg: CabinetConfig) -> BackCapture:
+     t = float(cfg.back_thickness)
+     depth = float(cfg.depth)
+ 
++    if capture == "overlay":
++        return BackCapture(
++            capture="overlay", thickness=t, width=cfg.width, height=cfg.height,
++            engagement=0.0, cut_depth=0.0, cut_run=0.0, cut_offset=0.0,
++            lap_depth=0.0, lap_run=0.0, setback=0.0, clear_depth=t,
++            top_depth=depth - t, bottom_depth=depth - t, captive=False,
++        )
++
+     if capture == "pocket":
+         # Mitered tops are cut long-point on their own convention, so the
+         # full-depth cap never applies to them — the evaluator errors on the
+@@ -862,7 +870,7 @@ def make_side_panel(cfg: CabinetConfig, mirror: bool = False) -> "cq.Workplane":
+     # Start with a solid panel
+     panel = (
+         cq.Workplane("XY")
+-        .box(cfg.side_thickness, cfg.depth, cfg.height, centered=False)
++        .box(cfg.side_thickness, carcass_panel(cfg, "side").width, cfg.height, centered=False)
+     )
+ 
+     if _is_butt(cfg):
+@@ -1461,7 +1469,7 @@ def carcass_panel_dims(
+     panels: list[CarcassPanel] = [
+         CarcassPanel(
+             kind="side", name="side", quantity=2,
+-            length=float(cfg.height), width=float(cfg.depth),
++            length=float(cfg.height), width=float(cfg.interior_depth if geo.capture == "overlay" else cfg.depth),
+             thickness=side_t, banded_edges=front, bevel_ends=miter),
+         CarcassPanel(
+             kind="bottom", name="bottom", quantity=1,
+@@ -2184,7 +2192,7 @@ def build_cabinet(
+             # A machined capture holds the back INSIDE the case: it runs
+             # into each member by the engagement, and a groove holds its
+             # rear face forward of the carcass rear by the setback.
+-            back_x = cfg.side_thickness - geo.engagement
++            back_x = 0.0 if geo.capture == "overlay" else cfg.side_thickness - geo.engagement
+             back_y = cfg.depth - geo.setback - cfg.back_thickness
+             back_z = (0.0 if not geo.machined
+                       else cfg.bottom_thickness - geo.engagement)
+@@ -2512,10 +2520,11 @@ def build_multi_bay_cabinet(
+         # at a height following back_style; a machined capture runs it into
+         # each member by the engagement and holds it forward by the setback.
+         geo0 = back_capture_geometry(cfg0)
+-        cont_back_width = (total_width - cfg0.side_thickness
++        cont_back_width = (total_width if geo0.capture == "overlay" else
++                           total_width - cfg0.side_thickness
+                            - cfg_last.side_thickness + 2 * geo0.engagement)
+         cont_back_height = geo0.height
+-        back_x = cfg0.side_thickness - geo0.engagement
++        back_x = 0.0 if geo0.capture == "overlay" else cfg0.side_thickness - geo0.engagement
+         back_y = cfg0.depth - geo0.setback - cfg0.back_thickness
+         back_z = (0.0 if not geo0.machined
+                   else cfg0.bottom_thickness - geo0.engagement)
+diff --git a/src/cabineteer/evaluation.py b/src/cabineteer/evaluation.py
+index f6238e6..11e233e 100644
+--- a/src/cabineteer/evaluation.py
++++ b/src/cabineteer/evaluation.py
+@@ -582,8 +582,16 @@ def check_domino_layout(
+     # (The 3 mm often cited in guides is for the max-depth setting; the
+     # mortise_depth_per_side values in DOMINO_SIZES are already tuned to the
+     # recommended depth for typical panel thicknesses, so 2 mm suffices.)
+-    min_thickness = s.mortise_depth_per_side + 2.0
+-    if panel_thickness < min_thickness:
++    if s.mortise_depth_per_side is None:
++        issues.append(Issue(
++            check="domino_machining_unknown", severity=Severity.WARNING,
++            message=(f"Mortise dimensions and face and edge depths for {spec.size_key} "
++                     f"at {joint_name} are unknown; verify them and the remaining wall."),
++            part_a=joint_name,
++        ))
++    min_thickness = (s.mortise_depth_per_side + 2.0
++                     if s.mortise_depth_per_side is not None else None)
++    if min_thickness is not None and panel_thickness < min_thickness:
+         issues.append(Issue(
+             check="domino_panel_thickness",
+             severity=Severity.ERROR,
+@@ -598,7 +606,8 @@ def check_domino_layout(
+         ))
+ 
+     # Span must accommodate two edge distances plus at least one tenon
+-    min_span = 2 * s.min_edge_distance + s.mortise_length
++    slot_length = s.mortise_length if s.mortise_length is not None else s.nominal_width
++    min_span = 2 * s.min_edge_distance + slot_length
+     if span < min_span:
+         issues.append(Issue(
+             check="domino_span_too_short",
+@@ -1012,6 +1021,9 @@ def check_back_capture(cab_cfg: CabinetConfig) -> list[Issue]:
+                      "through the 45° end and shows in the corner seam."),
+         ))
+ 
++    if capture == "overlay":
++        return issues
++
+     geo = back_capture_geometry(cab_cfg)
+     # The same cut goes into all three perimeter members, so the thinnest
+     # of them is what decides whether a wall is left standing — a 12 mm top
+diff --git a/src/cabineteer/joinery.py b/src/cabineteer/joinery.py
+index f6b7c84..4e45122 100644
+--- a/src/cabineteer/joinery.py
++++ b/src/cabineteer/joinery.py
+@@ -407,12 +407,13 @@ class DominoSize:
+     """
+     tenon_length: float          # longer dimension (mm) — runs along the panel face
+     tenon_thickness: float       # shorter dimension (mm) — penetrates into each piece
+-    mortise_length: float        # slot length cut by machine (tenon_length + 0.5 mm)
+-    mortise_width: float         # slot width (tenon_thickness + 0.5 mm)
+-    mortise_depth_per_side: float  # how deep the mortise goes into each piece
++    mortise_length: Optional[float]  # actual slot length, if known
++    mortise_width: Optional[float]   # actual slot width, if known
++    mortise_depth_per_side: Optional[float]  # symmetric depth, if known
+     min_edge_distance: float     # centre of mortise to nearest panel edge
+     machine: str                 # "DF 500" or "DF 700"
+     part_number: str             # Festool catalog number for the tenon pack
++    nominal_width: Optional[float] = None  # width along the joint, not slot length
+ 
+ 
+ # All sizes from Festool catalog 2023; mortise depths are at the "fixed" fit setting.
+@@ -436,8 +437,9 @@ DOMINO_SIZES: dict[str, DominoSize] = {
+     ),
+     "6x40": DominoSize(
+         tenon_length=40, tenon_thickness=6,
+-        mortise_length=40.5, mortise_width=6.5, mortise_depth_per_side=18,
+-        min_edge_distance=10, machine="DF 500", part_number="498881",
++        mortise_length=None, mortise_width=None, mortise_depth_per_side=None,
++        min_edge_distance=10, machine="DF 500", part_number="494939",
++        nominal_width=19.8,
+     ),
+     "8x40": DominoSize(
+         # Mortise depth set to 15 mm per side — the recommended depth for
+@@ -517,8 +519,9 @@ class DominoSpec:
+             return 0
+         s = self.size
+         # End-tenon centres, placed so the mortise slot clears the panel end.
+-        start = s.min_edge_distance + s.mortise_length / 2
+-        end = span - s.min_edge_distance - s.mortise_length / 2
++        length = s.mortise_length if s.mortise_length is not None else s.nominal_width
++        start = s.min_edge_distance + length / 2
++        end = span - s.min_edge_distance - length / 2
+         if end <= start:
+             return 1
+         # Usable span between the two end tenons
+@@ -543,8 +546,9 @@ class DominoSpec:
+             return []
+         if n == 1 or span < 2 * s.min_edge_distance:
+             return [span / 2]
+-        start = s.min_edge_distance + s.mortise_length / 2
+-        end = span - s.min_edge_distance - s.mortise_length / 2
++        length = s.mortise_length if s.mortise_length is not None else s.nominal_width
++        start = s.min_edge_distance + length / 2
++        end = span - s.min_edge_distance - length / 2
+         if end <= start:
+             return [span / 2]
+         if n == 2:
+@@ -828,6 +832,8 @@ def miter_mortise_placement(
+     Raises ``ValueError`` when the stock is too thin for the tenon's depth
+     (e.g. 5×30 @ 15 mm needs ≥ 16.5 mm stock at a 2 mm wall).
+     """
++    if size.mortise_depth_per_side is None or size.mortise_width is None:
++        raise ValueError("Domino mortise dimensions and depths are unknown")
+     c = math.cos(math.radians(45))
+     t = float(stock_thickness)
+     hw = (size.mortise_width / 2) * c          # slot half-extent across faces
+@@ -1053,8 +1059,10 @@ def apply_domino_mortises(
+                 Mortise centres are placed at this Y offset.
+         panel_thickness_z: Z height of the panel face where mortises are cut.
+     """
+-    _require_cq()
+     s = spec.size
++    if s.mortise_length is None or s.mortise_width is None or s.mortise_depth_per_side is None:
++        raise ValueError("Domino mortise dimensions and depths are unknown")
++    _require_cq()
+     positions = spec.positions_for_span(span)
+     depth = s.mortise_depth_per_side
+ 

@@ -26,6 +26,9 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("doctor", help="Check local engine and viewing assets")
     build = commands.add_parser("build", help="Calculate and generate a cabinet draft")
     build.add_argument("project", help="Project path relative to buratino/")
+    build.add_argument(
+        "--json", action="store_true", help="Print the full build result as JSON"
+    )
     preview = commands.add_parser("preview", help="Serve the last draft on loopback")
     preview.add_argument("project", help="Project path relative to buratino/")
     preview.add_argument("--port", type=int, default=0)
@@ -38,7 +41,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if result["ok"] else 1
         path = project_path(root, args.project)
         if args.command == "build":
-            print(json.dumps(build_project(root, path), indent=2))
+            result = build_project(root, path)
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                print(f"Draft built: {result['directory']}")
+                print("Not ready for manufacturing. See report.html for checks.")
             return 0
         with preview_server(path, args.port) as server:
             print(

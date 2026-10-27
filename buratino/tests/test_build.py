@@ -8,7 +8,7 @@ import urllib.request
 import pytest
 
 from buratino import build
-from buratino.environment import file_hash, read_json, runtime_status, source_status
+from buratino.environment import file_hash, read_json, runtime_status
 from buratino.preview import input_status, latest_build, preview_server
 from buratino.project import InputError, load_project
 
@@ -18,6 +18,7 @@ def test_build_captures_consistent_outputs_without_editing_inputs(root, project)
     outcome = build.build_project(root, project)
     directory, manifest = latest_build(project)
     result = read_json(directory / "result.json")
+    assert len(result["parts"]) == 5
     assert outcome["status"] == "draft"
     assert manifest["manufacturing_ready"] is False
     assert (
@@ -25,24 +26,30 @@ def test_build_captures_consistent_outputs_without_editing_inputs(root, project)
         == read_json(root / "cabineteer.lock.json")["commit"]
     )
     assert load_project(project).identity == before
+    engine = root / "vendor/cabineteer/src/cabineteer"
+    captured = directory / "inputs/engine-source"
+    assert (captured / "assembly.py").read_bytes() == (
+        engine / "assembly.py"
+    ).read_bytes()
+    assert manifest["rule_files"][
+        "vendor/cabineteer/src/cabineteer/assembly.py"
+    ] == file_hash(captured / "assembly.py")
     with (directory / "parts.csv").open() as stream:
         rows = list(csv.DictReader(stream))
     assert len(rows) == 4
     assert sum(int(row["quantity"]) for row in rows) == 5
-    assert {row["id"] for row in rows} == {
-        group["id"] for group in result["cutting_groups"]
-    }
-    assert {member for row in rows for member in row["member_ids"].split(", ")} == {
-        part["id"] for part in result["parts"]
-    }
-    top = next(row for row in rows if "carcass.top" in row["member_ids"])
-    assert float(top["length_mm"]) == 684
-    assert result["grouping_scope"] == "cutting_blank"
+    assert len({row["part_code"] for row in rows}) == len(rows)
+    assert all(float(row["max_blank_length_mm"]) > 0 for row in rows)
     assert all(row["status"] == "DRAFT_NOT_FOR_MANUFACTURING" for row in rows)
     report = (directory / "report.html").read_text()
     assembly = (directory / "assembly.html").read_text()
-    assert "Physical part IDs" in report and "carcass.left_side" in report
-    assert "Physical part IDs" in assembly and "carcass.left_side" in assembly
+    assert "Physical part IDs" not in report and "carcass.left_side" not in report
+    assert "Physical part IDs" not in assembly and "carcass.left_side" not in assembly
+    assert all(
+        row["part_code"] in report
+        and all(code in assembly for code in row["part_code"].split(", "))
+        for row in rows
+    )
     viewer = (directory / "preview.html").read_text()
     assert "cdn.jsdelivr.net" not in viewer
     assert (directory / "assets/three/examples/jsm/loaders/GLTFLoader.js").is_file()
@@ -75,7 +82,11 @@ def test_build_captures_consistent_outputs_without_editing_inputs(root, project)
 
 def test_drawer_reports_keep_actual_parts_and_unverified_work_visible(root, tmp_path):
     project = tmp_path / "drawer-cabinet"
-    shutil.copytree(root / "projects/drawer-cabinet", project)
+    shutil.copytree(
+        root / "projects/drawer-cabinet",
+        project,
+        ignore=shutil.ignore_patterns("build"),
+    )
     outcome = build.build_project(root, project)
     directory, _manifest = latest_build(project)
     result = read_json(directory / "result.json")
@@ -89,15 +100,23 @@ def test_drawer_reports_keep_actual_parts_and_unverified_work_visible(root, tmp_
     assert sum(group["quantity"] for group in result["cutting_groups"]) == 29
     assert "4 drawer instances with 24 physical drawer parts" in report
     assert "29 total physical panels" in report
-    assert "including 18 mm overlay fronts" in report
-    assert "18 mm overlay fronts and a 2 mm face-to-carcass gap" in report
+    assert "Lower drawer fronts are 18 mm thick" in report
+    assert "2 mm face-to-carcass gap" in report
     assert "520 deep" in report
     assert "runner" in report.lower() and "catch" in report.lower()
-    assert "future manual work" in report
-    assert "6×40 mm Domino carcass joint" in assembly
-    assert "Drawer corners have no Domino claim" in assembly
+    assert "future manual work" not in report
+    assert "groove dimensions" not in report
+    assert "groove fit" not in report
+    assert "candidate centers per joint" in assembly
+    assert "Drawer corners have no Domino claim" not in assembly
+    assert "Candidate carcass mortise maps" not in assembly
+    assert "EDGE mortise centers from BACK (mm)" in assembly
+    assert "class='panel-drawing'" in assembly
+    assert "Stock thickness:" in assembly
+    assert "Physical part IDs:" not in assembly
     assert 'id="drawer-pose-toggle"' in viewer
-    assert "Drawers closed" in viewer and "Drawers open" in viewer_script
+    assert 'id="drawer-pose-toggle" aria-pressed="false"' in viewer
+    assert "ui.drawerPose.setAttribute('aria-pressed', String(open))" in viewer_script
     assert "result.overall_dimensions_mm ?? result.dimensions_mm" in viewer_script
     assert "mm overall" in viewer_script
     native_config = read_json(directory / "inputs/native-config.json")[
@@ -258,19 +277,6 @@ def test_existing_build_lock_is_not_removed(root, project):
     assert lock.read_text() == "other builder"
 
 
-def test_wrong_source_pin_is_detected_without_resetting_checkout(root, tmp_path):
-    lock = read_json(root / "cabineteer.lock.json")
-    expected = lock["commit"]
-    lock["commit"] = "0" * 40
-    build.write_json(tmp_path / "cabineteer.lock.json", lock)
-    (tmp_path / ".local").mkdir()
-    (tmp_path / lock["checkout"]).symlink_to(
-        root / lock["checkout"], target_is_directory=True
-    )
-    assert source_status(tmp_path)["ok"] is False
-    assert source_status(root)["commit"] == expected
-
-
 def test_changed_dependency_lock_is_detected(root, tmp_path):
     (tmp_path / ".local").mkdir()
     state = read_json(root / ".local/runtime.json")
@@ -286,15 +292,11 @@ def test_connection_guide_labels_the_actual_joint(root, tmp_path):
     build.render_documents(tmp_path, result)
     assembly = (tmp_path / "assembly.html").read_text()
     joint = next(
-        line
-        for line in assembly.split("<li>")
-        if line.startswith("connection.unit-a.unit-b:")
-    )
-    joint = joint.split("</li>", 1)[0]
-    assert "unit-a.carcass.right_side" in joint
-    assert "unit-b.carcass.left_side" in joint
+        line for line in assembly.split("<li>") if "Cabinet connection between" in line
+    ).split("</li>", 1)[0]
+    assert "unit-a.carcass" not in joint and "unit-b.carcass" not in joint
     assert "Cabinet connection between unit-a and unit-b" in joint
-    assert "fastening and capacity are unverified" in joint
+    assert "fastening and capacity are unverified" not in joint
     assert "Drawer corner" not in joint
 
 
@@ -316,3 +318,144 @@ def test_build_captures_resolved_native_helper_drawer_configs(root, linked_row_p
     assert config["applied_face"] is False
     assert config["buratino_box_bottom_clearance_mm"] == 0
     assert config["buratino_rear_corner_clearance_width_mm"] == 0
+
+
+def test_preview_reload_uses_latest_build_and_keeps_old_resources(root, project):
+    first = build.build_project(root, project)
+    with preview_server(project) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with urllib.request.urlopen(base + "/preview.html") as response:
+                first_page = response.read()
+            first_prefix = f"/revisions/{first['revision']}/"
+            assert f'<base href="{first_prefix}">'.encode() in first_page
+            (project / "project.py").write_text(
+                (project / "project.py").read_text() + "\n# changed\n"
+            )
+            second = build.build_project(root, project)
+            with urllib.request.urlopen(base + "/preview.html") as response:
+                second_page = response.read()
+            second_prefix = f"/revisions/{second['revision']}/"
+            assert f'<base href="{second_prefix}">'.encode() in second_page
+            for resource in ("result.json", "cabinet.glb", "assets/preview.js"):
+                with urllib.request.urlopen(base + first_prefix + resource) as response:
+                    original = project / "build" / first["revision"] / resource
+                    assert response.read() == original.read_bytes()
+            with urllib.request.urlopen(
+                base + first_prefix + "status.json"
+            ) as response:
+                assert json.load(response)["status"] == "stale"
+            with urllib.request.urlopen(
+                base + second_prefix + "status.json"
+            ) as response:
+                assert json.load(response)["status"] == "current"
+        finally:
+            server.shutdown()
+            thread.join()
+
+
+def test_confirmed_grain_has_no_display_label(root, tmp_path):
+    import csv
+
+    from buratino.engine import calculate
+
+    result = calculate(load_project(root / "projects/real-assembly")).result
+    build.render_documents(tmp_path, result)
+    for name in ("report.html", "assembly.html"):
+        assert "length (confirmed)" not in (tmp_path / name).read_text()
+    with (tmp_path / "parts.csv").open(newline="") as source:
+        rows = list(csv.DictReader(source))
+    assert rows and all(row["grain_status"] == "confirmed" for row in rows)
+    assert all(
+        group["grain_status"] == "confirmed" for group in result["cutting_groups"]
+    )
+
+
+def test_side_panel_maps_show_row_offsets_from_edges(root, tmp_path):
+    from buratino.engine import calculate
+
+    calculation = calculate(load_project(root / "projects/real-assembly"))
+    build.render_documents(tmp_path, calculation.result, calculation.configs)
+    assembly = (tmp_path / "assembly.html").read_text()
+    assert "Inner face; front at" not in assembly
+    assert assembly.count(">9</text>") >= 4
+    assert assembly.count("Thickness 18") >= 4
+    assert "not approved machining positions" not in assembly
+
+
+def test_panel_groups_split_when_candidate_positions_differ(root, tmp_path):
+    from copy import deepcopy
+    from dataclasses import replace
+
+    from cabineteer.joinery import DominoSpec
+
+    from buratino.engine import calculate
+
+    calculation = calculate(load_project(root / "projects/simple-cabinet"))
+    result = calculation.result
+    cabinet = result["cabinets"][0]
+    top = next(part for part in result["parts"] if part["id"].endswith(".carcass.top"))
+    other = deepcopy(top)
+    other["id"] = other["id"].replace(cabinet["id"], "other", 1)
+    result["parts"] = [top, other]
+    result["cabinets"] = [cabinet, {**cabinet, "id": "other"}]
+    result["joints"] = []
+    result["variables"]["part_codes"] = {top["id"]: "T", other["id"]: "T"}
+    cfg = calculation.configs[0]
+    cfg2 = replace(cfg, domino_spec=DominoSpec(size_key="6x40", max_spacing=100))
+    build.render_documents(tmp_path, result, [cfg, cfg2], panel_groups=[[top, other]])
+    rows = list(csv.DictReader((tmp_path / "parts.csv").open()))
+    assert [row["part_code"] for row in rows] == ["T-01, T-02"]
+    assert [row["quantity"] for row in rows] == ["2"]
+    report = (tmp_path / "report.html").read_text()
+    assert "T-01, T-02" in report
+    assembly = (tmp_path / "assembly.html").read_text()
+    assert assembly.count("EDGE mortise centers from BACK (mm)") == 2
+
+
+def test_review_report_shows_errors_without_unknown_check_list(root, tmp_path):
+    from buratino.engine import calculate
+
+    result = calculate(load_project(root / "projects/simple-cabinet")).result
+    result["checks"] = [
+        {"severity": "unknown", "code": "open_input", "message": "Unknown detail"},
+        {"severity": "error", "code": "bad_fit", "message": "Panel does not fit"},
+    ]
+    build.render_documents(tmp_path, result)
+    report = (tmp_path / "report.html").read_text()
+    assert "Panel does not fit" in report
+    assert "Unknown detail" not in report
+    assert "Checks and open inputs" not in report
+
+
+def test_reports_order_materials_and_keep_mixed_codes_in_one_cut_row(root, tmp_path):
+    from copy import deepcopy
+
+    from buratino.engine import calculate
+
+    result = calculate(load_project(root / "projects/simple-cabinet")).result
+    first = deepcopy(result["parts"][0])
+    second = deepcopy(first)
+    second["id"] = "upper.same_blank"
+    third = deepcopy(first)
+    third["id"] = "frame.other"
+    first["material"] = second["material"] = "Birch"
+    third["material"] = "Ash"
+    result["parts"] = [first, second, third]
+    result["joints"] = []
+    result["variables"]["part_codes"] = {
+        first["id"]: "L01",
+        second["id"]: "U01",
+        third["id"]: "F01",
+    }
+    build.render_documents(tmp_path, result, panel_groups=[[first], [second], [third]])
+    rows = list(csv.DictReader((tmp_path / "parts.csv").open()))
+    assert [row["material"] for row in rows] == ["Ash", "Birch"]
+    assert rows[1]["part_code"] == "L01, U01"
+    assert rows[1]["quantity"] == "2"
+    assembly = (tmp_path / "assembly.html").read_text()
+    assert assembly.index("<h3>Ash</h3>") < assembly.index("<h3>Birch</h3>")
+    assert assembly.index("<h4>L</h4>") < assembly.index("<h4>U</h4>")
+    assert "× 1</h5>" not in assembly

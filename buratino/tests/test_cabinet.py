@@ -28,13 +28,19 @@ def test_bare_native_cabinet_uses_native_panel_dimensions(root):
     assert [bounds.xlen, bounds.ylen, bounds.zlen] == pytest.approx([720, 500, 970])
     assert {
         issue["code"] for issue in result["checks"] if issue["severity"] == "error"
-    } == {"cabineteer.domino_panel_thickness"}
+    } == set()
+    assert any(
+        issue["code"] == "cabineteer.domino_machining_unknown"
+        for issue in result["checks"]
+    )
     assert result["manufacturing_ready"] is False
 
 
 def test_native_dimension_change_keeps_physical_ids_stable(root, tmp_path):
     path = tmp_path / "simple-cabinet"
-    shutil.copytree(root / "projects/simple-cabinet", path)
+    shutil.copytree(
+        root / "projects/simple-cabinet", path, ignore=shutil.ignore_patterns("build")
+    )
     first = calculate(load_project(path))
     source = (path / "project.py").read_text()
     (path / "project.py").write_text(

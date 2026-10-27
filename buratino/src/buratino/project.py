@@ -65,6 +65,9 @@ def _identity_files(root: Path) -> dict[str, str]:
         candidate = root / relative
         if candidate.is_file():
             files[relative] = file_hash(candidate)
+    from .environment import engine_files
+
+    files.update(engine_files(root))
     adapter = root / "src/buratino"
     if adapter.is_dir():
         for candidate in sorted(adapter.rglob("*.py")):

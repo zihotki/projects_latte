@@ -59,7 +59,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cabineteer", extras = ["cad"], directory = ".local/cabineteer" },
+    { name = "cabineteer", extras = ["cad"], editable = "vendor/cabineteer" },
     { name = "cadquery", specifier = "==2.5.2" },
 ]
 
@@ -72,7 +72,7 @@ dev = [
 [[package]]
 name = "cabineteer"
 version = "0.1.0"
-source = { directory = ".local/cabineteer" }
+source = { editable = "vendor/cabineteer" }
 dependencies = [
     { name = "mcp", extra = ["cli"] },
     { name = "numpy" },

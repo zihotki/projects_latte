@@ -8,7 +8,11 @@ from buratino.project import InputError, load_project
 
 def test_separate_carcass_row_places_shared_fronts_and_connections(root, tmp_path):
     path = tmp_path / "linked-row-fixture"
-    shutil.copytree(root / "projects/linked-row-fixture", path)
+    shutil.copytree(
+        root / "projects/linked-row-fixture",
+        path,
+        ignore=shutil.ignore_patterns("build"),
+    )
     source = (path / "project.py").read_text()
     source = source.replace('"width": 1192', '"width": 1200', 1)
     source = source.replace('"cabinet_gap_mm": 0', '"cabinet_gap_mm": 8', 1)
@@ -99,7 +103,11 @@ def test_shared_column_builder_has_one_divider_and_continuous_panels(root):
 
 def test_each_cabinet_keeps_its_native_face_thickness_and_aligns_fronts(root, tmp_path):
     path = tmp_path / "linked-row-face-thickness"
-    shutil.copytree(root / "projects/linked-row-fixture", path)
+    shutil.copytree(
+        root / "projects/linked-row-fixture",
+        path,
+        ignore=shutil.ignore_patterns("build"),
+    )
     source = (path / "project.py").read_text()
     needle = 'face_thickness=variables["drawer_face_thickness_mm"],'
     before, after = source.rsplit(needle, 1)
@@ -122,7 +130,11 @@ def test_each_cabinet_keeps_its_native_face_thickness_and_aligns_fronts(root, tm
 
 def test_shared_values_update_each_native_config_and_override_scope(root, tmp_path):
     path = tmp_path / "linked-row-values"
-    shutil.copytree(root / "projects/linked-row-fixture", path)
+    shutil.copytree(
+        root / "projects/linked-row-fixture",
+        path,
+        ignore=shutil.ignore_patterns("build"),
+    )
     source_path = path / "project.py"
 
     source_original = source_path.read_text()
@@ -249,7 +261,11 @@ def test_invalid_native_drawer_config_fails_before_cad(
 
 def test_native_helper_honors_cabinet_stock_and_opening_bottom(root, tmp_path):
     path = tmp_path / "row-native-defaults"
-    shutil.copytree(root / "projects/linked-row-fixture", path)
+    shutil.copytree(
+        root / "projects/linked-row-fixture",
+        path,
+        ignore=shutil.ignore_patterns("build"),
+    )
     source_path = path / "project.py"
     source = source_path.read_text().replace(
         '"drawer_side_thickness_mm": 16', '"drawer_side_thickness_mm": 15'

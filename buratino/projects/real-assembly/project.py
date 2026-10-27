@@ -8,7 +8,129 @@ from cabineteer.project import CabinetProject, ProjectCabinet, SharedDesign
 
 from buratino.drawers import EB20_SLIDE_KEYS, make_eb20_drawer_config
 
+# A code identifies one group of panels with the same modeled processing.
+# If a group changes, review this map and assign new codes where needed.
+part_codes = {
+    **dict.fromkeys(("left-drawers.carcass.left_side",), "L01"),
+    **dict.fromkeys(("left-drawers.carcass.right_side",), "L02"),
+    **dict.fromkeys(
+        (
+            "left-drawers.carcass.bottom",
+            "right-drawers.carcass.bottom",
+            "left-drawers.carcass.top",
+            "right-drawers.carcass.top",
+        ),
+        "L03",
+    ),
+    **dict.fromkeys(
+        (
+            "left-drawers.carcass.back",
+            "right-drawers.carcass.back",
+        ),
+        "L05",
+    ),
+    **{
+        f"{cabinet}.drawer.column-0.opening-{index}.side_left": "L06"
+        for cabinet in ("left-drawers", "right-drawers")
+        for index in range(4)
+    },
+    **{
+        f"{cabinet}.drawer.column-0.opening-{index}.side_right": "L07"
+        for cabinet in ("left-drawers", "right-drawers")
+        for index in range(4)
+    },
+    **{
+        f"{cabinet}.drawer.column-0.opening-{index}.inner_front": "L08"
+        for cabinet in ("left-drawers", "right-drawers")
+        for index in range(4)
+    },
+    **{
+        f"{cabinet}.drawer.column-0.opening-{index}.back": "L09"
+        for cabinet in ("left-drawers", "right-drawers")
+        for index in range(4)
+    },
+    **{
+        f"{cabinet}.drawer.column-0.opening-{index}.bottom": "L10"
+        for cabinet in ("left-drawers", "right-drawers")
+        for index in range(4)
+    },
+    **{
+        f"{cabinet}.drawer.column-0.opening-{index}.face": "L11"
+        for cabinet in ("left-drawers", "right-drawers")
+        for index in range(4)
+    },
+    **dict.fromkeys(("right-drawers.carcass.left_side",), "L12"),
+    **dict.fromkeys(("right-drawers.carcass.right_side",), "L13"),
+    **dict.fromkeys(
+        (
+            "frame.bottom.back",
+            "frame.bottom.front",
+            "frame.top.back",
+            "frame.top.front",
+        ),
+        "F01",
+    ),
+    **dict.fromkeys(
+        (
+            "frame.bottom.left",
+            "frame.bottom.right",
+        ),
+        "F02",
+    ),
+    **dict.fromkeys(
+        (
+            "frame.top.left",
+            "frame.top.right",
+        ),
+        "F03",
+    ),
+    **dict.fromkeys(("upper.left.column-0.opening-0.side_left",), "U01"),
+    **dict.fromkeys(("upper.left.column-0.opening-0.side_right",), "U02"),
+    **dict.fromkeys(("upper.left.column-0.opening-0.inner_front",), "U03"),
+    **dict.fromkeys(("upper.left.column-0.opening-0.back",), "U04"),
+    **dict.fromkeys(("upper.left.column-0.opening-0.bottom",), "U05"),
+    **dict.fromkeys(("upper.left.left_side",), "U06"),
+    **dict.fromkeys(("upper.left.divider",), "U07"),
+    **dict.fromkeys(("upper.left.right_side",), "U08"),
+    **dict.fromkeys(("upper.left.back",), "U09"),
+    **dict.fromkeys(
+        (
+            "upper.left.bottom_1",
+            "upper.left.bottom_2",
+            "upper.left.section_2_shelf_1",
+            "upper.right.bottom_1",
+            "upper.right.bottom_2",
+            "upper.right.section_1_shelf_1",
+            "upper.right.section_1_shelf_2",
+            "upper.right.section_1_shelf_3",
+            "upper.right.section_2_shelf_1",
+            "upper.right.section_2_shelf_2",
+            "upper.right.section_2_shelf_3",
+        ),
+        "U10",
+    ),
+    **dict.fromkeys(("upper.right.left_side",), "U11"),
+    **dict.fromkeys(("upper.right.divider",), "U12"),
+    **dict.fromkeys(("upper.right.right_side",), "U13"),
+    **dict.fromkeys(("upper.right.back",), "U14"),
+    **dict.fromkeys(("upper.shared.top_sloped",), "U15"),
+    **dict.fromkeys(("upper.shared.top_level",), "U16"),
+    **dict.fromkeys(("upper.left.column-0.opening-0.face",), "U17"),
+    **dict.fromkeys(("upper.left.section-2.door",), "U18"),
+    **dict.fromkeys(("upper.right.section-1.door",), "U19"),
+    **dict.fromkeys(("upper.right.section-2.door",), "U20"),
+}
+
 variables = {
+    "part_codes": part_codes,
+    "drawer_domino": True,
+    "domino_machining": {
+        "cutter_diameter_mm": 6,
+        "face_depth_mm": {"min": 12, "max": 15},
+        "face_reference": "centered",
+    },
+    # The user confirmed the grain directions shown in this design.
+    "grain_direction_confirmed": True,
     # No total installation envelope has been reported for this assembly.
     "space_mm": {},
     "first_compartment_space_mm": {
@@ -32,22 +154,19 @@ variables = {
         "The two carcasses are intended to be fastened side-to-side.",
         (
             "The user has a router and suitable jig for the 6x40 Domino mortises. "
-            "Mortise dimensions, depth, and reference surfaces remain unverified."
+            "Slot fit, glue clearance, and reference surfaces remain unverified."
         ),
     ],
     "assumptions": [
         (
             "Both existing drawer cabinets use the same selected 720 x 930 x "
-            "510 mm carcass dimensions. The second cabinet fit is unverified."
+            "506 mm overall carcass dimensions. The second cabinet fit is unverified."
         ),
         (
-            "510 mm is the selected carcass depth. The 18 mm faces plus a 2 mm "
-            "face-to-carcass gap make the overall depth 530 mm."
+            "500 mm side depth plus a 6 mm back gives a 506 mm carcass depth. "
+            "The 18 mm faces and 2 mm gap make the closed depth 526 mm."
         ),
-        (
-            "The 6 mm back, its unmachined pocket beneath the top, and its "
-            "fastening are provisional."
-        ),
+        ("The full-width rear backs use 6 mm board; back fastening is provisional."),
         "Runner mounting and box-to-face fastening are not specified for machining.",
         (
             "A 180 mm box height and 30 mm base box-bottom clearance are draft "
@@ -56,12 +175,12 @@ variables = {
             "native equal-face layout."
         ),
         (
-            "The 6 mm bottom groove and 30 x 13 mm rear back-corner clearances "
-            "are draft geometry assumptions, not Hettich manufacturing dimensions."
+            "The 30 x 13 mm rear back-corner clearances are draft geometry "
+            "assumptions, not Hettich manufacturing dimensions."
         ),
         (
             "The 6x40 Domino selection is fixed. The router and suitable jig are "
-            "user-provided; mortise dimensions, depth, and reference surfaces "
+            "user-provided; slot fit, glue clearance, and reference surfaces "
             "remain unverified."
         ),
         (
@@ -77,16 +196,15 @@ variables = {
     "frame_thickness_mm": 18,
     "frame_material": "18 mm plywood",
     "top_frame_depth_mm": 380,
-    "bottom_frame_depth_mm": 510,
     "width_mm": 720,
     "height_mm": 930,
-    "depth_mm": 510,
+    "side_depth_mm": 500,
     "side_thickness_mm": 18,
     "top_thickness_mm": 18,
     "bottom_thickness_mm": 18,
     "back_thickness_mm": 6,
-    "carcass_material": "Melamine-faced board; core and measured thickness unverified",
-    "back_material": "6 mm board; material and fastening unconfirmed",
+    "carcass_material": "Melamine-faced board",
+    "back_material": "6 mm board",
     "cabinet_gap_mm": 0,
     "connections": [
         {"from": "left-drawers", "to": "right-drawers", "type": "side_to_side"}
@@ -111,13 +229,12 @@ variables = {
     "face_to_carcass_gap_mm": 2,
     "drawer_face_overlay_top_mm": 3,
     "drawer_face_overlay_bottom_mm": 3,
-    "drawer_material": "Melamine-faced board; core and measured thickness unverified",
+    "drawer_material": "Melamine-faced board",
     "upper": {
         "cabinet_width_mm": 720,
-        "depth_mm": 410,
         "thickness_mm": 18,
         "back_thickness_mm": 6,
-        "back_material": "6 mm board; material and fastening unconfirmed",
+        "back_material": "6 mm board",
         "left_height_mm": 235,
         "right_height_mm": 1204,
         "shelf_levels_mm": [270, 550, 830],
@@ -133,17 +250,20 @@ variables = {
         "front_gap_mm": 3,
         "front_bottom_projection_mm": 10,
         "x": 0,
-        "y": 100,
+        "y": 0,
         "z": 1030,
-        "material": "Melamine-faced board; core and measured thickness unverified",
+        "material": "Melamine-faced board",
     },
 }
+variables["depth_mm"] = variables["side_depth_mm"] + variables["back_thickness_mm"]
+variables["bottom_frame_depth_mm"] = variables["depth_mm"]
+variables["upper"]["depth_mm"] = 420 + variables["upper"]["back_thickness_mm"]
 variables["upper"]["y"] = variables["depth_mm"] - variables["upper"]["depth_mm"]
 variables["upper"]["z"] = variables["height_mm"] + 2 * variables["frame_height_mm"]
 variables["assumptions"].extend(
     [
         "The upper cabinets stand on the top frame, flush to the lower backs.",
-        "The upper front projects 30 mm past the top frame; support is unverified.",
+        "The upper carcass projects 46 mm past the top frame; support is unverified.",
         "Upper shelf levels are draft choices; attachments are unknown.",
         (
             "The sloped top is 18 mm thick normal to its surface and butts "
@@ -187,7 +307,7 @@ variables["frames"] = [
 variables["assumptions"].extend(
     [
         "The top frame is flush with the cabinet backs.",
-        "Bottom frame depth is provisionally 510 mm.",
+        "Bottom frame depth is provisionally 506 mm.",
         "Frame butt-joint fastening and attachment to the carcasses are unverified.",
     ]
 )
@@ -206,8 +326,8 @@ _shared = SharedDesign(
     face_top_style="plain",
     face_bottom_style="plain",
     carcass_joinery=CarcassJoinery.FLOATING_TENON,
-    back_style="under_top",
-    back_capture="pocket",
+    back_style="full_height",
+    back_capture="overlay",
     domino_spec=DominoSpec(size_key="6x40"),
 )
 _base_config = CabinetConfig(
@@ -232,7 +352,7 @@ _left = _resolved["left-drawers"]
 # Use the same native opening and box layout for each cabinet.
 calculated = {
     "body_assembly_width_mm": 2 * variables["width_mm"],
-    "assembly_height_mm": variables["upper"]["z"]
+    "carcass_assembly_height_mm": variables["upper"]["z"]
     + variables["upper"]["right_height_mm"],
     "closed_depth_mm": (
         variables["depth_mm"]

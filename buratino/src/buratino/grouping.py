@@ -11,9 +11,6 @@ def _signature(part: dict) -> tuple:
         dims["width"],
         dims["thickness"],
         part["material"],
-        part["grain_direction"],
-        part["grain_status"],
-        part["edge_treatment"],
     )
 
 
@@ -65,6 +62,11 @@ def _label(parts: list[dict]) -> str:
     return labels.get(role, role.replace("_", " ").title())
 
 
+def _common(parts: list[dict], key: str) -> str:
+    values = {part.get(key, "unknown") for part in parts}
+    return next(iter(values)) if len(values) == 1 else "mixed"
+
+
 def group_cutting_blanks(parts: list[dict]) -> list[dict]:
     """Return deterministic cut-list groups while preserving physical part IDs."""
     grouped: dict[tuple, list[dict]] = {}
@@ -86,7 +88,14 @@ def group_cutting_blanks(parts: list[dict]) -> list[dict]:
                 "role": part["role"],
                 "finished_mm": dict(part["finished_mm"]),
             }
-            for key in ("component", "profile", "machining_assumptions"):
+            for key in (
+                "component",
+                "profile",
+                "machining_assumptions",
+                "grain_direction",
+                "grain_status",
+                "edge_treatment",
+            ):
                 if key in part:
                     detail[key] = part[key]
             member_details.append(detail)
@@ -100,9 +109,9 @@ def group_cutting_blanks(parts: list[dict]) -> list[dict]:
                 "finished_mm": dict(first["finished_mm"]),
                 "blank_mm": blank_dims,
                 "material": first["material"],
-                "grain_direction": first["grain_direction"],
-                "grain_status": first["grain_status"],
-                "edge_treatment": first["edge_treatment"],
+                "grain_direction": _common(members, "grain_direction"),
+                "grain_status": _common(members, "grain_status"),
+                "edge_treatment": _common(members, "edge_treatment"),
                 "grouping_scope": "cutting_blank",
                 "machining_status": "unverified",
                 "members": [part["id"] for part in members],

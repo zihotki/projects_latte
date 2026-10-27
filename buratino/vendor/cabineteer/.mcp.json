@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cabineteer": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "cabineteer"]
+    }
+  }
+}

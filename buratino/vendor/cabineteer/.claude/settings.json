@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__cabineteer__design_cabinet",
+      "mcp__cabineteer__generate_cutlist",
+      "mcp__cabineteer__design_legs"
+    ]
+  }
+}

@@ -12,7 +12,7 @@ buratino = "buratino.cli:main"
 dev = ["pytest==8.4.1", "ruff==0.12.8"]
 
 [tool.uv.sources]
-cabineteer = { path = ".local/cabineteer" }
+cabineteer = { path = "vendor/cabineteer", editable = true }
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -31,7 +31,7 @@ addopts = "-ra -p no:cacheprovider"
 [tool.ruff]
 target-version = "py312"
 line-length = 88
-extend-exclude = [".local"]
+extend-exclude = [".local", "vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

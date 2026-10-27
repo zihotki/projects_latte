@@ -23,42 +23,35 @@ def file_hash(path: Path) -> str:
 
 
 def source_status(root: Path) -> dict:
+    """Check source and recorded import provenance without restricting edits."""
     lock = read_json(root / "cabineteer.lock.json")
-    checkout = root / lock["checkout"]
-
-    def git(*args: str) -> str:
-        return subprocess.check_output(
-            ["git", "-C", str(checkout), *args], text=True, stderr=subprocess.PIPE
-        ).strip()
-
-    commit = git("rev-parse", "HEAD")
-    dirty = bool(git("status", "--porcelain"))
-    remote = git("remote", "get-url", "origin")
-    detached = (
-        subprocess.run(
-            ["git", "-C", str(checkout), "symbolic-ref", "-q", "HEAD"],
-            capture_output=True,
-        ).returncode
-        == 1
+    source = root / lock["source"]
+    valid_commit = len(lock["commit"]) == 40 and all(
+        c in "0123456789abcdef" for c in lock["commit"]
     )
     return {
-        "ok": commit == lock["commit"]
-        and remote == lock["repository"]
-        and detached
-        and not dirty,
-        "commit": commit,
-        "expected_commit": lock["commit"],
-        "dirty": dirty,
-        "detached": detached,
-        "repository": remote,
+        "ok": lock["source"] == "vendor/cabineteer"
+        and (source / "pyproject.toml").is_file()
+        and (source / "src/cabineteer/__init__.py").is_file()
+        and bool(lock["repository"])
+        and valid_commit
+        and len(lock["patch_sha256"]) == 64,
+        "commit": lock["commit"],
+        "repository": lock["repository"],
+        "source": str(source),
+        "patch_sha256": lock["patch_sha256"],
     }
 
 
-def _package_digest(directory: Path) -> dict[str, str]:
+def engine_files(root: Path) -> dict[str, str]:
+    """Hash the editable package, including data used by the engine."""
+    source = root / "vendor/cabineteer/src/cabineteer"
     return {
-        str(path.relative_to(directory)): file_hash(path)
-        for path in directory.rglob("*")
-        if path.is_file() and path.suffix in {".py", ".json"}
+        path.relative_to(root).as_posix(): file_hash(path)
+        for path in sorted(source.rglob("*"))
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix not in {".pyc", ".pyo"}
     }
 
 
@@ -101,11 +94,10 @@ def doctor(root: Path) -> dict:
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
         checks["source"] = {"ok": False, "error": str(exc)}
     spec = importlib.util.find_spec("cabineteer")
-    checkout = root / read_json(root / "cabineteer.lock.json")["checkout"]
+    expected = (root / "vendor/cabineteer/src/cabineteer/__init__.py").resolve()
     checks["installed_engine"] = {
-        "ok": bool(spec and spec.origin)
-        and _package_digest(checkout / "src/cabineteer")
-        == _package_digest(Path(spec.origin).parent),
+        "ok": bool(spec and spec.origin) and Path(spec.origin).resolve() == expected,
+        "origin": spec.origin if spec else None,
     }
     checks["cad"] = {"ok": importlib.util.find_spec("cadquery") is not None}
     assets = root / ".local/viewer/three"

@@ -1,4 +1,4 @@
-"""Serve one captured build on loopback, with input-staleness reporting."""
+"""Serve revision-pinned builds on loopback, with input-staleness reporting."""
 
 import json
 import mimetypes
@@ -12,10 +12,11 @@ from .environment import file_hash, read_json
 from .project import InputError, input_identity
 
 
-def latest_build(project_path: Path) -> tuple[Path, dict]:
+def _build(project_path: Path, revision: str | None = None) -> tuple[Path, dict]:
     builds = project_path.resolve() / "build"
     try:
-        revision = read_json(builds / "latest.json")["revision"]
+        if revision is None:
+            revision = read_json(builds / "latest.json")["revision"]
         if not isinstance(revision, str) or not re.fullmatch(
             r"[a-f0-9]{12}-[a-f0-9]{8}", revision
         ):
@@ -39,6 +40,10 @@ def latest_build(project_path: Path) -> tuple[Path, dict]:
         raise InputError("build_unavailable", f"Run build first. {exc}") from exc
 
 
+def latest_build(project_path: Path) -> tuple[Path, dict]:
+    return _build(project_path)
+
+
 def input_status(project_path: Path, expected_identity: str) -> dict:
     source = project_path.resolve() / "project.py"
     if not source.exists():
@@ -55,8 +60,9 @@ def input_status(project_path: Path, expected_identity: str) -> dict:
 
 
 def preview_server(project_path: Path, port: int = 0) -> ThreadingHTTPServer:
-    directory, manifest = latest_build(project_path)
-    listed_files = set(manifest["files"])
+    # Validate the initial build before starting the server, as before.
+    initial_directory, initial_manifest = latest_build(project_path)
+    builds = {initial_manifest["revision"]: (initial_directory, initial_manifest)}
     public_files = {
         "preview.html",
         "report.html",
@@ -65,37 +71,10 @@ def preview_server(project_path: Path, port: int = 0) -> ThreadingHTTPServer:
         "parts.csv",
         "cabinet.glb",
     }
-    allowed = (public_files & listed_files) | {
-        name for name in listed_files if name.startswith("assets/")
-    }
 
     class Handler(SimpleHTTPRequestHandler):
         def log_message(self, *_args):
             pass
-
-        def _status(self, *, head_only: bool) -> None:
-            data = json.dumps(
-                input_status(project_path, manifest["input_identity"])
-            ).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            if not head_only:
-                self.wfile.write(data)
-
-        def do_GET(self):  # noqa: N802
-            if urlsplit(self.path).path == "/status.json":
-                self._status(head_only=False)
-                return
-            super().do_GET()
-
-        def do_HEAD(self):  # noqa: N802
-            if urlsplit(self.path).path == "/status.json":
-                self._status(head_only=True)
-                return
-            super().do_HEAD()
 
         def send_head(self):
             raw_path = urlsplit(self.path).path
@@ -108,8 +87,47 @@ def preview_server(project_path: Path, port: int = 0) -> ThreadingHTTPServer:
                 not relative
                 or "\\" in relative
                 or any(part in {"", ".", ".."} for part in relative.split("/"))
-                or relative not in allowed
             ):
+                self.send_error(404)
+                return None
+
+            parts = relative.split("/")
+            pinned = parts[0] == "revisions" and len(parts) >= 3
+            try:
+                revision = (
+                    parts[1]
+                    if pinned
+                    else read_json(project_path.resolve() / "build" / "latest.json")[
+                        "revision"
+                    ]
+                )
+                if revision not in builds:
+                    builds[revision] = _build(project_path, revision)
+                directory, manifest = builds[revision]
+                if pinned:
+                    relative = "/".join(parts[2:])
+            except (InputError, OSError, ValueError, KeyError, TypeError):
+                self.send_error(404)
+                return None
+
+            if relative == "status.json":
+                data = json.dumps(
+                    input_status(project_path, manifest["input_identity"])
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(data)
+                return None
+
+            listed_files = set(manifest["files"])
+            allowed = (public_files & listed_files) | {
+                name for name in listed_files if name.startswith("assets/")
+            }
+            if relative not in allowed:
                 self.send_error(404)
                 return None
             target = (directory / relative).resolve()
@@ -121,6 +139,29 @@ def preview_server(project_path: Path, port: int = 0) -> ThreadingHTTPServer:
             except OSError:
                 self.send_error(404)
                 return None
+            if not pinned and relative in {
+                "preview.html",
+                "report.html",
+                "assembly.html",
+            }:
+                data = stream.read()
+                stream.close()
+                base = f'<base href="/revisions/{manifest["revision"]}/">'.encode()
+                data = re.sub(
+                    rb"<html\b[^>]*>",
+                    lambda match: match.group() + base,
+                    data,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(data)
+                return None
             self.send_response(200)
             content_type = (
                 mimetypes.guess_type(target.name)[0] or "application/octet-stream"
@@ -131,5 +172,5 @@ def preview_server(project_path: Path, port: int = 0) -> ThreadingHTTPServer:
             return stream
 
     return ThreadingHTTPServer(
-        ("127.0.0.1", port), partial(Handler, directory=str(directory))
+        ("127.0.0.1", port), partial(Handler, directory=str(project_path))
     )

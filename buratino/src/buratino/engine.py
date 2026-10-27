@@ -230,6 +230,64 @@ def _native_drawer_config(
     return cfg
 
 
+def _domino_machining(variables: dict, resolved: list) -> dict | None:
+    """Calculate nominal paired depths from the project router inputs."""
+    data = variables.get("domino_machining")
+    if data is None:
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("face_depth_mm"), dict):
+        raise InputError(
+            "invalid_domino_machining", "Provide cutter diameter and face depth range."
+        )
+    cutter = data.get("cutter_diameter_mm")
+    reference = data.get("face_reference")
+    if reference not in (None, "centered"):
+        raise InputError("invalid_domino_machining", "Unsupported face reference.")
+    low = data["face_depth_mm"].get("min")
+    high = data["face_depth_mm"].get("max")
+    if (
+        any(
+            isinstance(v, bool)
+            or not isinstance(v, int | float)
+            or not math.isfinite(v)
+            for v in (cutter, low, high)
+        )
+        or cutter <= 0
+        or low <= 0
+        or low > high
+        or high >= 40
+    ):
+        raise InputError(
+            "invalid_domino_machining",
+            "Cutter and face depths must be positive; "
+            "the ordered face range must be below 40 mm.",
+        )
+    walls = {}
+    for cabinet_id, cfg in resolved:
+        if cfg.domino_spec.size_key != "6x40":
+            raise InputError(
+                "invalid_domino_machining",
+                "Router depth inputs require a 6x40 Domino.",
+                cabinet_id,
+            )
+        thickness = cfg.side_thickness
+        if high >= thickness:
+            raise InputError(
+                "invalid_domino_machining",
+                "Face depth must be less than the side thickness.",
+                cabinet_id,
+            )
+        walls[cabinet_id] = {"min": thickness - high, "max": thickness - low}
+    return {
+        "cutter_diameter_mm": cutter,
+        "face_depth_mm": {"min": low, "max": high},
+        "edge_depth_mm": {"min": 40 - high, "max": 40 - low},
+        "tenon_length_mm": 40,
+        "face_reference": reference,
+        "face_wall_mm_by_cabinet": walls,
+    }
+
+
 def calculate(project: ProjectInputs) -> Calculation:
     """Resolve native project configs into draft parts, checks, and placements."""
     from cabineteer.cabinet import (
@@ -249,6 +307,7 @@ def calculate(project: ProjectInputs) -> Calculation:
         raise InputError(
             "empty_project", "A project must contain at least one cabinet."
         )
+    domino_machining = _domino_machining(project.variables, resolved)
     cabinet_gap = project.variables.get("cabinet_gap_mm", 0)
     cabinet_z = project.variables.get("cabinet_base_z_mm", 0)
     _require_nonnegative_mm(cabinet_z, "cabinet_base_z_mm")
@@ -394,7 +453,13 @@ def calculate(project: ProjectInputs) -> Calculation:
                 {
                     "code": f"cabineteer.{issue.check}",
                     "severity": issue.severity.value,
-                    "message": issue.message,
+                    "message": (
+                        "Slot fit, glue clearance and jig reference "
+                        "surfaces remain unconfirmed."
+                        if domino_machining
+                        and issue.check == "domino_machining_unknown"
+                        else issue.message
+                    ),
                     "cabinet_id": cabinet_id,
                     "affected": affected,
                     "source_affected": source_affected,
@@ -848,6 +913,42 @@ def calculate(project: ProjectInputs) -> Calculation:
         raise InputError("invalid_upper", str(exc), "upper") from exc
     parts.extend(upper_parts)
     parts.extend(upper_fronts)
+    if project.variables.get("drawer_domino"):
+        for item in drawer_instances:
+            cfg = item["config"]
+            height = cfg.box_height
+            # 50 mm centers leave 40.1 mm beyond the nominal 19.8 mm tenon.
+            # Actual slot width and the catch positions are not established.
+            centers = [50.0, height - 50.0]
+            nominal_half_width = 19.8 / 2
+            valid = (
+                centers[1] - centers[0] >= 19.8
+                and centers[0] - nominal_half_width
+                > cfg.bottom_dado_inset + cfg.bottom_thickness
+            )
+            for end in ("inner_front", "back"):
+                for side in ("side_left", "side_right"):
+                    drawer_id = item["drawer_id"]
+                    joints.append(
+                        {
+                            "id": f"{drawer_id}.joint.{end}.{side}",
+                            "cabinet_id": item["cabinet_id"],
+                            "drawer_id": drawer_id,
+                            "type": "drawer_domino",
+                            "tenon": "6x40",
+                            "parts": [f"{drawer_id}.{end}", f"{drawer_id}.{side}"],
+                            "candidate_centers_from_bottom_mm": centers
+                            if valid
+                            else None,
+                            "quantity": len(centers) if valid else None,
+                            "status": "unverified",
+                            "limitations": (
+                                "Candidate centers use nominal tenon width; "
+                                "slot geometry and runner catch positions "
+                                "are unverified."
+                            ),
+                        }
+                    )
     if upper_parts:
         issues.append(
             {
@@ -1063,21 +1164,6 @@ def calculate(project: ProjectInputs) -> Calculation:
         issues.extend(
             [
                 {
-                    "code": "drawer.bottom_groove_assumption",
-                    "severity": "unknown",
-                    "message": (
-                        "Groove depth is a draft choice. Hettich does not specify "
-                        "its width or depth. Bottom stock is unverified."
-                    ),
-                    "cabinet_id": x["cabinet_id"],
-                    "affected": [f"{x['drawer_id']}.bottom"],
-                }
-                for x in drawer_instances
-            ]
-        )
-        issues.extend(
-            [
-                {
                     "code": "drawer.rear_corner_clearance_assumption",
                     "severity": "unknown",
                     "message": (
@@ -1187,14 +1273,6 @@ def calculate(project: ProjectInputs) -> Calculation:
                 "affected": [],
             }
         )
-        issues.append(
-            {
-                "code": "drawer.material_unverified",
-                "severity": "unknown",
-                "message": "Drawer stock and measured thicknesses are not confirmed.",
-                "affected": [x["drawer_id"] for x in drawer_instances],
-            }
-        )
 
     assumptions = project.variables.get("assumptions", [])
     for assumption in assumptions:
@@ -1211,8 +1289,7 @@ def calculate(project: ProjectInputs) -> Calculation:
             "code": "machining.unverified",
             "severity": "unknown",
             "message": (
-                "6x40 Domino selection is fixed. Verify mortise dimensions, "
-                "depths, spacing and quantities before machining."
+                "Confirm jig registration and cutter settings before machining."
             ),
             "affected": [
                 p["id"]
@@ -1221,17 +1298,20 @@ def calculate(project: ProjectInputs) -> Calculation:
             ],
         }
     )
-    issues.append(
-        {
-            "code": "grain.direction_assumed",
-            "severity": "unknown",
-            "message": (
-                "Grain direction follows native panel length as a draft choice. "
-                "The board product and grain direction are unverified."
-            ),
-            "affected": [p["id"] for p in parts],
-        }
-    )
+    if project.variables.get("grain_direction_confirmed") is True:
+        for part in parts:
+            if part.get("grain_status") == "assumed":
+                part["grain_status"] = "confirmed"
+    assumed_grain = [p["id"] for p in parts if p.get("grain_status") == "assumed"]
+    if assumed_grain:
+        issues.append(
+            {
+                "code": "grain.direction_assumed",
+                "severity": "unknown",
+                "message": "Grain direction is an unverified draft choice.",
+                "affected": assumed_grain,
+            }
+        )
 
     space = project.variables.get("space_mm", {})
     max_width = space.get("width") if isinstance(space, dict) else None
@@ -1245,20 +1325,31 @@ def calculate(project: ProjectInputs) -> Calculation:
         [entry["bounds_mm"]["min"]["x"] for entry in cabinet_entries + upper_cabinets]
         + [frame["x"] for frame in frames]
     )
-    overall_height = max(
+    carcass_height = max(
         [entry["bounds_mm"]["max"]["z"] for entry in cabinet_entries + upper_cabinets]
         + [f["z"] + f["height"] for f in frames]
     ) - min(
         [entry["bounds_mm"]["min"]["z"] for entry in cabinet_entries + upper_cabinets]
         + [f["z"] for f in frames]
     )
+    overall_height = max(
+        [entry["bounds_mm"]["max"]["z"] for entry in cabinet_entries + upper_cabinets]
+        + [f["z"] + f["height"] for f in frames]
+        + [p["position_mm"]["z"] + p["size_mm"]["z"] for p in upper_fronts]
+    ) - min(
+        [entry["bounds_mm"]["min"]["z"] for entry in cabinet_entries + upper_cabinets]
+        + [f["z"] for f in frames]
+        + [p["position_mm"]["z"] for p in upper_fronts]
+    )
     carcass_depth = max(cfg.depth for _, cfg in resolved)
     overall_depth = max(
         [entry["bounds_mm"]["max"]["y"] for entry in cabinet_entries + upper_cabinets]
         + [f["y"] + f["depth"] for f in frames]
+        + [p["position_mm"]["y"] + p["size_mm"]["y"] for p in upper_fronts]
     ) - min(
         [entry["bounds_mm"]["min"]["y"] for entry in cabinet_entries + upper_cabinets]
         + [f["y"] for f in frames]
+        + [p["position_mm"]["y"] for p in upper_fronts]
     )
     if max_width is not None and overall_width > max_width:
         issues.append(
@@ -1332,7 +1423,7 @@ def calculate(project: ProjectInputs) -> Calculation:
             "manufacturing_ready": False,
             "dimensions_mm": {
                 "width": overall_width,
-                "height": overall_height,
+                "height": carcass_height,
                 "depth": carcass_depth,
             },
             "overall_dimensions_mm": {
@@ -1349,6 +1440,7 @@ def calculate(project: ProjectInputs) -> Calculation:
                 if len(resolved) == 1
                 else None
             ),
+            "domino_machining": domino_machining,
             "variables": project.variables,
             "calculated": project.calculated,
             "cabinets": cabinet_entries,

@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# uv
+.uv/
+
+# Local environment overrides — never commit
+.env
+.env.*
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+pytest-cache-files-*
+
+# CadQuery / visualization outputs
+~/.cabinet-mcp/
+
+# Editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+.coverage*
+
+# Claude Code personal settings — never commit
+.claude/settings.local.json

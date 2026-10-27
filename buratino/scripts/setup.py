@@ -70,20 +70,8 @@ def install_assets() -> None:
 
 
 def main() -> None:
-    lock = read_json(ROOT / "cabineteer.lock.json")
-    checkout = ROOT / lock["checkout"]
-    if not checkout.exists():
-        checkout.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
-            ["git", "clone", "--no-checkout", lock["repository"], str(checkout)],
-            check=True,
-        )
-        subprocess.run(
-            ["git", "-C", str(checkout), "checkout", "--detach", lock["commit"]],
-            check=True,
-        )
     if not source_status(ROOT)["ok"]:
-        raise ValueError("Cabineteer must be clean, detached, and match its pin.")
+        raise ValueError("Cabineteer source or provenance is missing or invalid.")
     if not shutil.which("uv"):
         raise ValueError("Install UV before running Buratino setup.")
     subprocess.run(

@@ -1,0 +1,2845 @@
+"""
+Parametric base cabinet model.
+
+Generates a frameless (Euro-style) base cabinet with:
+- Two side panels with dados for shelves and rabbet for back
+- Bottom panel in dados
+- Fixed shelves in dados
+- Back panel in rabbets
+- Optional adjustable shelf pin holes (32mm system)
+
+All dimensions in millimeters. The cabinet is oriented with:
+- X axis: width (left to right)
+- Y axis: depth (front to back)
+- Z axis: height (bottom to top)
+- Origin at front-bottom-left exterior corner
+"""
+
+import dataclasses
+import math
+from dataclasses import dataclass, field
+from typing import Optional
+
+try:
+    import cadquery as cq
+except ImportError:
+    cq = None  # allow import for type checking / planning without cadquery installed
+
+from .hardware import DrawerSlideSpec, get_slide, LegSpec, get_leg, get_pull, MountStyle
+from .pulls import HingeSide, door_pull_x_center
+from .joinery import (
+    CarcassJoinery,
+    DrawerJoineryStyle,
+    DominoSpec,
+    PocketScrewSpec,
+    BiscuitSpec,
+    DowelSpec,
+    DEFAULT_DOMINO,
+    DEFAULT_POCKET_SCREW,
+    DEFAULT_BISCUIT,
+    DEFAULT_DOWEL,
+)
+
+
+#: Face overhang onto an interior column divider, per side.  Used as the
+#: build default for ``build_multi_bay_cabinet(inner_overlay=...)`` AND by
+#: evaluation.check_door_overlay_collisions as the share of a divider the
+#: neighbouring column's faces claim — keep the two in sync via this constant
+#: (an 18 mm divider splits 8 + 8 with a 2 mm reveal).
+INNER_FACE_OVERLAY_MM: float = 8.0
+
+#: build default for ``build_multi_bay_cabinet(face_gap=...)`` AND by
+#: evaluation.check_edge_band_face_gap as the total vertical clearance
+#: between adjacent faces that hot-melt banding growth eats into.
+DEFAULT_FACE_GAP_MM: float = 4.0
+
+#: How the back panel is held in the carcass — an axis independent of both
+#: ``carcass_joinery`` (how the corners go together) and ``back_style``
+#: (where the back's top edge lands).
+#:
+#:   "pocket"   — the legacy let-in back. Sides run full depth, everything
+#:                else stops short, and the back is glued onto the rear edges
+#:                it finds there. Nothing is machined. The only capture whose
+#:                back sits OUTSIDE the top/bottom panels, so the only one
+#:                where ``back_style`` changes what you see.
+#:   "rabbet"   — a rabbet in the rear inner edge of the sides, top and
+#:                bottom. The back drops in from BEHIND after glue-up and
+#:                finishes flush with the case rear. Screw it instead of
+#:                gluing it and the back comes out again.
+#:   "half_lap" — both halves rabbeted to half the back's thickness so they
+#:                lap. Twice the glue area of a plain rabbet, the panel is
+#:                trapped fore-and-aft by the step rather than by glue alone,
+#:                and the lap self-registers the panel square during glue-up.
+#:                Still drops in from behind.
+#:   "dado"     — a groove plowed in the inner faces of all four members,
+#:                set in from the rear edge. The back SLIDES IN during
+#:                glue-up and is trapped on four edges: nothing shows from
+#:                any angle, no fasteners, and an unglued solid-wood back can
+#:                float in the groove and move seasonally.
+BACK_CAPTURES: tuple[str, ...] = ("pocket", "overlay", "rabbet", "half_lap", "dado")
+
+#: A half lap splits the back's thickness in two, so a thin back leaves
+#: nothing to lap. Below this the evaluator rejects "half_lap".
+HALF_LAP_MIN_BACK_MM: float = 9.0
+
+#: Material a machined capture must leave standing: ``side_thickness −
+#: back_rabbet_depth`` for the case member's wall, and the wall behind a
+#: dado groove (``back_groove_setback``).
+MIN_CAPTURE_WALL_MM: float = 6.0
+
+
+@dataclass(frozen=True)
+class OpeningConfig:
+    """One opening (a single face-height zone) within a column stack.
+
+    ``height_mm`` is the vertical space allocated to this opening.
+    ``opening_type`` describes what fills it:
+      "drawer"    — a drawer box on slides
+      "door"      — a single swinging door
+      "door_pair" — a matched pair of doors side-by-side
+      "shelf"     — a fixed shelf
+      "open"      — open compartment (no door/drawer)
+
+    The optional override fields (all default to ``None``) let individual
+    openings deviate from the cabinet-level defaults.  ``None`` means
+    "inherit from the column or cabinet config".
+    """
+    height_mm: float
+    opening_type: str
+    hinge_key:      Optional[str]   = None
+    hinge_side:     Optional[str]   = None   # "left" | "right"
+    pull_key:       Optional[str]   = None
+    num_doors:      Optional[int]   = None   # 1 or 2; only for door types
+    door_thickness: Optional[float] = None
+    bottom_thickness: Optional[float] = None  # drawer box bottom; only for drawers
+    slide_key: Optional[str] = None  # drawer slide override; only for drawers
+
+    def __post_init__(self) -> None:
+        valid_types = {"drawer", "door", "door_pair", "shelf", "open"}
+        if self.opening_type not in valid_types:
+            raise ValueError(
+                f"opening_type must be one of {sorted(valid_types)}, "
+                f"got {self.opening_type!r}."
+            )
+        if not math.isfinite(self.height_mm) or self.height_mm <= 0:
+            raise ValueError(
+                f"height_mm must be a positive finite number, "
+                f"got {self.height_mm!r}."
+            )
+        # Explicit per-opening overrides must be physically meaningful; a NaN
+        # or non-positive thickness silently disables downstream checks.
+        for fname in ("bottom_thickness", "door_thickness"):
+            v = getattr(self, fname)
+            if v is not None and (not math.isfinite(v) or v <= 0):
+                raise ValueError(
+                    f"{fname} must be a positive finite number, got {v!r}."
+                )
+        if self.num_doors is not None and self.num_doors not in (1, 2):
+            raise ValueError(f"num_doors must be 1 or 2, got {self.num_doors!r}.")
+
+
+@dataclass(frozen=True)
+class ColumnConfig:
+    """One vertical column within a single cabinet carcass.
+
+    A cabinet may have multiple side-by-side columns separated by interior
+    vertical dividers — e.g. a left column of three drawers next to a right
+    column with a single door.
+
+    ``width_mm`` is the **interior** width of the column opening (not
+    including adjacent divider panel thickness).  The sum of all column
+    widths plus ``(n_columns − 1) × side_thickness`` must equal the
+    cabinet's ``interior_width``; the evaluator enforces this.
+
+    ``fixed_shelf_positions`` holds heights (from the cabinet's exterior
+    bottom to shelf bottom) for fixed shelves local to this column.
+    """
+    width_mm: float
+    openings: tuple[OpeningConfig, ...]  # stacked bottom-to-top
+    fixed_shelf_positions: tuple[float, ...] = ()
+
+
+_BAND_STOCK_KEYS = {"width_mm", "length_mm", "price_usd", "strip_width_mm"}
+
+
+def normalize_band_stock(spec: dict | None) -> dict | None:
+    """Validated copy of an ``edge_band_stock`` spec with defaults applied.
+
+    ``None``/empty stays ``None`` (unpriced rip-from-offcuts). Board
+    thickness is NOT a key — it is ``edge_band_thickness_mm``, so the stock
+    and the band can never disagree. Raises ``ValueError`` on unknown keys
+    or non-positive values so bad specs fail at design time, not in the BOM.
+    """
+    if not spec:
+        return None
+    unknown = set(spec) - _BAND_STOCK_KEYS
+    if unknown:
+        raise ValueError(
+            f"edge_band_stock: unknown key(s) {sorted(unknown)}. "
+            f"Valid keys: {sorted(_BAND_STOCK_KEYS)}."
+        )
+    try:
+        out = {
+            "width_mm": float(spec["width_mm"]),
+            "length_mm": float(spec["length_mm"]),
+            "price_usd": float(spec["price_usd"]),
+            "strip_width_mm": float(spec.get("strip_width_mm", 20.0)),
+        }
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(
+            "edge_band_stock needs numeric width_mm, length_mm and "
+            "price_usd (strip_width_mm optional, default 20)."
+        ) from None
+    bad = [k for k, v in out.items() if not math.isfinite(v) or v <= 0]
+    if bad:
+        raise ValueError(f"edge_band_stock: {', '.join(sorted(bad))} must be "
+                         "positive finite numbers.")
+    return out
+
+
+@dataclass
+class CabinetConfig:
+    """Configuration for a base cabinet."""
+
+    # Overall exterior dimensions
+    width: float = 600.0
+    height: float = 720.0
+    depth: float = 550.0
+
+    # Materials
+    side_thickness: float = 18.0  # 3/4" Baltic birch
+    bottom_thickness: float = 18.0
+    top_thickness: float = 18.0
+    shelf_thickness: float = 18.0
+    back_thickness: float = 6.0  # 1/4" plywood
+    # Drawer box stock (sides + sub-front/back).  Bottoms are governed by the
+    # per-drawer bottom_thickness option / size rule in DrawerConfig.
+    drawer_box_thickness: float = 15.0  # 5/8" Baltic birch
+    # Build drawer boxes (incl. bottoms) from pre-finished Baltic birch —
+    # UV-coated both faces, no finishing step after assembly.  Affects the
+    # cutlist material designation and sheet pricing only; geometry is
+    # identical.  Workshop presets default this on.
+    drawer_box_prefinished: bool = False
+    # Cutlist material for the show faces — applied false fronts AND door
+    # panels.  Sheet materials (the Baltic birch stocks, or any name ending
+    # in "_ply") pool into the sheet optimisation; any other string (default
+    # "finished_wood") keeps the faces as a labeled order-out group excluded
+    # from sheet packing.  Geometry unaffected.
+    face_material: str = "finished_wood"
+    # Cutlist material for the carcass panels — sides, top, bottom, shelves,
+    # and column dividers.  Backs and drawer boxes keep their own stock
+    # (back is 1/4" ply, boxes follow drawer_box_thickness/_prefinished).
+    # Sheet groups are packed per (material, thickness) and priced from
+    # PRICE_LIST when a matching sheet entry exists (price TBD otherwise).
+    carcass_material: str = "baltic_birch"
+    # Edge banding for exposed ply edges (cutlist/BOM only — no 3D effect).
+    # "hot_melt": pre-glued iron-on veneer applied after assembly; cut dims
+    # unchanged. "hardwood": solid strips (typ. 3.2–6.4 mm) glued before
+    # joinery; panel CORES are cut smaller by the band thickness per banded
+    # edge so FINISHED dims (and face reveals) hold. Banded edges: fronts of
+    # sides/top/bottom/shelves/dividers + all four edges of false fronts and
+    # door leaves. All three are SharedDesign tokens.
+    edge_band_mode: str = "none"          # none | hot_melt | hardwood
+    edge_band_thickness_mm: float = 0.6   # hardwood: 3.2–6.4 typical
+    edge_band_material: str = ""          # "" → derive from panel material
+    # Purchasable strip stock for hardwood mode (None → unpriced rip-from-
+    # offcuts line). Keys: width_mm (board width the strips rip from),
+    # length_mm (board length = strip length), price_usd (per board),
+    # strip_width_mm (optional, default 20 — covers an 18 mm edge proud).
+    # Board thickness IS edge_band_thickness_mm, so the two can't disagree.
+    # SharedDesign token; the cutlist packs actual edge lengths into strips
+    # and prices boards-to-order from it.
+    edge_band_stock: dict | None = None
+
+    # ── Show-face geometry ────────────────────────────────────────────────
+    # Total vertical clearance between two stacked show faces (mm) — the
+    # reveal the builder sets with shims at install. Half is trimmed from
+    # each face at every internal opening boundary. SharedDesign token.
+    face_gap_mm: float = DEFAULT_FACE_GAP_MM
+    # Top/bottom show-face style — two INDEPENDENT axes (Charlie's ask,
+    # 2026-09: "furniture_top" conflated whether the top panel gets a cap
+    # strip with whether the bottom face drops flush, and a build can want
+    # either alone). "cap": the top panel gains a front cap strip flush with
+    # the face plane, the topmost face stops short of it (today's
+    # furniture-top look). "flush": no cap strip — the topmost face itself
+    # rises to the true TOP of the top panel, covering its front edge
+    # entirely (the same plane a cap strip would occupy). "plain": face stops
+    # at the panel's own underside (no cap, no rise) — the old furniture_top =
+    # False look. Bottom has no "cap" state (nothing is capped at the
+    # bottom): "flush" drops the lowest face to the carcass underside,
+    # "plain" starts it at the bottom panel's top face. Persisted here
+    # (SharedDesign tokens) so the CUTLIST sees them — before 2026-08 this
+    # was a render-only flag and the cap strip plus the bottom-face drop
+    # existed in the 3D model but never on paper.
+    face_top_style: str = "cap"       # plain | cap | flush
+    face_bottom_style: str = "flush"  # plain | flush
+
+    @property
+    def furniture_top(self) -> bool:
+        """Deprecated read-only alias for the old combined boolean flag.
+
+        ``True`` exactly when both axes read as the classic "furniture top,
+        flush bottom" look (``face_top_style == "cap"`` AND
+        ``face_bottom_style == "flush"``). This is a DERIVED view, never a
+        stored field — a second stored boolean that could independently
+        disagree with the two real fields is exactly the "two documents
+        agreeing with each other while both are wrong" failure mode the
+        dimensioning arc (#88, #89, the depth-datum arc) exists to
+        eliminate. Kept only so old callers reading ``cfg.furniture_top``
+        keep working; new code should read the two style fields directly.
+        """
+        return self.face_top_style == "cap" and self.face_bottom_style == "flush"
+
+    # Joinery
+    dado_depth: float = 9.0  # half thickness dado for shelves/bottom
+    back_rabbet_width: float = 9.0  # rabbet width for back panel
+    back_rabbet_depth: float = 6.0  # matches back_thickness
+
+    # Shelves
+    fixed_shelf_positions: list[float] = field(default_factory=list)
+    # Heights from cabinet bottom (exterior) to shelf bottom
+
+    # Adjustable shelves (32mm system)
+    adj_shelf_holes: bool = False
+    shelf_pin_diameter: float = 5.0
+    shelf_pin_depth: float = 10.0
+    shelf_pin_row_inset: float = 37.0  # from front and back edges
+    shelf_pin_start_z: float = 80.0  # first hole height from bottom
+    shelf_pin_end_z: float = 640.0  # last hole height from bottom
+    shelf_pin_spacing: float = 32.0  # 32mm system
+
+    # Opening stack (from bottom up).  Used in single-column mode.
+    # When ``columns`` is non-empty this field is ignored; each ColumnConfig
+    # carries its own stack.
+    openings: list[OpeningConfig] = field(default_factory=list)
+
+    # Multi-column layout.  When non-empty, the cabinet interior is divided into
+    # side-by-side vertical columns by interior dividers.
+    # Column widths must sum to ``interior_width``; the evaluator checks this.
+    columns: list[ColumnConfig] = field(default_factory=list)
+
+    drawer_slide: str = "blum_tandem_550h"
+
+    # Door hardware
+    door_hinge: str = "blum_clip_top_blumotion_110_full"
+
+    # Pull hardware (optional defaults).  These keys propagate down to drawers
+    # and doors generated from this cabinet via ``drawers_from_cabinet_config``
+    # and ``doors_from_cabinet_config`` — i.e. every drawer in this carcass
+    # gets ``drawer_pull`` and every door gets ``door_pull`` unless the per-
+    # drawer / per-door config overrides it.  ``None`` means no pull.
+    drawer_pull: Optional[str] = None
+    door_pull: Optional[str] = None
+    door_hinge_side: HingeSide = "left"    # hinge side for single doors
+    door_pull_inset_mm: float = 50.0       # gap from latch edge to pull body near-end
+
+    # Leg / foot hardware (used by build_multi_bay_cabinet and design_legs)
+    leg_key: str = "richelieu_176138106"
+    leg_count: int = 4
+    leg_inset: float = 30.0  # foot centre inset from cabinet edge (mm)
+
+    # Carcass joinery method
+    carcass_joinery: CarcassJoinery = CarcassJoinery.FLOATING_TENON
+    # Exterior corner construction. "butt": top/bottom seat between the
+    # sides (the default). "miter": the four exterior corners are 45°
+    # miters — top/bottom are cut to FULL exterior width (long-point dims)
+    # and all four panels get beveled ends; divider and shelf joints stay
+    # butt tenons. Floating-tenon carcasses only. Also a SharedDesign token.
+    carcass_corner_style: str = "butt"    # butt | miter
+    # Back panel treatment (butt corners, non-dado joinery only).
+    # "full_height": the back runs the full carcass height and its top edge
+    # shows on the top plane (legacy cutlist convention). "under_top": the
+    # top panel is cut to FULL depth (rear edge flush with the sides) and
+    # the back stops at its underside — no back edge visible from above or
+    # from the sides; the back slides into its pocket from the carcass's
+    # bottom end during glue-up. Cutlist/assembly-doc effect; the 3D
+    # viewer has always drawn under_top geometry. Also a SharedDesign token.
+    back_style: str = "full_height"       # full_height | under_top
+    # How the back is HELD — see BACK_CAPTURES. Independent of both
+    # carcass_joinery and back_style; any combination is legal except the
+    # ones check_back_capture rejects. Also a SharedDesign token.
+    #
+    # NOTE the three machined captures seat the back INSIDE the case
+    # perimeter (rabbeted or grooved into the top and bottom as well as the
+    # sides), so its top edge is covered whatever ``back_style`` says, and
+    # the top and bottom both run full depth. back_style only changes what
+    # you see under "pocket".
+    back_capture: str = "pocket"          # pocket | rabbet | half_lap | dado
+    # "dado" only: material left standing BEHIND the groove, i.e. how far
+    # the back's rear face sits forward of the case's rear edge. Wants
+    # enough meat that the wall doesn't blow out when the groove is plowed.
+    back_groove_setback: float = 12.0
+
+    # Drawer box corner joinery
+    drawer_joinery: DrawerJoineryStyle = DrawerJoineryStyle.HALF_LAP
+
+    # Front-lapping drawer corners (drawer_lock) only: the wall the router
+    # bit leaves outboard of the socket, per corner. The box sides are cut
+    # 2 x this short of the box depth, so it is the difference between a box
+    # that fits its slides and one that does not. MEASURED on a test corner,
+    # never derived — leave None to take the catalogue nominal for the bit.
+    drawer_corner_lip_mm: Optional[float] = None
+
+    # Per-method joinery specs (used when the matching joinery method is selected)
+    domino_spec: DominoSpec = field(default_factory=lambda: DEFAULT_DOMINO)
+    pocket_screw_spec: PocketScrewSpec = field(default_factory=lambda: DEFAULT_POCKET_SCREW)
+    biscuit_spec: BiscuitSpec = field(default_factory=lambda: DEFAULT_BISCUIT)
+    dowel_spec: DowelSpec = field(default_factory=lambda: DEFAULT_DOWEL)
+
+    def __post_init__(self) -> None:
+        """Normalize openings and column openings to OpeningConfig objects."""
+        self.edge_band_stock = normalize_band_stock(self.edge_band_stock)
+        self.openings = [to_opening(op) for op in self.openings]
+        # Normalize per element — to_opening is a no-op for OpeningConfig, so
+        # mixed tuples (OpeningConfig first, raw rows after) normalize too.
+        self.columns = [
+            ColumnConfig(
+                width_mm=col.width_mm,
+                openings=tuple(to_opening(op) for op in col.openings),
+                fixed_shelf_positions=tuple(col.fixed_shelf_positions),
+            )
+            for col in self.columns
+        ]
+
+    # Derived / computed
+    @property
+    def interior_width(self) -> float:
+        """Width between side panels."""
+        return self.width - (self.side_thickness * 2)
+
+    @property
+    def interior_depth(self) -> float:
+        """Front edge to the front face of the back panel — where an interior
+        panel stops.
+
+        THE depth datum. Every interior panel's depth, every mortise span and
+        every rear-clearance check reads this one property; nothing derives
+        it a second way. Until 2026-08-29 five expressions competed for the
+        name — ``depth − back_rabbet_width`` (448 at depth 457),
+        ``depth − clear_depth`` (451) and ``depth − back_thickness`` (451,
+        457 on a dado) — and the cutlist, the hardware BOM, the design
+        payload, the 3D and the evaluator each picked a different one. The
+        visible harm: a ``dado`` carcass at depth 470 printed a 381 mm box
+        while the BOM on the same sheet ordered a 457 mm runner that cannot
+        be mounted, and ``design_cabinet`` stated an interior 3 mm shallower
+        than the bottom panel it cut in the same JSON.
+
+        ``back_rabbet_width`` is a DADO_RABBET-era side-rabbet width and now
+        applies only to that construction; every other carcass reads the
+        capture geometry, which is the thing that actually holds the back.
+
+        The old ``min(legacy, …)`` clamp is gone. Its docstring claimed
+        "drawer boxes and slides size off this", which was never true —
+        :attr:`drawer_opening_depth` is that number, and it is a separate
+        property precisely so the two questions stop sharing one name.
+        """
+        if self.carcass_joinery == CarcassJoinery.DADO_RABBET:
+            return self.depth - self.back_rabbet_width
+        return self.depth - back_capture_geometry(self).clear_depth
+
+    @property
+    def drawer_opening_depth(self) -> float:
+        """Clear front-to-back space a drawer box and its runner must live in.
+
+        Equal to :attr:`interior_depth` today, and deliberately a separate
+        name. "How deep is the inside" answered two different physical
+        questions — where an interior panel stops, and how much room a
+        runner has — and collapsing them into one property is what let the
+        hardware BOM and the cutlist disagree for months while both looked
+        correct. If a future capture ever puts a panel and a runner at
+        different planes, this is where that divergence goes, once.
+        """
+        return self.interior_depth
+
+    @property
+    def interior_height(self) -> float:
+        """Height from top of bottom panel to underside of top panel."""
+        return self.height - self.bottom_thickness - self.top_thickness
+
+    @property
+    def back_panel_width(self) -> float:
+        """Back panel fits in rabbets on both sides."""
+        return self.width - (self.side_thickness - self.back_rabbet_depth) * 2
+
+    @property
+    def back_panel_height(self) -> float:
+        """Back panel height — spans from carcass floor to underside of top panel."""
+        return self.height - self.top_thickness
+
+
+# ─── Back capture geometry ────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class BackCapture:
+    """Every dimension that follows from ``cfg.back_capture``.
+
+    Single source of truth: the cutlist, the 3D panel makers, the evaluator
+    and the assembly doc all read this rather than each re-deriving the
+    back's geometry from the config. Distances are mm, measured from the
+    carcass's REAR face unless stated.
+    """
+    capture: str
+    thickness: float
+    #: Cut size of the back panel itself.
+    width: float
+    height: float
+    #: How far the back's edge runs into each case member (0 for "pocket",
+    #: which laps onto their rear edges instead of into them).
+    engagement: float
+    #: What to machine in the sides / top / bottom: ``cut_depth`` into the
+    #: inner FACE, ``cut_run`` along the depth, starting ``cut_offset`` in
+    #: from the rear edge. All zero for "pocket".
+    cut_depth: float
+    cut_run: float
+    cut_offset: float
+    #: The back's OWN perimeter rabbet ("half_lap" only) — ``lap_depth``
+    #: off its front face, ``lap_run`` in from each edge.
+    lap_depth: float
+    lap_run: float
+    #: Where the back's rear face sits, forward of the carcass rear edge.
+    setback: float
+    #: Total depth consumed: carcass rear edge → the back's front face.
+    #: Bottom, shelves and dividers stop at ``depth − clear_depth``.
+    clear_depth: float
+    #: Cut depth of the top and bottom panels.
+    top_depth: float
+    bottom_depth: float
+    #: True when the back cannot be fitted after glue-up and must go in
+    #: with the case — a grooved back slides in, and a capped pocket back
+    #: comes up from the carcass's bottom end.
+    captive: bool
+
+    @property
+    def machined(self) -> bool:
+        """True when the capture cuts into the case members."""
+        return self.capture not in ("pocket", "overlay")
+
+
+def back_capture_geometry(cfg: CabinetConfig) -> BackCapture:
+    """Resolve ``cfg.back_capture`` into concrete dimensions.
+
+    "pocket" keeps the legacy let-in geometry exactly: the back laps over
+    the rear edges of the top and bottom, so it is the only capture where
+    ``back_style`` changes anything. The three machined captures seat the
+    back INSIDE the case perimeter — rabbeted or grooved into the top and
+    bottom as well as the sides — so the top and bottom both run full depth
+    and no back edge is visible from any angle.
+    """
+    capture = getattr(cfg, "back_capture", "pocket") or "pocket"
+    # An unknown value must not resolve as "some machined capture" — the
+    # cutlist and visualize tools don't run the evaluator, so a typo would
+    # otherwise ship full-depth tops and an oversize back with no warning.
+    # Fall back to the capture that machines nothing; check_back_capture
+    # reports the typo itself.
+    if capture not in BACK_CAPTURES:
+        capture = "pocket"
+    t = float(cfg.back_thickness)
+    depth = float(cfg.depth)
+
+    if capture == "overlay":
+        return BackCapture(
+            capture="overlay", thickness=t, width=cfg.width, height=cfg.height,
+            engagement=0.0, cut_depth=0.0, cut_run=0.0, cut_offset=0.0,
+            lap_depth=0.0, lap_run=0.0, setback=0.0, clear_depth=t,
+            top_depth=depth - t, bottom_depth=depth - t, captive=False,
+        )
+
+    if capture == "pocket":
+        # Mitered tops are cut long-point on their own convention, so the
+        # full-depth cap never applies to them — the evaluator errors on the
+        # combination and the geometry must not half-apply it meanwhile.
+        under_top = (cfg.back_style == "under_top"
+                     and getattr(cfg, "carcass_corner_style", "butt") != "miter")
+        return BackCapture(
+            capture="pocket", thickness=t,
+            width=cfg.interior_width,
+            height=cfg.height - (cfg.top_thickness if under_top else 0.0),
+            engagement=0.0,
+            cut_depth=0.0, cut_run=0.0, cut_offset=0.0,
+            lap_depth=0.0, lap_run=0.0,
+            setback=0.0, clear_depth=t,
+            top_depth=depth if under_top else depth - t,
+            bottom_depth=depth - t,
+            captive=under_top,
+        )
+
+    eng = float(cfg.back_rabbet_depth)
+    setback = float(cfg.back_groove_setback) if capture == "dado" else 0.0
+    # A half lap splits the back's thickness: the case member is only cut
+    # halfway through it, and the back's own perimeter rabbet takes the
+    # other half. A plain rabbet takes the back's full thickness.
+    cut_run = t / 2.0 if capture == "half_lap" else t
+    return BackCapture(
+        capture=capture, thickness=t,
+        width=cfg.interior_width + 2 * eng,
+        height=cfg.interior_height + 2 * eng,
+        engagement=eng,
+        cut_depth=eng, cut_run=cut_run, cut_offset=setback,
+        lap_depth=t / 2.0 if capture == "half_lap" else 0.0,
+        lap_run=eng if capture == "half_lap" else 0.0,
+        setback=setback, clear_depth=setback + t,
+        top_depth=depth, bottom_depth=depth,
+        captive=capture == "dado",
+    )
+
+
+# ─── Dict → config builders ───────────────────────────────────────────────────
+# These accept the flat JSON-ish shapes used by the MCP tool inputs and the
+# project persistence layer. They live here (not in server.py) so that
+# pure-data modules like project.py can build configs without importing the
+# MCP layer.
+
+# Joinery-spec fields that may arrive as serialized field dicts (e.g. from a
+# persisted project) and need reconstructing into their dataclass.
+_JOINERY_SPEC_CLASSES = {
+    "domino_spec":       DominoSpec,
+    "pocket_screw_spec": PocketScrewSpec,
+    "biscuit_spec":      BiscuitSpec,
+    "dowel_spec":        DowelSpec,
+}
+
+
+def stack_from_column(col: dict) -> list:
+    """Return the opening stack for a raw column dict.
+
+    Accepts both the canonical ``openings`` key and the backward-compat
+    ``drawer_config`` alias. ``openings`` wins when both are present — the
+    single source of truth for this precedence; every consumer of raw column
+    dicts (cutlist hardware helpers, panel generation, config building) must
+    resolve the stack through here so panels and hardware never disagree.
+    """
+    return col.get("openings", col.get("drawer_config", []))
+
+
+# Per-opening override keys accepted in the optional third element of a
+# raw ``[height, type, {options}]`` row (and in dict-shaped rows).
+_OPENING_OPTION_KEYS = frozenset({
+    "hinge_key", "hinge_side", "pull_key", "num_doors",
+    "door_thickness", "bottom_thickness", "slide_key",
+})
+
+
+def to_opening(raw) -> OpeningConfig:
+    """Normalize a raw row, dict, or OpeningConfig → OpeningConfig.
+
+    Raw rows are ``[height, type]`` or ``[height, type, {options}]`` — the
+    optional third element is a dict of per-opening overrides (any of
+    ``_OPENING_OPTION_KEYS``, e.g. ``{"bottom_thickness": 12}`` on a drawer).
+    """
+    if isinstance(raw, OpeningConfig):
+        return raw
+    if isinstance(raw, dict):
+        options = _coerce_opening_options(
+            {k: raw.get(k) for k in _OPENING_OPTION_KEYS}
+        )
+        return OpeningConfig(
+            height_mm=float(raw["height_mm"]),
+            opening_type=str(raw.get("opening_type", raw.get("slot_type", "open"))),
+            **options,
+        )
+    options: dict = {}
+    if len(raw) > 2 and raw[2] is not None:
+        if not isinstance(raw[2], dict):
+            raise ValueError(
+                f"Third element of an opening row must be an options dict, "
+                f"got {raw[2]!r}."
+            )
+        unknown = set(raw[2]) - _OPENING_OPTION_KEYS
+        if unknown:
+            raise ValueError(
+                f"Unknown per-opening option(s) {sorted(unknown)}; "
+                f"valid options: {sorted(_OPENING_OPTION_KEYS)}."
+            )
+        options = _coerce_opening_options(raw[2])
+    return OpeningConfig(
+        height_mm=float(raw[0]), opening_type=str(raw[1]), **options
+    )
+
+
+def _coerce_opening_options(options: dict) -> dict:
+    """Coerce per-opening option values to their expected types.
+
+    MCP clients send JSON, where a numeric option can arrive as a string
+    ("12" for bottom_thickness); without coercion that crashes deep in the
+    cutlist instead of failing at input validation.
+    """
+    out = dict(options)
+    for k in ("bottom_thickness", "door_thickness"):
+        if out.get(k) is not None:
+            out[k] = float(out[k])
+    if out.get("num_doors") is not None:
+        out["num_doors"] = int(out["num_doors"])
+    for k in ("hinge_key", "hinge_side", "pull_key", "slide_key"):
+        if out.get(k) is not None:
+            out[k] = str(out[k])
+    return out
+
+
+def furniture_top_to_styles(flag: bool) -> tuple[str, str]:
+    """The legacy ``furniture_top`` boolean's per-axis translation:
+    ``("cap", "flush")`` when True, ``("plain", "plain")`` when False.
+
+    THE single implementation of this mapping — ``build_cabinet_config``,
+    ``face_layout``, and ``project.shared_from_dict`` all resolve the same
+    legacy flag and must never independently re-derive it (a second copy
+    that could quietly diverge from this one is exactly the "two documents
+    agreeing with each other while both are wrong" failure class the
+    dimensioning arc, #88/#89, exists to eliminate).
+    """
+    return ("cap", "flush") if flag else ("plain", "plain")
+
+
+def build_cabinet_config(args: dict) -> CabinetConfig:
+    """Build a CabinetConfig from a flat dict of keyword arguments.
+
+    Accepts ``drawer_config`` (backward-compat API name) as an alias for
+    ``openings``. Each entry may be a ``[height_mm, opening_type]`` list,
+    a dict, or an ``OpeningConfig`` object — all are normalised by
+    ``to_opening``.
+
+    Also accepts the ``design_cabinet`` convenience parameters:
+    ``num_drawers`` (+ optional ``drawer_proportion``) auto-computes a
+    graduated drawer stack when no explicit stack is given, and the legacy
+    ``furniture_top`` boolean — no longer a real ``CabinetConfig`` field,
+    since it collapsed two independent axes into one flag — is translated
+    into ``face_top_style``/``face_bottom_style`` here, the single legacy
+    chokepoint every raw-dict path (MCP tool args, ``project.config_from_
+    dict``, test helpers) already funnels through. Per-axis precedence:
+    explicit new-style key on this same call > the legacy boolean >
+    ``CabinetConfig``'s own defaults. Critically, ``furniture_top=False``
+    maps to ``("plain", "plain")`` — NOT to the new defaults — so every
+    already-approved ``furniture_top=False`` design stays byte-identical
+    after the class default changed to ``("cap", "flush")``.
+    """
+    num_drawers       = args.pop("num_drawers", None)
+    drawer_proportion = args.pop("drawer_proportion", None)
+    _ft = args.pop("furniture_top", None)
+    if _ft is not None:
+        _top_style, _bottom_style = furniture_top_to_styles(bool(_ft))
+        if "face_top_style" not in args:
+            args["face_top_style"] = _top_style
+        if "face_bottom_style" not in args:
+            args["face_bottom_style"] = _bottom_style
+    if num_drawers and not args.get("drawer_config") and not args.get("openings"):
+        from .proportions import graduated_drawer_heights
+        bottom_t   = float(args.get("bottom_thickness", 18))
+        top_t      = float(args.get("top_thickness",    18))
+        interior_h = float(args["height"]) - bottom_t - top_t
+        heights = graduated_drawer_heights(
+            interior_h, int(num_drawers), drawer_proportion or "classic"
+        )
+        # Largest drawer at the bottom — same order design_cabinet produces.
+        args["drawer_config"] = [[h, "drawer"] for h in sorted(heights, reverse=True)]
+
+    preset_key = args.pop("pull_preset", None)
+    if preset_key:
+        from .hardware import get_pull_preset
+        preset = get_pull_preset(preset_key)
+        args.setdefault("drawer_pull", preset.drawer_pull)
+        args.setdefault("door_pull", preset.door_pull)
+        args.setdefault("door_pull_inset_mm", preset.door_pull_inset_mm)
+
+    # Accept drawer_config as a backward-compat alias for openings.
+    if "drawer_config" in args and "openings" not in args:
+        args["openings"] = args.pop("drawer_config")
+    else:
+        args.pop("drawer_config", None)
+
+    kwargs: dict = {}
+    for key, value in args.items():
+        if key == "carcass_joinery" and isinstance(value, str):
+            kwargs[key] = CarcassJoinery(value)
+        elif key == "drawer_joinery" and isinstance(value, str):
+            kwargs[key] = DrawerJoineryStyle(value)
+        elif key in _JOINERY_SPEC_CLASSES and isinstance(value, dict):
+            kwargs[key] = _JOINERY_SPEC_CLASSES[key](**value)
+        elif key == "openings" and isinstance(value, list):
+            kwargs[key] = [to_opening(r) for r in value]
+        elif key == "columns" and isinstance(value, list):
+            kwargs[key] = [
+                ColumnConfig(
+                    width_mm=float(c["width_mm"]),
+                    openings=tuple(to_opening(r) for r in stack_from_column(c)),
+                    fixed_shelf_positions=tuple(
+                        float(z) for z in c.get("fixed_shelf_positions", [])
+                    ),
+                )
+                for c in value
+            ]
+        else:
+            kwargs[key] = value
+
+    # Reject unknown keys with an actionable message instead of letting
+    # CabinetConfig(**kwargs) raise a bare "unexpected keyword argument" —
+    # these dicts arrive from MCP clients, where a typo'd parameter name
+    # should read as input validation, not a Python traceback.
+    valid = set(CabinetConfig.__dataclass_fields__)
+    unknown = set(kwargs) - valid
+    if unknown:
+        raise ValueError(
+            f"Unknown cabinet parameter(s): {', '.join(sorted(unknown))}. "
+            f"Valid parameters: {', '.join(sorted(valid | {'drawer_config', 'pull_preset', 'num_drawers', 'drawer_proportion', 'furniture_top'}))}."
+        )
+    return CabinetConfig(**kwargs)
+
+
+def _require_cq():
+    if cq is None:
+        raise ImportError(
+            "cadquery is required for 3D modeling. Install with: pip install cadquery"
+        )
+
+
+def _cut_back_capture(
+    panel: "cq.Workplane",
+    cfg: CabinetConfig,
+    face: str,
+    length: float,
+    mirror: bool = False,
+) -> "cq.Workplane":
+    """Machine the back's groove or rabbet into one case panel.
+
+    ``face`` names which face of the panel the back seats against, in that
+    panel's own coordinates: "inner_x" for a side (thickness on X), "top_z"
+    for a bottom panel, "under_z" for a top panel. ``length`` is the panel's
+    extent along the axis the cut runs. No-op for the "pocket" capture,
+    which machines nothing.
+
+    The SIDE cut is STOPPED at both ends. Butt corners seat the top and
+    bottom BETWEEN the sides, so a side's end grain is part of the finished
+    top and bottom surfaces — run the groove through and it exits there as
+    an open notch at the back corner, in plain view from above. The top and
+    bottom panels' cuts do run through: their ends butt against the sides'
+    inner faces, which cover them.
+    """
+    geo = back_capture_geometry(cfg)
+    if not geo.machined:
+        return panel
+    # Measured from the panel's REAR edge forward: a rabbet opens at the
+    # rear (offset 0), a dado groove is held back by its setback.
+    y0 = cfg.depth - geo.cut_offset - geo.cut_run
+    if face == "inner_x":
+        x0 = 0.0 if mirror else cfg.side_thickness - geo.cut_depth
+        # Span exactly what the back occupies: it runs into the bottom and
+        # the top by the engagement, and no further.
+        z0 = cfg.bottom_thickness - geo.engagement
+        z1 = cfg.height - cfg.top_thickness + geo.engagement
+        cutter = (cq.Workplane("XY")
+                  .transformed(offset=(x0, y0, z0))
+                  .box(geo.cut_depth, geo.cut_run, z1 - z0, centered=False))
+    else:
+        z0 = 0.0 if face == "under_z" else length - geo.cut_depth
+        cutter = (cq.Workplane("XY")
+                  .transformed(offset=(0, y0, z0))
+                  .box(_CAPTURE_CUT_SPAN, geo.cut_run, geo.cut_depth,
+                       centered=False))
+    return panel.cut(cutter)
+
+
+#: Width of the cutter used for top/bottom back grooves. The groove runs
+#: right through the panel's length (its ends are covered by the sides), so
+#: the cutter only has to be at least as long as any panel — it is trimmed
+#: by the boolean.
+_CAPTURE_CUT_SPAN: float = 10_000.0
+
+
+def _is_butt(cfg: CabinetConfig) -> bool:
+    """Butt-joint construction (floating tenon / pocket screw / biscuit /
+    dowel): interior panels seat BETWEEN plain-slab sides at their cutlist
+    dimensions — no dados, no back rabbet. Only dado/rabbet construction
+    keeps the housed (dado-era) geometry. Mirrors the cutlist convention in
+    server._raw_panels_for_cabinet."""
+    return cfg.carcass_joinery != CarcassJoinery.DADO_RABBET
+
+
+def make_side_panel(cfg: CabinetConfig, mirror: bool = False) -> "cq.Workplane":
+    """Create a side panel.
+
+    Dado/rabbet construction: dados for bottom/top/shelves and a rabbet for
+    the back. Butt construction: a plain slab (panels butt against the
+    interior face; the back seats against the setback of the interior
+    panels, not a rabbet).
+
+    Args:
+        cfg: Cabinet configuration.
+        mirror: If True, mirror joinery for the right side panel.
+    """
+    _require_cq()
+
+    # Start with a solid panel
+    panel = (
+        cq.Workplane("XY")
+        .box(cfg.side_thickness, carcass_panel(cfg, "side").width, cfg.height, centered=False)
+    )
+
+    if _is_butt(cfg):
+        # Plain slab; only the shelf-pin holes apply. The rear pin row
+        # references the back's seat plane, which back_capture sets.
+        if cfg.adj_shelf_holes:
+            x_start = (cfg.side_thickness - cfg.shelf_pin_depth) if not mirror else 0
+            z = cfg.shelf_pin_start_z
+            # The rear pin row references the shelf's rear edge, which sits
+            # at the back's front face — a deep groove setback moves it
+            # forward, and a row measured off back_thickness alone would
+            # land behind the shelf (or bore into the groove). That plane is
+            # interior_depth, THE datum; read it rather than spell it again.
+            rear_ref = cfg.interior_depth
+            while z <= cfg.shelf_pin_end_z:
+                for y_inset in [cfg.shelf_pin_row_inset,
+                                rear_ref - cfg.shelf_pin_row_inset]:
+                    pin_hole = (
+                        cq.Workplane("YZ")
+                        .transformed(offset=(y_inset, z, x_start))
+                        .cylinder(
+                            cfg.shelf_pin_depth,
+                            cfg.shelf_pin_diameter / 2,
+                            centered=(True, True, False),
+                        )
+                    )
+                    panel = panel.cut(pin_hole)
+                z += cfg.shelf_pin_spacing
+        return _cut_back_capture(panel, cfg, "inner_x", cfg.height, mirror)
+
+    # Cut rabbet for back panel along the back edge.
+    # The rabbet runs the full height on the inside-back edge.
+    # Left panel (mirror=False): interior face at x=side_thickness; rabbet cut from
+    # x = side_thickness - back_rabbet_depth.
+    # Right panel (mirror=True): interior face at x=0; rabbet cut starts at x=0.
+    rabbet = (
+        cq.Workplane("XY")
+        .transformed(offset=(
+            cfg.side_thickness - cfg.back_rabbet_depth if not mirror else 0,
+            cfg.depth - cfg.back_rabbet_width,
+            0,
+        ))
+        .box(cfg.back_rabbet_depth, cfg.back_rabbet_width, cfg.height, centered=False)
+    )
+    panel = panel.cut(rabbet)
+
+    # Cut dado for bottom panel.
+    # Left panel (mirror=False): interior face is at local x=side_thickness,
+    # so the dado must start at x = side_thickness - dado_depth.
+    # Right panel (mirror=True): interior face is at local x=0, dado starts at x=0.
+    dado_x = cfg.side_thickness - cfg.dado_depth if not mirror else 0
+    bottom_dado = (
+        cq.Workplane("XY")
+        .transformed(offset=(dado_x, 0, 0))
+        .box(cfg.dado_depth, cfg.depth - cfg.back_rabbet_width, cfg.bottom_thickness, centered=False)
+    )
+    panel = panel.cut(bottom_dado)
+
+    # Cut dado for top panel — extends full depth so the top panel (which runs
+    # to the back exterior) seats flush in the dado along its entire length.
+    top_dado = (
+        cq.Workplane("XY")
+        .transformed(offset=(dado_x, 0, cfg.height - cfg.top_thickness))
+        .box(cfg.dado_depth, cfg.depth, cfg.top_thickness, centered=False)
+    )
+    panel = panel.cut(top_dado)
+
+    # Cut dados for fixed shelves
+    for shelf_z in cfg.fixed_shelf_positions:
+        shelf_dado = (
+            cq.Workplane("XY")
+            .transformed(offset=(dado_x, 0, shelf_z))
+            .box(cfg.dado_depth, cfg.depth - cfg.back_rabbet_width, cfg.shelf_thickness, centered=False)
+        )
+        panel = panel.cut(shelf_dado)
+
+    # Drill shelf pin holes (32mm system).
+    # Holes bore horizontally from the interior face (X direction), so the
+    # workplane must be YZ (normal = X). x_start is the global X where the
+    # bore begins; the cylinder extends shelf_pin_depth toward the exterior.
+    if cfg.adj_shelf_holes:
+        x_start = (cfg.side_thickness - cfg.shelf_pin_depth) if not mirror else 0
+        z = cfg.shelf_pin_start_z
+        while z <= cfg.shelf_pin_end_z:
+            for y_inset in [cfg.shelf_pin_row_inset, cfg.depth - cfg.back_rabbet_width - cfg.shelf_pin_row_inset]:
+                pin_hole = (
+                    cq.Workplane("YZ")
+                    .transformed(offset=(y_inset, z, x_start))
+                    .cylinder(
+                        cfg.shelf_pin_depth,
+                        cfg.shelf_pin_diameter / 2,
+                        centered=(True, True, False),
+                    )
+                )
+                panel = panel.cut(pin_hole)
+            z += cfg.shelf_pin_spacing
+
+    return panel
+
+
+def make_bottom_panel(cfg: CabinetConfig) -> "cq.Workplane":
+    """Create the bottom panel.
+
+    Dado/rabbet: extends into the side dados, stops at the back rabbet.
+    Butt: cut to interior width × the depth ``back_capture`` calls for —
+    the cutlist dims. Under "pocket" the panel stops short and its rear
+    setback is the back's seat; the machined captures run it full depth and
+    take the back in a groove or rabbet in its top face.
+    """
+    _require_cq()
+    if _is_butt(cfg):
+        _p = carcass_panel(cfg, "bottom")
+        # The render does not model mitered corners — it draws butt corners,
+        # so this panel spans BETWEEN the sides even where the paper cuts it
+        # to the full exterior long point. Taking the long-point length here
+        # without also cutting the bevels and moving the panel out would
+        # drive it straight through both side solids, which is a worse
+        # picture than an honest butt one. server._render_caveats states the
+        # divergence in the tool result; modelling it is a separate job.
+        panel_width = cfg.interior_width if _p.bevel_ends else _p.length
+        panel_depth = _p.width
+    else:
+        # Width: interior width + dado depth on each side (extends into dados)
+        panel_width = cfg.interior_width + (cfg.dado_depth * 2)
+        panel_depth = cfg.depth - cfg.back_rabbet_width
+
+    panel = (
+        cq.Workplane("XY")
+        .box(panel_width, panel_depth, cfg.bottom_thickness, centered=False)
+    )
+    if _is_butt(cfg):
+        panel = _cut_back_capture(panel, cfg, "top_z", cfg.bottom_thickness)
+    return panel
+
+
+def make_top_panel(cfg: CabinetConfig) -> "cq.Workplane":
+    """Create the top panel.
+
+    Dado/rabbet: seats in side dados and extends to full depth (the back
+    stops at its underside). Butt: interior width; depth follows
+    ``back_style`` — "under_top" runs full depth (rear edge flush with the
+    sides, capping the back), "full_height" stops at depth − back_thickness
+    (the back runs past it to the top plane), matching the cutlist.
+    """
+    _require_cq()
+    if _is_butt(cfg):
+        _p = carcass_panel(cfg, "top")
+        # The render does not model mitered corners — it draws butt corners,
+        # so this panel spans BETWEEN the sides even where the paper cuts it
+        # to the full exterior long point. Taking the long-point length here
+        # without also cutting the bevels and moving the panel out would
+        # drive it straight through both side solids, which is a worse
+        # picture than an honest butt one. server._render_caveats states the
+        # divergence in the tool result; modelling it is a separate job.
+        panel_width = cfg.interior_width if _p.bevel_ends else _p.length
+        panel_depth = _p.width
+    else:
+        panel_width = cfg.interior_width + (cfg.dado_depth * 2)
+        panel_depth = cfg.depth
+
+    panel = (
+        cq.Workplane("XY")
+        .box(panel_width, panel_depth, cfg.top_thickness, centered=False)
+    )
+    if _is_butt(cfg):
+        panel = _cut_back_capture(panel, cfg, "under_z", cfg.top_thickness)
+    return panel
+
+
+def make_shelf(cfg: CabinetConfig) -> "cq.Workplane":
+    """Create a fixed shelf panel. Same dimensions as bottom."""
+    _require_cq()
+    if _is_butt(cfg):
+        panel_width = cfg.interior_width
+        # Shelves stop at the back's FRONT face whatever the capture — only
+        # the perimeter members (sides, top, bottom) hold the back. That is
+        # interior_depth, THE datum; deriving it again here is how the five
+        # competing spellings got started.
+        panel_depth = cfg.interior_depth
+    else:
+        panel_width = cfg.interior_width + (cfg.dado_depth * 2)
+        panel_depth = cfg.depth - cfg.back_rabbet_width
+
+    return (
+        cq.Workplane("XY")
+        .box(panel_width, panel_depth, cfg.shelf_thickness, centered=False)
+    )
+
+
+def make_back_panel(cfg: CabinetConfig) -> "cq.Workplane":
+    """Create the back panel.
+
+    Dado/rabbet: rabbet-width panel stopping under the full-depth top.
+    Butt: sized by ``back_capture``. "pocket" laps onto the rear edges it
+    finds, at interior width and a height following ``back_style``; the
+    machined captures seat INSIDE the case perimeter, so the panel is cut
+    oversize by the engagement on all four edges. "half_lap" additionally
+    carries its own perimeter rabbet on the FRONT face, which is what laps
+    into the matching rabbets in the case.
+    """
+    _require_cq()
+    if _is_butt(cfg):
+        geo = back_capture_geometry(cfg)
+        width, height = geo.width, geo.height
+    else:
+        geo = None
+        width, height = cfg.back_panel_width, cfg.back_panel_height
+    panel = (
+        cq.Workplane("XY")
+        .box(width, cfg.back_thickness, height, centered=False)
+    )
+    if geo is not None and geo.lap_depth:
+        # Panel-local axes: X across the back, Y its thickness (0 = front
+        # face, since the back faces forward into the case), Z its height.
+        # The lap comes off the FRONT face around all four edges.
+        for x0, z0, dx, dz in (
+            (0.0, 0.0, geo.lap_run, height),                    # left edge
+            (width - geo.lap_run, 0.0, geo.lap_run, height),    # right edge
+            (0.0, 0.0, width, geo.lap_run),                     # bottom edge
+            (0.0, height - geo.lap_run, width, geo.lap_run),    # top edge
+        ):
+            panel = panel.cut(
+                cq.Workplane("XY")
+                .transformed(offset=(x0, 0.0, z0))
+                .box(dx, geo.lap_depth, dz, centered=False)
+            )
+    return panel
+
+
+def make_interior_divider(
+    cfg: CabinetConfig,
+    height_override: Optional[float] = None,
+) -> "cq.Workplane":
+    """Create an interior vertical divider for multi-bay assemblies.
+
+    Unlike a standard side panel, the divider:
+    - Stops at ``depth - back_rabbet_width`` (flush with the back panel's front
+      face — does not extend into the back rabbet zone).
+    - Has dados for the bottom panel on *both* interior faces so adjacent bay
+      horizontal panels are properly supported.
+    - Has no back rabbet (the continuous back panel covers the back).
+
+    ``height_override`` clips the divider to a shorter height (e.g. the top of
+    the drawer zone in an armoire so the upper door section stays open).  When
+    clipped, only bottom dados are cut; no top dados are added.
+    """
+    _require_cq()
+    if _is_butt(cfg):
+        # Butt construction: the divider is a plain slab seated on the
+        # bottom panel (caller places it at z = bottom_thickness) — interior
+        # height up to the top, or up to height_override for clipped
+        # armoire dividers. Matches the cutlist's column_divider row.
+        # Depth stops at the back's FRONT face, which the capture sets — a
+        # groove holds the back further forward than its thickness alone.
+        # interior_depth IS that number; read it, never re-derive it.
+        panel_depth = cfg.interior_depth
+        top_z = cfg.height - cfg.top_thickness if height_override is None \
+            else height_override
+        height = top_z - cfg.bottom_thickness
+        return cq.Workplane("XY").box(
+            cfg.side_thickness, panel_depth, height, centered=False)
+
+    panel_depth = cfg.depth - cfg.back_rabbet_width
+    height      = height_override if height_override is not None else cfg.height
+
+    panel = cq.Workplane("XY").box(cfg.side_thickness, panel_depth, height, centered=False)
+
+    # Bottom dado — left face (x = 0 side, facing the bay to the left)
+    panel = panel.cut(
+        cq.Workplane("XY")
+        .transformed(offset=(0, 0, 0))
+        .box(cfg.dado_depth, panel_depth, cfg.bottom_thickness, centered=False)
+    )
+    # Bottom dado — right face (x = side_thickness side, facing the bay to the right)
+    panel = panel.cut(
+        cq.Workplane("XY")
+        .transformed(offset=(cfg.side_thickness - cfg.dado_depth, 0, 0))
+        .box(cfg.dado_depth, panel_depth, cfg.bottom_thickness, centered=False)
+    )
+    if height_override is None:
+        # Top dado — left face (full panel depth to receive the full-depth top panel)
+        panel = panel.cut(
+            cq.Workplane("XY")
+            .transformed(offset=(0, 0, height - cfg.top_thickness))
+            .box(cfg.dado_depth, panel_depth, cfg.top_thickness, centered=False)
+        )
+        # Top dado — right face
+        panel = panel.cut(
+            cq.Workplane("XY")
+            .transformed(offset=(cfg.side_thickness - cfg.dado_depth, 0, height - cfg.top_thickness))
+            .box(cfg.dado_depth, panel_depth, cfg.top_thickness, centered=False)
+        )
+    # Note: divider depth = depth - back_rabbet_width; the top panel
+    # extends further back but sits above the divider, so no conflict.
+
+    return panel
+
+
+@dataclass
+class PartInfo:
+    """Metadata for a part in the assembly."""
+    name: str
+    shape: object  # cq.Workplane
+    material_thickness: float
+    grain_direction: str  # "length" or "width" — which dimension follows grain
+    edge_band: list[str] = field(default_factory=list)  # list of edges to band
+    notes: str = ""
+
+
+# ── Show-face geometry: the single source of truth ────────────────────────
+#
+# Every consumer of face/door dimensions — the 3D assembly builder, the
+# cutlist, the evaluator's pull-fit and clearance checks — reads this
+# layout. Before 2026-08 each derived its own numbers (the 3D used
+# flush-outer/split-inner overlays with an anchored gap stack while the
+# cutlist used DrawerConfig's flat 10/3/3 mm overlays with no gap), and the
+# kids'-desk false fronts were cut 16 mm narrow from paper that could never
+# tile the opening span. One authority, or it happens again.
+
+@dataclass(frozen=True)
+class FacePanel:
+    """One finished show-face panel in cabinet-global coordinates.
+
+    ``kind`` is ``"drawer_face"`` (an applied false front spanning its
+    column's claim), ``"door"`` (a single hinged leaf — pairs emit two
+    panels), or ``"top_cap"`` (the furniture-top front strip). ``bay`` and
+    ``slot`` locate the opening (``-1`` for the cap); ``leaf`` is 0, or 1
+    for the right leaf of a pair. ``x``/``z`` are the left/bottom edge of
+    the panel on the assembled cabinet's front; ``width``/``height`` are
+    the finished panel dimensions the saw must produce.
+    """
+    kind: str
+    bay: int
+    slot: int
+    leaf: int
+    x: float
+    z: float
+    width: float
+    height: float
+    thickness: float
+
+
+#: Opening types that stand a door in front of a compartment.
+DOOR_TYPES = ("door", "door_pair")
+
+
+@dataclass(frozen=True)
+class OpeningSlot:
+    """One opening in a column's vertical stack, with where it sits.
+
+    THE vertical-stack walk. Every consumer of "where does opening N start"
+    reads this rather than accumulating heights itself — the same rule
+    ``bays_from_config`` fixed on the horizontal axis, applied to the one
+    that now has a member in it.
+    """
+
+    index: int
+    opening: object                 # OpeningConfig
+    #: Bottom of the CLEAR opening — above its floor, where it has one.
+    z: float
+    #: Underside of the door floor beneath this opening, or None.
+    floor_z: Optional[float] = None
+
+    @property
+    def has_floor(self) -> bool:
+        return self.floor_z is not None
+
+
+def opening_needs_floor(openings, index: int) -> bool:
+    """True when opening ``index`` is a door standing on something.
+
+    A door with anything below it in its column needs a floor, or whatever
+    goes behind it sits on the drawer underneath. A door at the BOTTOM of a
+    column already has one — the carcass bottom — so it gets no part.
+
+    This is a rule about the furniture, not a rendering convenience: the
+    3D used to invent a panel here and no cutlist ever carried it.
+    """
+    op = openings[index]
+    return index > 0 and getattr(op, "opening_type", "") in DOOR_TYPES
+
+
+def opening_stack(cfg: "CabinetConfig") -> "list[OpeningSlot]":
+    """One column's openings, bottom to top, stepping over its door floors.
+
+    A floor's thickness is ADDITIONAL to the opening heights, exactly as a
+    divider's is additional to the column widths on the horizontal axis
+    (``columns_fill_interior`` checks
+    ``col_sum == interior_width − n_dividers × side_t``). So a stack fills
+    its cabinet when ``sum(openings) + n_floors × shelf_thickness ==
+    interior_height``. The alternative — quietly taking the floor out of the
+    door opening — would mean the number a person typed is not the opening
+    they get.
+    """
+    out: list[OpeningSlot] = []
+    z = float(cfg.bottom_thickness)
+    ops = list(cfg.openings)
+    for i, op in enumerate(ops):
+        floor_z = None
+        if opening_needs_floor(ops, i):
+            floor_z = z
+            z += float(cfg.shelf_thickness)
+        out.append(OpeningSlot(index=i, opening=op, z=z, floor_z=floor_z))
+        z += float(op.height_mm)
+    return out
+
+
+def door_floor_count(cfg: "CabinetConfig") -> int:
+    """How many door floors one column's stack carries."""
+    return sum(1 for s in opening_stack(cfg) if s.has_floor)
+
+
+def openings_span(cfg: "CabinetConfig") -> float:
+    """Height the openings must sum to, once their floors are accounted for."""
+    n = door_floor_count(cfg)
+    # No floors, no change — return the interior untouched rather than a
+    # float copy of it, so a cabinet without a door over anything reports
+    # byte-identical numbers to before this existed.
+    if not n:
+        return cfg.interior_height
+    return float(cfg.interior_height) - n * float(cfg.shelf_thickness)
+
+
+def bays_from_config(
+    cfg: "CabinetConfig",
+    columns: Optional[list] = None,
+) -> "list[CabinetConfig]":
+    """Expand a multi-column config into per-column bay configs.
+
+    THE one column→bay transform — the evaluator, the cutlist, design_pulls
+    and the 3D assembly all split columns through here, so face_layout's
+    consumers can never disagree about what a bay is. ``columns`` accepts
+    the raw tool-argument dicts ({"width_mm": …, "openings": […]}); omitted,
+    ``cfg.columns`` (ColumnConfig objects) is used. A single-stack config
+    returns ``[cfg]`` unchanged.
+
+    ``dataclasses.replace`` carries EVERY cabinet-level field into the bay
+    config — a hand-picked field list here once silently dropped box-stock
+    options on the visualize path.
+    """
+    import dataclasses
+
+    cols = columns if columns is not None else cfg.columns
+    if not cols:
+        return [cfg]
+    bays: list[CabinetConfig] = []
+    for col in cols:
+        if isinstance(col, dict):
+            width_mm = float(col["width_mm"])
+            openings = [to_opening(r) for r in stack_from_column(col)]
+            shelves = [float(z) for z in col.get("fixed_shelf_positions", [])]
+        else:
+            width_mm = col.width_mm
+            openings = list(col.openings)
+            shelves = list(col.fixed_shelf_positions)
+        bays.append(dataclasses.replace(
+            cfg,
+            width=width_mm + 2 * cfg.side_thickness,
+            columns=[],
+            openings=openings,
+            fixed_shelf_positions=shelves,
+        ))
+    return bays
+
+
+# ─── Carcass panel geometry — the single source for the case ──────────────────
+
+
+def divider_cut_length(cfg: "CabinetConfig") -> float:
+    """Cut length (the vertical dimension) of one column divider.
+
+    Butt-joint carcasses — floating tenon, pocket screw, biscuit, dowel, i.e.
+    everything Charlie builds — seat the divider BETWEEN the bottom and top
+    panels, so it is cut to the interior height (Charlie, 2026-07-26). Only
+    dado/rabbet construction keeps the dado-era full-height divider housed in
+    the top and bottom.
+
+    This is a named function because the number had two spellings:
+    ``_raw_panels_for_cabinet`` cut ``height − bottom_t − top_t`` while
+    ``design_multi_column_cabinet`` reported ``cfg.height`` — a 720 mm divider
+    standing in its own 684 mm interior, in the first document anyone reads,
+    at approval time.
+    """
+    if cfg.carcass_joinery == CarcassJoinery.DADO_RABBET:
+        return float(cfg.height)
+    return float(cfg.interior_height)
+
+
+@dataclass(frozen=True)
+class CarcassPanel:
+    """One carcass panel at its FINISHED size in the assembled cabinet.
+
+    The carcass-axis analogue of :class:`FacePanel`. ``face_layout`` owns
+    every show-face dimension; this owns every case dimension, and for the
+    same reason: before it, the cutlist, the 3D makers, the design payload
+    and the assembly map each re-derived the same panel and three of them
+    got a different answer (the assembly map drew the bottom 6 mm short on 6
+    of the 12 cabinets in the saved projects; the payload reported the
+    divider at exterior height).
+
+    Like ``FacePanel`` these are FINISHED dimensions — the panel in the
+    assembled cabinet. Hardwood edge banding replaces core stock, so the saw
+    cuts something smaller; :meth:`core` is that view, and it lives here
+    rather than at each call site because the rule differs per panel (a
+    ``face_top_style`` of ``"cap"`` covers the top's front edge with a cap
+    strip, and ``"flush"`` covers it with the tall top face itself — either
+    way that edge is never banded and its core must not be shrunk for a
+    band it will not carry).
+
+    ``name`` is the cutlist row name. For the five single-family members
+    that is a join key on its own; for shelves it is not — three different
+    panels can all be called ``shelf_1`` (one per column, plus a cabinet-wide
+    one), so a shelf is identified by ``name`` WITH ``length`` and
+    ``column``. That is the same length-qualified key the assembly doc's
+    part-ID lookup already uses.
+
+    Scope: this is the BUTT-carcass convention, which is also the convention
+    every cutlist has used since 2026-08. ``DADO_RABBET`` panels are housed —
+    the 3D makers add ``2 × dado_depth`` and rabbet-based depths — and its
+    cutlist has never carried those allowances (a known, documented gap; see
+    CLAUDE.md "Known issues"). Callers on the dado path must not read these
+    dims as that construction's cut sizes.
+    """
+
+    #: side | bottom | top | divider | shelf | back
+    kind: str
+    #: The cutlist row name: "side", "bottom", "top", "column_divider",
+    #: "shelf_1", "back".
+    name: str
+    quantity: int
+    #: Finished, along the grain — the height for a side, a divider or the
+    #: back, the left-to-right run for a top, bottom or shelf.
+    length: float
+    #: Finished, across the grain — the depth for every carcass member
+    #: except the back, whose other axis is its left-to-right run.
+    width: float
+    thickness: float
+    #: Edges carrying hardwood banding. Carcass panels band the FRONT edge
+    #: and nothing else, and a carcass panel's front edge always lies on the
+    #: ``width`` axis, so a hardwood core is
+    #: ``width − len(banded_edges) × band_thickness``. Faces band all four
+    #: edges, which is why they are ``face_layout``'s business, not this
+    #: function's.
+    banded_edges: tuple[str, ...] = ()
+    #: True when this panel's two ENDS are cut at 45° for a mitered corner.
+    #: Mitered dimensions are LONG-POINT.
+    bevel_ends: bool = False
+    #: Height of a shelf above the carcass floor. None for everything else.
+    z: Optional[float] = None
+    #: 0-based column this panel belongs to, for a per-column fixed shelf.
+    #: None for cabinet-wide panels — including a cabinet-level shelf, which
+    #: runs the full interior width across every column.
+    column: Optional[int] = None
+
+    def core(self, band_thickness: float) -> tuple[float, float]:
+        """``(length, width)`` as the saw cuts it, given a band thickness.
+
+        Pass 0 for hot-melt and for no banding: hot-melt veneer is ironed on
+        after the panel is cut and grows it by ~0.6 mm rather than replacing
+        stock, so it changes no cut dimension. Only hardwood banding shrinks
+        a core.
+        """
+        if not band_thickness or not self.banded_edges:
+            return self.length, self.width
+        return self.length, self.width - len(self.banded_edges) * band_thickness
+
+
+def carcass_panel_dims(
+    cfg: "CabinetConfig",
+    columns: Optional[list] = None,
+) -> "list[CarcassPanel]":
+    """Every carcass panel of one cabinet, at finished size.
+
+    THE case-geometry source: the cutlist, the design payloads, the 3D panel
+    makers and the assembly-doc mortise maps all read this instead of each
+    deriving ``depth − something`` for themselves. Ordered sides → bottom →
+    top → cabinet shelves → dividers → column shelves → back, which is the
+    order ``_raw_panels_for_cabinet`` emits its rows in, so a consumer can
+    zip the two.
+
+    ``columns`` takes the raw tool-argument dicts
+    (``{"width_mm": …, "openings": […]}``); omitted, ``cfg.columns`` is used
+    — the same contract as :func:`bays_from_config`, which does the
+    normalizing. Cabinet-level ``fixed_shelf_positions`` are emitted once for
+    the whole case; per-column ones are emitted per column at that column's
+    width. A single-stack cabinet has no dividers and no column shelves.
+    """
+    geo = back_capture_geometry(cfg)
+    miter = getattr(cfg, "carcass_corner_style", "butt") == "miter"
+    side_t = float(cfg.side_thickness)
+    # Mitered corners run the top and bottom to the FULL exterior width
+    # (long point); butt corners seat them between the sides.
+    tb_length = float(cfg.width) if miter else float(cfg.interior_width)
+    front = ("front",)
+
+    panels: list[CarcassPanel] = [
+        CarcassPanel(
+            kind="side", name="side", quantity=2,
+            length=float(cfg.height), width=float(cfg.interior_depth if geo.capture == "overlay" else cfg.depth),
+            thickness=side_t, banded_edges=front, bevel_ends=miter),
+        CarcassPanel(
+            kind="bottom", name="bottom", quantity=1,
+            length=tb_length, width=float(geo.bottom_depth),
+            thickness=float(cfg.bottom_thickness),
+            banded_edges=front, bevel_ends=miter),
+        CarcassPanel(
+            kind="top", name="top", quantity=1,
+            length=tb_length, width=float(geo.top_depth),
+            thickness=float(cfg.top_thickness),
+            # "cap": a cap strip is glued to this front edge. "flush": the
+            # tall top face itself covers it (see face_layout's face_top_
+            # style == "flush" branch — the two must never independently
+            # derive this same fact). Either way the edge is never banded
+            # and the core must not be shrunk for a band it will not carry.
+            banded_edges=() if cfg.face_top_style in ("cap", "flush") else front,
+            bevel_ends=miter),
+    ]
+
+    for i, z in enumerate(cfg.fixed_shelf_positions, start=1):
+        panels.append(CarcassPanel(
+            kind="shelf", name=f"shelf_{i}", quantity=1,
+            length=float(cfg.interior_width),
+            width=float(cfg.interior_depth),
+            thickness=float(cfg.shelf_thickness),
+            banded_edges=front, z=float(z)))
+
+    cols = columns if columns is not None else (cfg.columns or None)
+    if cols:
+        if len(cols) > 1:
+            panels.append(CarcassPanel(
+                kind="divider", name="column_divider", quantity=len(cols) - 1,
+                length=divider_cut_length(cfg),
+                width=float(cfg.interior_depth),
+                thickness=side_t, banded_edges=front))
+        for ci, bay in enumerate(bays_from_config(cfg, columns)):
+            for i, z in enumerate(bay.fixed_shelf_positions, start=1):
+                panels.append(CarcassPanel(
+                    kind="shelf", name=f"shelf_{i}", quantity=1,
+                    length=float(bay.interior_width),
+                    width=float(cfg.interior_depth),
+                    thickness=float(cfg.shelf_thickness),
+                    banded_edges=front, z=float(z), column=ci))
+
+    # Door floors. A door standing on anything gets one, and it stops at the
+    # divider like any other interior panel — the 3D used to invent a single
+    # panel spanning every column and drive it straight through the divider,
+    # on no cutlist at all.
+    for ci, bay in enumerate(bays_from_config(cfg, columns)):
+        for slot in opening_stack(bay):
+            if not slot.has_floor:
+                continue
+            panels.append(CarcassPanel(
+                kind="floor", name="floor", quantity=1,
+                length=float(bay.interior_width),
+                width=float(cfg.interior_depth),
+                thickness=float(cfg.shelf_thickness),
+                banded_edges=front, z=slot.floor_z,
+                column=ci if cols else None))
+
+    # The back is not banded and is not cut from carcass stock, but it is a
+    # carcass panel and its dimensions come from the same capture geometry —
+    # keeping it here means a consumer never has to reach past this function
+    # for one member of the case.
+    panels.append(CarcassPanel(
+        kind="back", name="back", quantity=1,
+        length=float(geo.height), width=float(geo.width),
+        thickness=float(cfg.back_thickness)))
+    return panels
+
+
+def carcass_panel(cfg: "CabinetConfig", kind: str) -> "CarcassPanel":
+    """The one cabinet-wide carcass panel of ``kind``.
+
+    Convenience for the 3D makers, which build one panel at a time and want
+    the case's own dimensions without walking the list. Only for the members
+    every cabinet has exactly one family of — side, bottom, top, back.
+    """
+    for p in carcass_panel_dims(cfg):
+        if p.kind == kind:
+            return p
+    raise KeyError(f"no {kind!r} panel in this carcass")
+
+
+def _door_transition_exists(bay_configs: "list[CabinetConfig]") -> bool:
+    """True when any bay has a door slot with anything below it.
+
+    The render extends the face stack to the carcass exterior top so such
+    doors don't leave a gap at the top panel. Every door-type slot is
+    considered, not just the first — a [door, drawer, door] column's top
+    door needs the extension exactly as much as a [drawer, door]'s.
+    """
+    for cfg in bay_configs:
+        for i, op in enumerate(cfg.openings):
+            if i > 0 and op.opening_type in ("door", "door_pair"):
+                return True
+    return False
+
+
+def bay_x_offsets(
+    bay_configs: "list[CabinetConfig]",
+) -> "tuple[list[float], float]":
+    """``([x per bay], total run width)`` — adjacent bays share a divider.
+
+    Written out verbatim in three places before this. Nothing had drifted
+    yet, which is the only reason it was a nit and not a defect.
+    """
+    n = len(bay_configs)
+    xs: list[float] = []
+    x = 0.0
+    for i, cfg in enumerate(bay_configs):
+        xs.append(x)
+        x += cfg.width - (cfg.side_thickness if i < n - 1 else 0)
+    return xs, x
+
+
+@dataclass(frozen=True)
+class FacePlacement:
+    """Where one show face sits, and what it laps — signed.
+
+    ``face_layout`` says how big a face is and where it starts. This says
+    what a person needs in order to HANG it, which was on no document at
+    all: the cutlist's only positioning sentence was a hardcoded
+    ``face_gap_mm`` that contradicted the row's own height at both anchored
+    ends of every stack.
+
+    The sign carries the meaning, and it is the whole reason one formula
+    covers every case:
+
+    * ``> 0`` — a reveal, the shadow line to shim
+    * ``0``   — flush with that carcass member
+    * ``< 0`` — the face LAPS the member by that much (a ``furniture_top``
+      bottom face drops over the bottom panel; a door-transition top face
+      runs up over the top panel)
+
+    Deriving it beside ``face_layout`` rather than in the cutlist is
+    deliberate: a second implementation of stack adjacency in another module
+    is precisely the drift channel that produced #88.
+    """
+
+    panel: FacePanel
+    #: Signed distance to the neighbour below / above, or to the carcass.
+    reveal_below: float
+    reveal_above: float
+    #: Bottom edge relative to the bottom panel's TOP face. Negative when
+    #: the face hangs below it.
+    datum: float
+    #: How much of the named member each vertical edge covers. Against a
+    #: "meeting leaf" the sign reads the same way as a reveal: negative is
+    #: the gap between the two leaves of a pair, which is the number a
+    #: person setting them actually needs.
+    left_lap: float
+    right_lap: float
+    left_member: str        # "cabinet side" | "divider" | "meeting leaf"
+    right_member: str
+    #: What the face actually meets below / above — the neighbouring face,
+    #: the carcass panel, or a furniture-top cap. Named here because only
+    #: this function knows which; a consumer guessing from "is there a face
+    #: above" called the cap "the top panel".
+    below_member: str
+    above_member: str
+
+
+def face_placements(
+    bay_configs: "list[CabinetConfig]", **kw,
+) -> "list[FacePlacement]":
+    """Every show face with the numbers needed to hang it.
+
+    A face's neighbour is the next face in ITS OWN stack — same bay, same
+    leaf. At the ends of a stack the neighbour is the carcass: the bottom
+    panel's top face below, the top panel's underside above, and the
+    furniture-top cap where there is one, since the cap is what the topmost
+    face actually meets.
+    """
+    panels = face_layout(bay_configs, **kw)
+    x_offsets, _total = bay_x_offsets(bay_configs)
+    n_bays = len(bay_configs)
+
+    faces = [p for p in panels if p.kind in ("drawer_face", "door")]
+    cap = next((p for p in panels if p.kind == "top_cap"), None)
+
+    # VERTICAL neighbours come from the slot stack, not from ``leaf``.
+    # ``leaf`` is a HORIZONTAL index — the two leaves of a door pair share a
+    # slot and sit side by side — so keying a column by it made the right
+    # leaf a stack of one, and both its reveals got measured to the carcass
+    # instead of to the faces 4 mm away. Both leaves of a pair occupy the
+    # same z band, so group by z (see ``face_row_bands``).
+    rows_by_bay: dict[int, list[tuple[float, float]]] = {
+        b: face_row_bands([p for p in faces if p.bay == b])
+        for b in sorted({p.bay for p in faces})
+    }
+
+    # HORIZONTAL neighbours: the leaves that share this face's slot, left to
+    # right. A pair's inner edges meet EACH OTHER, not the carcass.
+    slots: dict[tuple[int, int], list[FacePanel]] = {}
+    for p in faces:
+        slots.setdefault((p.bay, p.slot), []).append(p)
+    for row in slots.values():
+        row.sort(key=lambda q: q.x)
+
+    out: list[FacePlacement] = []
+    for p in faces:
+        cfg = bay_configs[p.bay]
+        bands = rows_by_bay[p.bay]
+        i = bands.index((round(p.z, 3), round(p.z + p.height, 3)))
+        if i:
+            below = p.z - bands[i - 1][1]
+            below_member = "face below"
+        else:
+            below = p.z - cfg.bottom_thickness
+            below_member = "bottom panel"
+        if i + 1 < len(bands):
+            above = bands[i + 1][0] - (p.z + p.height)
+            above_member = "face above"
+        elif cap is not None:
+            above = cap.z - (p.z + p.height)
+            above_member = "top cap"
+        else:
+            above = (cfg.height - cfg.top_thickness) - (p.z + p.height)
+            above_member = "top panel"
+
+        row = slots[(p.bay, p.slot)]
+        j = row.index(p)
+        bx = x_offsets[p.bay]
+        if j:
+            left_lap = round(row[j - 1].x + row[j - 1].width - p.x, 3)
+            left_member = "meeting leaf"
+        else:
+            left_lap = round((bx + cfg.side_thickness) - p.x, 3)
+            left_member = "cabinet side" if p.bay == 0 else "divider"
+        if j + 1 < len(row):
+            right_lap = round((p.x + p.width) - row[j + 1].x, 3)
+            right_member = "meeting leaf"
+        else:
+            right_lap = round((p.x + p.width)
+                              - (bx + cfg.side_thickness + cfg.interior_width), 3)
+            right_member = ("cabinet side" if p.bay == n_bays - 1
+                            else "divider")
+
+        out.append(FacePlacement(
+            panel=p,
+            reveal_below=round(below, 3),
+            reveal_above=round(above, 3),
+            datum=round(p.z - cfg.bottom_thickness, 3),
+            left_lap=left_lap, right_lap=right_lap,
+            left_member=left_member, right_member=right_member,
+            below_member=below_member, above_member=above_member,
+        ))
+    return out
+
+
+def face_row_bands(faces: "list[FacePanel]") -> list[tuple[float, float]]:
+    """Bottom-to-top z-bands for one bay's face panels, deduped and sorted.
+
+    A door pair's two leaves share one band — grouped by z, not by
+    ``leaf`` (see the note in ``face_placements``). This is the ONE place
+    that rounding/dedupe rule lives: ``face_placements``,
+    ``assert_face_heights_close``, and ``bench_card.generate_bench_card``
+    all call this instead of each re-deriving it, so a future change to
+    the banding rule (rounding precision, how a pair is treated) can't
+    drift between copies.
+    """
+    bands: list[tuple[float, float]] = []
+    for p in faces:
+        band = (round(p.z, 3), round(p.z + p.height, 3))
+        if band not in bands:
+            bands.append(band)
+    bands.sort()
+    return bands
+
+
+@dataclass(frozen=True)
+class FaceHeightClaim:
+    """One face height someone is about to write onto a bench document.
+
+    ``part_name`` is a free-form label used only in the error message —
+    order is everything (see ``assert_face_heights_close``), not the name.
+    ``measure_to_remainder`` marks a piece deliberately cut OVERSIZE to be
+    trimmed to the as-built remainder at glue-up (Charlie's shop practice):
+    such a piece is checked only for "not shorter than the real slot",
+    never for an exact match, because by design its claimed height will
+    not equal the computed one.
+    """
+    part_name: str
+    height_mm: float
+    measure_to_remainder: bool = False
+
+
+#: Sub-millimeter — far tighter than the mixed-assumption bug this exists
+#: to catch (double-digit mm), far looser than face_layout's own float
+#: rounding noise.
+DEFAULT_HEIGHT_TOLERANCE_MM = 0.5
+
+
+def assert_face_heights_close(
+    bay_configs: "list[CabinetConfig]",
+    claims: "list[FaceHeightClaim]",
+    *,
+    bay_index: int = 0,
+    face_gap: Optional[float] = None,
+    face_bottom_overhang: Optional[float] = None,
+    face_top_overhang: Optional[float] = None,
+    furniture_top: Optional[bool] = None,
+    face_top_style: Optional[str] = None,
+    face_bottom_style: Optional[str] = None,
+    face_kinds: tuple[str, ...] = ("drawer_face", "door"),
+    tolerance_mm: float = DEFAULT_HEIGHT_TOLERANCE_MM,
+    precomputed_panels: "Optional[list]" = None,
+) -> None:
+    """Assert ``claims`` close into bay ``bay_index``'s LIVE face stack.
+
+    Calls ``face_layout`` FRESH with the same override contract it already
+    exposes (face_gap / face_bottom_overhang / face_top_overhang /
+    face_top_style / face_bottom_style, plus the deprecated ``furniture_top``
+    boolean alias) — never re-derives the span arithmetic, so this can
+    never drift from the single source of truth it is checking against.
+
+    ``precomputed_panels`` is a pure efficiency escape hatch: a caller that
+    already ran ``face_layout(bay_configs, ...)`` under the IDENTICAL
+    kwargs a moment ago (e.g. ``generate_bench_card`` looping over every
+    bay of one cabinet) may pass that list to skip recomputing it here —
+    the caller is trusted to have used the same ``bay_configs`` and
+    override kwargs, since this function has no way to check that for a
+    plain list of panels. Omit it (the default) and this always recomputes
+    fresh, which is what keeps the check honest when that trust doesn't
+    hold.
+
+    Rows are the bottom-to-top z-bands of ``bay_index``'s faces (a door
+    pair's two leaves share one band, same convention as
+    ``face_placements``' ``rows_by_bay``). Two failure modes, both
+    ``ValueError``:
+
+    * wrong ROW COUNT — ``len(claims) != len(rows)`` (wrong opening
+      count, wrong bay_index, or a stale claim list);
+    * wrong HEIGHT — a normal claim differs from its row's real height by
+      more than ``tolerance_mm`` in EITHER direction; a
+      ``measure_to_remainder`` claim is SHORTER than its row by more than
+      ``tolerance_mm`` (it may run long — that's the point of the flag —
+      but never short).
+
+    Raises immediately on the first bad row; the message names the row,
+    the real height, and the claimed height, and tells the caller to
+    re-derive rather than reuse a remembered number. Returns ``None``
+    when every claim closes.
+    """
+    panels = precomputed_panels if precomputed_panels is not None else face_layout(
+        bay_configs, face_gap=face_gap,
+        face_bottom_overhang=face_bottom_overhang,
+        face_top_overhang=face_top_overhang, furniture_top=furniture_top,
+        face_top_style=face_top_style, face_bottom_style=face_bottom_style,
+    )
+    faces = [p for p in panels if p.bay == bay_index and p.kind in face_kinds]
+    if not faces:
+        raise ValueError(
+            f"bay {bay_index} has no {face_kinds} panels — nothing to "
+            "check claims against.")
+
+    bands = face_row_bands(faces)
+
+    if len(bands) != len(claims):
+        raise ValueError(
+            f"{len(claims)} height claim(s) given but bay {bay_index}'s "
+            f"live face stack has {len(bands)} row(s) "
+            f"(furniture_top={furniture_top!r}, face_gap={face_gap!r}). "
+            "Check the opening count, bay_index, and overhang/gap "
+            "assumptions before re-deriving the claims.")
+
+    for i, ((z0, z1), claim) in enumerate(zip(bands, claims)):
+        real_h = round(z1 - z0, 3)
+        diff = claim.height_mm - real_h
+        if claim.measure_to_remainder:
+            if diff < -tolerance_mm:
+                raise ValueError(
+                    f"row {i} ({claim.part_name!r}): claimed "
+                    f"{claim.height_mm:g} mm is SHORTER than the "
+                    f"{real_h:g} mm this row actually needs (measure-to-"
+                    "remainder pieces may run oversize, never short).")
+        elif abs(diff) > tolerance_mm:
+            raise ValueError(
+                f"row {i} ({claim.part_name!r}): claimed "
+                f"{claim.height_mm:g} mm but the live face stack for bay "
+                f"{bay_index} (furniture_top={furniture_top!r}, "
+                f"face_gap={face_gap!r}) computes {real_h:g} mm — off by "
+                f"{diff:+.2f} mm, more than the {tolerance_mm:g} mm "
+                "tolerance. Re-derive from cabinet.face_layout, don't "
+                "reuse a remembered number.")
+
+
+def face_layout(
+    bay_configs: "list[CabinetConfig]",
+    *,
+    face_thickness: float = 18.0,
+    outer_overlay: Optional[float] = None,
+    inner_overlay: float = INNER_FACE_OVERLAY_MM,
+    face_gap: Optional[float] = None,
+    face_bottom_overhang: Optional[float] = None,
+    face_top_overhang: Optional[float] = None,
+    furniture_top: Optional[bool] = None,
+    face_top_style: Optional[str] = None,
+    face_bottom_style: Optional[str] = None,
+) -> list[FacePanel]:
+    """Compute every show-face panel for a bank of side-by-side bays.
+
+    Widths: drawer faces run flush to the cabinet exterior on outermost
+    edges (``outer_overlay``, default = that bay's side thickness) and
+    split interior dividers at ``inner_overlay`` per neighbour (8 + 8 on an
+    18 mm divider leaves a 2 mm reveal). Door leaves are sized by their
+    HINGE — ``DoorConfig.door_width`` from the hinge's overlay spec —
+    because the hinge, not the divider budget, physically fixes where a
+    hinged leaf sits.
+
+    Heights: the face stack is anchored between the bottom and top panels
+    and each internal opening boundary gives ``face_gap / 2`` to each
+    neighbour, so faces + gaps tile the opening span exactly. ``face_gap``
+    defaults to each bay's ``face_gap_mm``.
+
+    ``face_top_style`` (default: bay 0's config field) — ``"cap"`` trims the
+    top face by one gap under a front cap strip and appends the ``top_cap``
+    panel (today's "furniture top" look); ``"flush"`` emits NO cap panel and
+    instead rises the top face itself all the way to the true TOP of the
+    top panel, covering its front edge (no cap strip is needed because the
+    tall face itself does the covering — see ``carcass_panel_dims``, which
+    must agree on this same fact rather than re-deriving it); ``"plain"``
+    stops the face at the panel's own underside. ``face_bottom_style`` — ``"flush"`` drops the
+    lowest face to the carcass underside; ``"plain"`` starts it at the
+    bottom panel's top face. Explicitly-passed ``face_bottom_overhang`` /
+    ``face_top_overhang`` always win over BOTH styles AND the
+    door-transition default (door slots above anything extend the stack to
+    the carcass exterior top). The deprecated ``furniture_top`` boolean is
+    an alias for ``("cap", "flush")`` when True / ``("plain", "plain")`` when
+    False — an explicit ``face_top_style``/``face_bottom_style`` argument on
+    THIS call wins over it, matching ``build_cabinet_config``'s precedence.
+    Per-bay values (gap, anchors, drop) resolve from EACH bay's own config;
+    only the style decision itself and the cap strip are cabinet-global.
+    """
+    from .door import DoorConfig  # lazy — door.py has no cabinet import
+
+    if not bay_configs:
+        return []
+    n_bays = len(bay_configs)
+    cfg0 = bay_configs[0]
+
+    if face_top_style is None or face_bottom_style is None:
+        _legacy_top, _legacy_bottom = (
+            furniture_top_to_styles(furniture_top)
+            if furniture_top is not None else (None, None))
+        if face_top_style is None:
+            face_top_style = _legacy_top if _legacy_top is not None else cfg0.face_top_style
+        if face_bottom_style is None:
+            face_bottom_style = _legacy_bottom if _legacy_bottom is not None else cfg0.face_bottom_style
+    has_transition = _door_transition_exists(bay_configs)
+
+    # Bay X offsets — adjacent bays share a divider (same rule as the 3D).
+    x_offsets, total_width = bay_x_offsets(bay_configs)
+
+    panels: list[FacePanel] = []
+    for bay_idx, (cfg, bx) in enumerate(zip(bay_configs, x_offsets)):
+        if not cfg.openings:
+            continue
+        gap = face_gap if face_gap is not None else cfg.face_gap_mm
+        # Anchor overhangs: explicit argument > style > door-transition rule
+        # (top only) > flush-to-panels. Per-bay thicknesses.
+        if face_bottom_overhang is not None:
+            fbo = face_bottom_overhang
+        elif face_bottom_style == "flush":
+            fbo = cfg.bottom_thickness
+        else:
+            fbo = 0.0
+        if face_top_overhang is not None:
+            fto = face_top_overhang
+        elif face_top_style == "cap":
+            fto = -gap
+        elif face_top_style == "flush":
+            fto = cfg.top_thickness
+        elif has_transition:
+            fto = cfg.top_thickness
+        else:
+            fto = 0.0
+
+        is_leftmost  = bay_idx == 0
+        is_rightmost = bay_idx == n_bays - 1
+        left_ov  = (outer_overlay if outer_overlay is not None
+                    else cfg.side_thickness) if is_leftmost else inner_overlay
+        right_ov = (outer_overlay if outer_overlay is not None
+                    else cfg.side_thickness) if is_rightmost else inner_overlay
+        face_w = left_ov + cfg.interior_width + right_ov
+        face_x = 0.0 if is_leftmost else bx + cfg.side_thickness - inner_overlay
+
+        z_face_start = cfg.bottom_thickness - fbo
+        z_face_end   = cfg.height - cfg.top_thickness + fto
+        n_slots = len(cfg.openings)
+
+        drawer_slots = [i for i, op in enumerate(cfg.openings)
+                        if op.opening_type == "drawer"]
+        last_drawer = drawer_slots[-1] if drawer_slots else -1
+
+        # The vertical stack, stepping over any door floors — one walk,
+        # shared with carcass_panel_dims and the 3D. A floor is a MEMBER of
+        # this stack, so the boundary between the faces either side of it is
+        # its CENTRELINE, with the usual face_gap split across it: each face
+        # laps the floor by (thickness − gap) / 2, exactly as two bays' faces
+        # lap a divider horizontally, and the reveal stays face_gap_mm so a
+        # 2.5 mm shim still works at every boundary.
+        slots = opening_stack(cfg)
+        shelf_t = float(cfg.shelf_thickness)
+
+        def _boundary(i: int) -> float:
+            """Plane the faces meet at, below slot ``i``."""
+            sl = slots[i]
+            return (sl.floor_z + shelf_t / 2.0) if sl.has_floor else sl.z
+
+        for slot_idx, op in enumerate(cfg.openings):
+            opening_h = op.height_mm
+            z_acc = slots[slot_idx].z
+            bot_bound = _boundary(slot_idx)
+            top_bound = (_boundary(slot_idx + 1)
+                         if slot_idx + 1 < len(slots)
+                         else z_acc + opening_h)
+            slot_type = op.opening_type
+            is_first = slot_idx == 0
+            is_last  = slot_idx == n_slots - 1
+
+            if slot_type == "drawer":
+                face_z_bot = z_face_start if is_first else bot_bound + gap / 2
+                if slot_idx == last_drawer and is_last:
+                    face_z_top = z_face_end
+                else:
+                    face_z_top = top_bound - gap / 2
+                panels.append(FacePanel(
+                    kind="drawer_face", bay=bay_idx, slot=slot_idx, leaf=0,
+                    x=face_x, z=face_z_bot,
+                    width=face_w, height=face_z_top - face_z_bot,
+                    thickness=face_thickness,
+                ))
+            elif slot_type in ("door", "door_pair"):
+                n_doors = op.num_doors or (2 if slot_type == "door_pair" else 1)
+                dc = DoorConfig(
+                    opening_width=cfg.interior_width,
+                    opening_height=opening_h,
+                    num_doors=n_doors,
+                    hinge_key=op.hinge_key or cfg.door_hinge,
+                    door_thickness=op.door_thickness or face_thickness,
+                )
+                inset = dc.hinge.overlay_type.name == "INSET"
+                if inset:
+                    face_z_bot = z_acc + dc.gap_bottom
+                    face_z_top = z_acc + opening_h - dc.gap_top
+                else:
+                    face_z_bot = z_face_start if is_first else bot_bound + gap / 2
+                    face_z_top = z_face_end if is_last else top_bound - gap / 2
+                interior_left = bx + cfg.side_thickness
+                for leaf in range(n_doors):
+                    if inset:
+                        lx = (interior_left + dc.gap_side if leaf == 0 else
+                              interior_left + cfg.interior_width
+                              - dc.gap_side - dc.door_width)
+                    else:
+                        ov = dc.hinge.overlay
+                        lx = (interior_left - ov if leaf == 0 else
+                              interior_left + cfg.interior_width
+                              + ov - dc.door_width)
+                    panels.append(FacePanel(
+                        kind="door", bay=bay_idx, slot=slot_idx, leaf=leaf,
+                        x=lx, z=face_z_bot,
+                        width=dc.door_width, height=face_z_top - face_z_bot,
+                        thickness=dc.door_thickness,
+                    ))
+            # z_acc now comes from the shared walk; nothing to accumulate.
+
+    if face_top_style == "cap":
+        panels.append(FacePanel(
+            kind="top_cap", bay=-1, slot=-1, leaf=0,
+            x=0.0, z=cfg0.height - cfg0.top_thickness,
+            width=total_width, height=cfg0.top_thickness,
+            thickness=face_thickness,
+        ))
+    return panels
+
+
+def build_cabinet(
+    cfg: Optional[CabinetConfig] = None,
+    suppress_left_side: bool = False,
+    suppress_right_side: bool = False,
+    suppress_back: bool = False,
+    suppress_top: bool = False,
+    suppress_bottom: bool = False,
+) -> tuple["cq.Assembly", list[PartInfo]]:
+    """Build a complete cabinet assembly from configuration.
+
+    Args:
+        cfg:                Cabinet configuration (defaults to CabinetConfig()).
+        suppress_left_side:  When True, omit the left side panel.  Used when
+                             a dedicated interior divider panel takes its place.
+        suppress_right_side: When True, omit the right side panel.  Used when
+                             a dedicated interior divider panel takes its place.
+        suppress_back:       When True, omit the back panel.  Used when a
+                             single continuous back spans all bays.
+        suppress_top:        When True, omit the top panel.  Used when a
+                             single continuous top spans all bays.
+        suppress_bottom:     When True, omit the bottom panel.  Used when a
+                             single continuous bottom spans all bays.
+
+    Returns:
+        Tuple of (cq.Assembly, list of PartInfo for BOM/cutlist).
+    """
+    _require_cq()
+    if cfg is None:
+        cfg = CabinetConfig()
+
+    parts: list[PartInfo] = []
+
+    # ── Side panels ──────────────────────────────────────────────────────
+    left_side  = make_side_panel(cfg, mirror=False) if not suppress_left_side  else None
+    right_side = make_side_panel(cfg, mirror=True)  if not suppress_right_side else None
+
+    if left_side is not None:
+        parts.append(PartInfo(
+            name="left_side",
+            shape=left_side,
+            material_thickness=cfg.side_thickness,
+            grain_direction="length",
+            edge_band=["front"],
+        ))
+    if right_side is not None:
+        parts.append(PartInfo(
+            name="right_side",
+            shape=right_side,
+            material_thickness=cfg.side_thickness,
+            grain_direction="length",
+            edge_band=["front"],
+        ))
+
+    # ── Bottom panel ─────────────────────────────────────────────────────
+    bottom = make_bottom_panel(cfg) if not suppress_bottom else None
+    if bottom is not None:
+        parts.append(PartInfo(
+            name="bottom",
+            shape=bottom,
+            material_thickness=cfg.bottom_thickness,
+            grain_direction="width",  # grain runs left-to-right
+            edge_band=["front"],
+        ))
+
+    # ── Top panel ────────────────────────────────────────────────────────
+    top = make_top_panel(cfg) if not suppress_top else None
+    if top is not None:
+        parts.append(PartInfo(
+            name="top",
+            shape=top,
+            material_thickness=cfg.top_thickness,
+            grain_direction="width",
+            edge_band=["front"],
+        ))
+
+    # ── Fixed shelves ────────────────────────────────────────────────────
+    shelves = []
+    for i, shelf_z in enumerate(cfg.fixed_shelf_positions):
+        shelf = make_shelf(cfg)
+        shelves.append(shelf)
+        parts.append(PartInfo(
+            name=f"shelf_{i}",
+            shape=shelf,
+            material_thickness=cfg.shelf_thickness,
+            grain_direction="width",
+            edge_band=["front"],
+        ))
+
+    # ── Back panel ───────────────────────────────────────────────────────
+    back = make_back_panel(cfg) if not suppress_back else None
+    if back is not None:
+        parts.append(PartInfo(
+            name="back",
+            shape=back,
+            material_thickness=cfg.back_thickness,
+            grain_direction="width",
+            notes="1/4 inch plywood",
+        ))
+
+    # ── Assembly ─────────────────────────────────────────────────────────
+    assy = cq.Assembly(name="base_cabinet")
+
+    # Left side: sits at x=0 (omitted when suppress_left_side=True)
+    if left_side is not None:
+        assy.add(left_side, name="left_side", loc=cq.Location((0, 0, 0)),
+                 color=cq.Color(0.87, 0.72, 0.53, 1.0))
+
+    # Right side: sits at x = width - side_thickness (omitted when suppress_right_side=True)
+    if right_side is not None:
+        assy.add(right_side, name="right_side",
+                 loc=cq.Location((cfg.width - cfg.side_thickness, 0, 0)),
+                 color=cq.Color(0.87, 0.72, 0.53, 1.0))
+
+    # Butt: panels seat against the sides' interior faces (x = side_thickness);
+    # dado/rabbet: panels extend into the dados / rabbets.
+    interior_x = (cfg.side_thickness if _is_butt(cfg)
+                  else cfg.side_thickness - cfg.dado_depth)
+
+    # Bottom: sits between sides
+    if bottom is not None:
+        assy.add(bottom, name="bottom", loc=cq.Location((interior_x, 0, 0)),
+                 color=cq.Color(0.87, 0.72, 0.53, 1.0))
+
+    # Shelves
+    for i, (shelf, shelf_z) in enumerate(zip(shelves, cfg.fixed_shelf_positions)):
+        assy.add(shelf, name=f"shelf_{i}", loc=cq.Location((interior_x, 0, shelf_z)),
+                 color=cq.Color(0.80, 0.65, 0.45, 1.0))
+
+    # Top panel
+    if top is not None:
+        top_z = cfg.height - cfg.top_thickness
+        assy.add(top, name="top", loc=cq.Location((interior_x, 0, top_z)),
+                 color=cq.Color(0.87, 0.72, 0.53, 1.0))
+
+    # Back panel (omitted when suppress_back=True). Butt: seats between the
+    # sides against the interior panels' rear setback; dado/rabbet: in the
+    # side rabbets.
+    if back is not None:
+        if _is_butt(cfg):
+            geo = back_capture_geometry(cfg)
+            # A machined capture holds the back INSIDE the case: it runs
+            # into each member by the engagement, and a groove holds its
+            # rear face forward of the carcass rear by the setback.
+            back_x = 0.0 if geo.capture == "overlay" else cfg.side_thickness - geo.engagement
+            back_y = cfg.depth - geo.setback - cfg.back_thickness
+            back_z = (0.0 if not geo.machined
+                      else cfg.bottom_thickness - geo.engagement)
+        else:
+            back_x = cfg.side_thickness - cfg.back_rabbet_depth
+            back_y = cfg.depth - cfg.back_rabbet_width
+            back_z = 0.0
+        assy.add(back, name="back", loc=cq.Location((back_x, back_y, back_z)),
+                 color=cq.Color(0.75, 0.60, 0.40, 0.8))
+
+    return assy, parts
+
+
+def _make_pull_shape(pull_spec, vertical: bool = False) -> "Optional[cq.Workplane]":
+    """Return a simple 3D body for a pull, centered at its geometric midpoint.
+
+    The caller places this shape so its origin sits at:
+        (face_center_x, face_front_y - projection/2, face_center_z)
+
+    ``vertical=True`` rotates the bar so its long axis runs along Z (used for
+    door pulls, which are mounted vertically).
+
+    Returns None for flush/recessed pulls (nothing projects above the face).
+    """
+    _require_cq()
+    proj = max(pull_spec.projection_mm, 4.0)
+    if pull_spec.mount_style is MountStyle.FLUSH:
+        return None
+    if pull_spec.mount_style is MountStyle.KNOB:
+        r = max(proj * 0.6, 8.0)
+        return cq.Workplane("XY").sphere(r)
+    # SURFACE or EDGE bar pull — a rounded rectangular bar
+    bar_h = min(proj * 0.7, 12.0)
+    if vertical:
+        return cq.Workplane("XY").box(bar_h, proj, pull_spec.length_mm, centered=True)
+    return cq.Workplane("XY").box(pull_spec.length_mm, proj, bar_h, centered=True)
+
+
+def build_multi_bay_cabinet(
+    bay_configs: list["CabinetConfig"],
+    foot_height: Optional[float] = None,
+    foot_diameter: Optional[float] = None,
+    face_thickness: float = 18.0,
+    outer_overlay: Optional[float] = None,
+    inner_overlay: float = INNER_FACE_OVERLAY_MM,
+    face_gap: Optional[float] = None,
+    face_bottom_overhang: Optional[float] = None,
+    face_top_overhang: Optional[float] = None,
+    include_drawers: bool = True,
+    include_faces: bool = True,
+    include_feet: bool = True,
+    feet_at_dividers: bool = True,
+    furniture_top: Optional[bool] = None,
+    face_top_style: Optional[str] = None,
+    face_bottom_style: Optional[str] = None,
+    divider_top_z: Optional[float] = None,
+    include_manga: bool = False,
+) -> tuple["cq.Assembly", list["PartInfo"]]:
+    """Build a multi-bay cabinet assembly with bays positioned side-by-side.
+
+    Bay 0 is leftmost; the outer edges of bay 0 and bay[-1] are flush with
+    the full cabinet exterior.  Drawer faces span the dividers using
+    ``outer_overlay`` on the two outermost edges and ``inner_overlay`` on
+    all interior bay joints, leaving a ``divider_thickness - 2 * inner_overlay``
+    gap between adjacent bay faces.
+
+    The face stack is anchored at top and bottom:
+    - Bottom of lowest face = ``bottom_thickness - face_bottom_overhang``
+      (0 = faces start at top of bottom panel; set to bottom_thickness for flush-to-carcass-exterior)
+    - Top of highest face  = ``height - top_thickness + face_top_overhang``
+      (0 = faces end at underside of top panel; set to top_thickness for flush-to-carcass-exterior)
+
+    Between adjacent faces ``face_gap`` is the **total** clearance between the
+    bottom edge of the upper face and the top edge of the lower face.  Half of
+    ``face_gap`` is trimmed from each side of the opening boundary, so both
+    faces share the gap symmetrically.
+
+    Args:
+        bay_configs:          Ordered list of CabinetConfig, left to right.
+        foot_height:          Adjustable-foot height in mm (default 102 mm = 4″).
+        foot_diameter:        Foot cylinder diameter in mm.
+        face_thickness:       Drawer face panel thickness in mm.
+        outer_overlay:        Face overhang on outermost cabinet edges (flush = side_thickness).
+        inner_overlay:        Face overhang on interior bay dividers.
+        face_gap:             Total vertical gap between adjacent faces (mm).  Half is
+                              trimmed from the top of the lower face and half from the
+                              bottom of the upper face.
+        face_bottom_overhang: How far the bottom face extends below the top surface of
+                              the bottom panel (default 0 = starts at top of bottom panel).
+        face_top_overhang:    How far the top face extends above the underside of the top
+                              panel (default 0 = ends at underside of top panel).
+        include_drawers:      Build and add drawer box assemblies.
+        include_faces:        Build and add drawer face panels.
+        include_feet:         Build and add adjustable-foot cylinders.
+        furniture_top:        DEPRECATED boolean alias for
+                              (face_top_style, face_bottom_style) =
+                              ("cap", "flush") when True / ("plain", "plain")
+                              when False. Prefer the two style parameters.
+        face_top_style:       "cap" (default: bay 0's config field) adds a
+                              front cap strip that extends the top panel
+                              forward to the drawer-face plane, trimming the
+                              top face by one gap under it. "flush" adds no
+                              cap strip — the top face itself rises to the
+                              TOP of the top panel, covering its front edge
+                              (the same plane a cap strip would occupy).
+                              "plain" stops the top face at the panel's own
+                              underside.
+        face_bottom_style:    "flush" (default: bay 0's config field) drops
+                              the bottom of the lowest drawer face to the
+                              underside of the carcass bottom panel. "plain"
+                              starts it at the bottom panel's top face.
+                              Explicitly-passed face_bottom_overhang /
+                              face_top_overhang arguments take precedence
+                              over both style parameters AND furniture_top.
+        include_manga:        Add a manga scale-reference stack to every drawer
+                              box (viewer prop, excluded from the parts list).
+                              Raises ValueError naming the drawer if any
+                              interior can't hold the full 5-volume stack.
+
+    Returns:
+        (cq.Assembly, list[PartInfo]) — the full assembly and its parts list.
+    """
+    _require_cq()
+
+    if not bay_configs:
+        raise ValueError("bay_configs must be non-empty")
+
+    # Lazy import to avoid circular dependency (drawer.py imports from cabinet.py)
+    from .drawer import DrawerConfig, build_drawer
+
+    all_parts: list[PartInfo] = []
+    assy = cq.Assembly(name="multi_bay_cabinet")
+
+    n_bays = len(bay_configs)
+
+    # ── Bay X offsets ──────────────────────────────────────────────────────────
+    # Adjacent bays share a single divider panel: the right panel of bay N serves
+    # as the left wall of bay N+1.  Each non-leftmost bay is therefore shifted
+    # one side_thickness to the left so its interior aligns with the shared panel.
+    x_offsets, total_width = bay_x_offsets(bay_configs)
+
+    # ── Show-face geometry — single source of truth ────────────────────────────
+    # face_layout() owns every face/door/cap dimension and position; this
+    # builder only extrudes what it returns. None-valued parameters resolve
+    # inside the layout (face_top_style / face_bottom_style / face_gap from
+    # bay 0's config, face_top_overhang from the door-transition rule). Do
+    # NOT pre-resolve furniture_top from bay_configs[0] here the way this
+    # used to: cfg.furniture_top is a LOSSY derived boolean (it collapses
+    # "flush" and "plain" tops to the same False), so resolving through it
+    # before calling face_layout would silently overwrite a stored "flush"
+    # style with "plain". Pass all three straight through and let
+    # face_layout's own precedence (style kwarg > furniture_top kwarg >
+    # cfg0's stored fields) do the resolving exactly once.
+    _face_panels = face_layout(
+        bay_configs,
+        face_thickness=face_thickness,
+        outer_overlay=outer_overlay,
+        inner_overlay=inner_overlay,
+        face_gap=face_gap,
+        face_bottom_overhang=face_bottom_overhang,
+        face_top_overhang=face_top_overhang,
+        furniture_top=furniture_top,
+        face_top_style=face_top_style,
+        face_bottom_style=face_bottom_style,
+    )
+    _drawer_face_at = {(p.bay, p.slot): p for p in _face_panels
+                       if p.kind == "drawer_face"}
+    _door_leaves_at: dict[tuple[int, int], list[FacePanel]] = {}
+    for _p in _face_panels:
+        if _p.kind == "door":
+            _door_leaves_at.setdefault((_p.bay, _p.slot), []).append(_p)
+    _top_cap = next((p for p in _face_panels if p.kind == "top_cap"), None)
+
+    # Colours — alternate slightly between bays for clarity
+    carcass_colours = [
+        cq.Color(0.87, 0.72, 0.53, 1.0),
+        cq.Color(0.80, 0.65, 0.45, 1.0),
+        cq.Color(0.87, 0.72, 0.53, 1.0),
+    ]
+    drawer_colour = cq.Color(0.78, 0.65, 0.42, 1.0)
+    face_colour   = cq.Color(0.55, 0.38, 0.22, 1.0)
+    foot_colour   = cq.Color(0.25, 0.25, 0.28, 1.0)
+
+    # ── Continuous top/bottom ──────────────────────────────────────────────────
+    # One bottom and one top spanning all bays — which is what the cutlist
+    # cuts, always. This used to switch to a per-bay pair whenever a
+    # transition shelf was derived, so an armoire's picture showed two 531.8
+    # bottoms against one 1081.6 on the paper. A door floor is an interior
+    # member like a fixed shelf; it does not divide the case into stacked
+    # boxes, so it does not change what the top and bottom are.
+    suppress_bay_tb = divider_top_z is None
+
+    # ── Carcass bays ───────────────────────────────────────────────────────────
+    for bay_idx, (cfg, bx) in enumerate(zip(bay_configs, x_offsets)):
+        bay_assy, bay_parts = build_cabinet(
+            cfg,
+            suppress_left_side=(bay_idx > 0),           # divider provides left wall
+            suppress_right_side=(bay_idx < n_bays - 1), # divider provides right wall
+            suppress_back=True,                          # single continuous back added below
+            suppress_top=suppress_bay_tb,                # continuous top added below
+            suppress_bottom=suppress_bay_tb,             # continuous bottom added below
+        )
+        col = carcass_colours[bay_idx % len(carcass_colours)]
+        assy.add(bay_assy, name=f"bay_{bay_idx}",
+                 loc=cq.Location((bx, 0, 0)),
+                 color=col)
+        for p in bay_parts:
+            all_parts.append(PartInfo(
+                name=f"bay{bay_idx}_{p.name}",
+                shape=p.shape,
+                material_thickness=p.material_thickness,
+                grain_direction=p.grain_direction,
+                edge_band=list(p.edge_band),
+                notes=p.notes,
+            ))
+
+    # ── Continuous bottom + top panels (non-stacked only) ──────────────────────
+    if suppress_bay_tb:
+        cfg0 = bay_configs[0]
+        butt = _is_butt(cfg0)
+        if butt:
+            # Butt: panels seat BETWEEN the outer sides at interior width —
+            # the cutlist dims, read from the SAME source the cutlist cuts
+            # from. These two panels are the ones the picture actually
+            # shows (make_top/bottom_panel run only on stacked layouts), so
+            # a private derivation here is a private derivation of the
+            # numbers that matter most: `depth − back_thickness` sat here
+            # until 2026-08 and is exactly the expression D2 was about.
+            # The whole-run config is the object the cutlist sizes from —
+            # one cabinet, its full exterior width, no columns.
+            _whole = dataclasses.replace(cfg0, width=total_width, columns=[])
+            _cont_b = carcass_panel(_whole, "bottom")
+            _cont_t = carcass_panel(_whole, "top")
+            # Miter is not modelled in the render (see make_top_panel), so
+            # take the butt length here too rather than half-draw a corner.
+            cont_panel_width = (_whole.interior_width if _cont_b.bevel_ends
+                                else _cont_b.length)
+            cont_panel_x = cfg0.side_thickness
+            cont_bottom_depth = _cont_b.width
+        else:
+            # Dado/rabbet: spans from the inside-back of the left side
+            # panel's bottom dado to the matching point on the right side —
+            # interior width plus one dado_depth each side.
+            cont_panel_width = (
+                total_width
+                - 2 * cfg0.side_thickness
+                + 2 * cfg0.dado_depth
+            )
+            cont_panel_x = cfg0.side_thickness - cfg0.dado_depth
+            cont_bottom_depth = cfg0.depth - cfg0.back_rabbet_width
+
+        cont_bottom = (
+            cq.Workplane("XY")
+            .box(cont_panel_width, cont_bottom_depth, cfg0.bottom_thickness, centered=False)
+        )
+        if butt:
+            cont_bottom = _cut_back_capture(cont_bottom, cfg0, "top_z",
+                                            cfg0.bottom_thickness)
+        assy.add(cont_bottom, name="bottom",
+                 loc=cq.Location((cont_panel_x, 0, 0)),
+                 color=cq.Color(0.87, 0.72, 0.53, 1.0))
+        all_parts.append(PartInfo(
+            name="bottom",
+            shape=cont_bottom,
+            material_thickness=cfg0.bottom_thickness,
+            grain_direction="width",
+            edge_band=["front"],
+            notes="continuous bottom — single panel spanning all bays",
+        ))
+
+        # Continuous top — depth follows the construction (matches
+        # make_top_panel): dado/rabbet always full depth; butt follows
+        # back_capture, which folds in back_style's full-depth cap.
+        cont_top_depth = _cont_t.width if butt else cfg0.depth
+        cont_top = (
+            cq.Workplane("XY")
+            .box(cont_panel_width, cont_top_depth, cfg0.top_thickness, centered=False)
+        )
+        if butt:
+            cont_top = _cut_back_capture(cont_top, cfg0, "under_z",
+                                         cfg0.top_thickness)
+        cont_top_z = cfg0.height - cfg0.top_thickness
+        assy.add(cont_top, name="top",
+                 loc=cq.Location((cont_panel_x, 0, cont_top_z)),
+                 color=cq.Color(0.87, 0.72, 0.53, 1.0))
+        all_parts.append(PartInfo(
+            name="top",
+            shape=cont_top,
+            material_thickness=cfg0.top_thickness,
+            grain_direction="width",
+            edge_band=["front"],
+            notes="continuous top — single panel spanning all bays",
+        ))
+
+    # ── Interior vertical dividers ─────────────────────────────────────────────
+    # One purpose-built divider per bay boundary, placed at x_offsets[1:].
+    # Depth comes from make_interior_divider, which reads interior_depth —
+    # the back edge lands on the back panel's front face, wherever the
+    # capture puts it.
+    divider_colour = cq.Color(0.87, 0.72, 0.53, 1.0)
+    for div_idx, (div_x, cfg) in enumerate(zip(x_offsets[1:], bay_configs)):
+        div_shape = make_interior_divider(cfg, height_override=divider_top_z)
+        # Butt dividers seat ON the bottom panel (make_interior_divider cut
+        # them short by bottom_thickness); dado dividers run to the floor.
+        div_z = cfg.bottom_thickness if _is_butt(cfg) else 0.0
+        assy.add(div_shape, name=f"divider_{div_idx}",
+                 loc=cq.Location((div_x, 0, div_z)),
+                 color=divider_colour)
+        all_parts.append(PartInfo(
+            name=f"divider_{div_idx}",
+            shape=div_shape,
+            material_thickness=cfg.side_thickness,
+            grain_direction="length",
+            edge_band=["front"],
+        ))
+
+    # ── Continuous back panel ──────────────────────────────────────────────────
+    # A single panel spanning all bays, fitting into the outer side-panel rabbets
+    # and running behind the shared interior dividers.
+    cfg0 = bay_configs[0]
+    cfg_last = bay_configs[-1]
+    if _is_butt(cfg0):
+        # Butt: sized and placed by back_capture. "pocket" seats the back
+        # BETWEEN the outer sides against the interior panels' rear setback,
+        # at a height following back_style; a machined capture runs it into
+        # each member by the engagement and holds it forward by the setback.
+        geo0 = back_capture_geometry(cfg0)
+        cont_back_width = (total_width if geo0.capture == "overlay" else
+                           total_width - cfg0.side_thickness
+                           - cfg_last.side_thickness + 2 * geo0.engagement)
+        cont_back_height = geo0.height
+        back_x = 0.0 if geo0.capture == "overlay" else cfg0.side_thickness - geo0.engagement
+        back_y = cfg0.depth - geo0.setback - cfg0.back_thickness
+        back_z = (0.0 if not geo0.machined
+                  else cfg0.bottom_thickness - geo0.engagement)
+    else:
+        cont_back_width = (
+            total_width
+            - (cfg0.side_thickness - cfg0.back_rabbet_depth)   # left rabbet offset
+            - (cfg_last.side_thickness - cfg_last.back_rabbet_depth)  # right rabbet offset
+        )
+        cont_back_height = cfg0.back_panel_height
+        back_x = cfg0.side_thickness - cfg0.back_rabbet_depth
+        back_y = cfg0.depth - cfg0.back_rabbet_width
+        back_z = 0.0
+    cont_back = (
+        cq.Workplane("XY")
+        .box(cont_back_width, cfg0.back_thickness, cont_back_height, centered=False)
+    )
+    if _is_butt(cfg0) and geo0.lap_depth:
+        for x0, z0, dx, dz in (
+            (0.0, 0.0, geo0.lap_run, cont_back_height),
+            (cont_back_width - geo0.lap_run, 0.0, geo0.lap_run, cont_back_height),
+            (0.0, 0.0, cont_back_width, geo0.lap_run),
+            (0.0, cont_back_height - geo0.lap_run, cont_back_width, geo0.lap_run),
+        ):
+            cont_back = cont_back.cut(
+                cq.Workplane("XY")
+                .transformed(offset=(x0, 0.0, z0))
+                .box(dx, geo0.lap_depth, dz, centered=False))
+    assy.add(cont_back, name="back",
+             loc=cq.Location((back_x, back_y, back_z)),
+             color=cq.Color(0.75, 0.60, 0.40, 0.8))
+    all_parts.append(PartInfo(
+        name="back",
+        shape=cont_back,
+        material_thickness=cfg0.back_thickness,
+        grain_direction="width",
+        notes="1/4 inch plywood — single panel spanning all bays",
+    ))
+
+    # ── Door floors ────────────────────────────────────────────────────────────
+    # A door standing on anything gets a floor, PER COLUMN, stopping at the
+    # divider — the same panel the cutlist cuts, placed at the same z.
+    #
+    # This block used to invent one panel spanning every bay at min() of the
+    # columns' transitions, on no cutlist and driven clean through the
+    # divider (170,878 mm3 — the divider's whole thickness over its whole
+    # depth). Registered as D8; closed by making it a real part instead of
+    # by deleting it, because a door over a drawer really does need a floor.
+    floor_colour = cq.Color(0.87, 0.72, 0.53, 1.0)
+    floor_nodes: list[str] = []
+    for bay_idx, (bcfg, bx) in enumerate(zip(bay_configs, x_offsets)):
+        for slot in opening_stack(bcfg):
+            if not slot.has_floor:
+                continue
+            fl_panel = (
+                cq.Workplane("XY")
+                .box(bcfg.interior_width, bcfg.interior_depth,
+                     bcfg.shelf_thickness, centered=False)
+            )
+            # Numbered globally like divider_0, NOT bay{i}_floor{j}: the
+            # viewer's diagnostic-colour lookup strips a trailing _N and
+            # matches the remainder against a name table, so "bay0_floor1"
+            # would reduce to "bay0_floor" and never match anything.
+            nm = f"floor_{len(floor_nodes)}"
+            floor_nodes.append(nm)
+            assy.add(fl_panel, name=nm,
+                     loc=cq.Location((bx + bcfg.side_thickness, 0.0,
+                                      slot.floor_z)),
+                     color=floor_colour)
+            all_parts.append(PartInfo(
+                name=nm,
+                shape=fl_panel,
+                material_thickness=bcfg.shelf_thickness,
+                grain_direction="width",
+                edge_band=["front"],
+                notes="door floor — the compartment the door closes on",
+            ))
+
+    # ── Furniture top cap ──────────────────────────────────────────────────────
+    # A thin horizontal strip that extends the top panel forward to the drawer
+    # face plane, creating a flush furniture-style top edge.
+    if _top_cap is not None:
+        top_cap = (
+            cq.Workplane("XY")
+            .box(_top_cap.width, _top_cap.thickness, _top_cap.height,
+                 centered=False)
+        )
+        assy.add(top_cap, name="top_front_cap",
+                 loc=cq.Location((_top_cap.x, -_top_cap.thickness, _top_cap.z)),
+                 color=carcass_colours[0])
+        all_parts.append(PartInfo(
+            name="top_front_cap",
+            shape=top_cap,
+            material_thickness=cfg0.top_thickness,
+            grain_direction="width",
+            edge_band=["front", "left", "right"],
+            notes="furniture top front cap — spans full cabinet width",
+        ))
+
+    # ── Drawer boxes ───────────────────────────────────────────────────────────
+    if include_drawers:
+        for bay_idx, (cfg, bx) in enumerate(zip(bay_configs, x_offsets)):
+            if not cfg.openings:
+                continue
+
+            z = cfg.bottom_thickness  # drawers sit above the bottom panel
+
+            for drw_idx, op in enumerate(cfg.openings):
+                opening_h = op.height_mm
+                if op.opening_type == "drawer":
+                    dcfg = DrawerConfig(
+                        opening_width=cfg.interior_width,
+                        opening_height=opening_h,
+                        opening_depth=cfg.interior_depth,
+                        slide_key=op.slide_key or cfg.drawer_slide,
+                        applied_face=False,  # faces handled below
+                        joinery_style=cfg.drawer_joinery,
+                        corner_lip_mm=cfg.drawer_corner_lip_mm,
+                        side_thickness=cfg.drawer_box_thickness,
+                        front_back_thickness=cfg.drawer_box_thickness,
+                        bottom_thickness=op.bottom_thickness,
+                    )
+                    try:
+                        drw_assy, drw_parts = build_drawer(
+                            dcfg, include_manga=include_manga)
+                    except ValueError as e:
+                        raise ValueError(
+                            f"bay{bay_idx}_drawer{drw_idx}: {e}") from None
+
+                    drw_x = bx + cfg.side_thickness + dcfg.side_gap
+                    drw_y = dcfg.front_gap
+                    drw_z = z + dcfg.slide.min_bottom_clearance
+
+                    assy.add(drw_assy, name=f"bay{bay_idx}_drawer{drw_idx}",
+                             loc=cq.Location((drw_x, drw_y, drw_z)),
+                             color=drawer_colour)
+
+                z += opening_h
+
+    # ── Drawer faces ───────────────────────────────────────────────────────────
+    # Dimensions and positions come from face_layout(); this block only
+    # extrudes the panels.
+    if include_faces:
+        for (bay_idx, drw_idx), p in _drawer_face_at.items():
+            face_shape = (
+                cq.Workplane("XY")
+                .box(p.width, face_thickness, p.height, centered=False)
+            )
+            # y = -face_thickness so face sits proud of carcass front
+            assy.add(face_shape,
+                     name=f"bay{bay_idx}_face{drw_idx}",
+                     loc=cq.Location((p.x, -face_thickness, p.z)),
+                     color=face_colour)
+            all_parts.append(PartInfo(
+                name=f"bay{bay_idx}_face{drw_idx}",
+                shape=face_shape,
+                material_thickness=face_thickness,
+                grain_direction="width",
+                edge_band=["all"],
+            ))
+
+    # ── Door panels ────────────────────────────────────────────────────────────
+    # Render a leaf for every "door" / "door_pair" slot at face_layout's
+    # dimensions: leaf widths come from the HINGE spec (DoorConfig), not the
+    # divider-claim budget — a hinged leaf sits where its hinge puts it.
+    # Heights share the drawer faces' anchored stack so mixed columns align.
+    if include_faces:
+        for (bay_idx, slot_idx), leaves in _door_leaves_at.items():
+            for p in leaves:
+                ds = (
+                    cq.Workplane("XY")
+                    .box(p.width, p.thickness, p.height, centered=False)
+                )
+                name = (f"bay{bay_idx}_door{slot_idx}_{p.leaf}"
+                        if len(leaves) > 1 else f"bay{bay_idx}_door{slot_idx}")
+                assy.add(
+                    ds,
+                    name=name,
+                    loc=cq.Location((p.x, -p.thickness, p.z)),
+                    color=face_colour,
+                )
+                all_parts.append(PartInfo(
+                    name=name,
+                    shape=ds,
+                    material_thickness=p.thickness,
+                    grain_direction="length",
+                    edge_band=["all"],
+                ))
+
+    # ── Pull hardware ──────────────────────────────────────────────────────────
+    # For each bay that has a drawer_pull configured, place the pull body on
+    # every drawer face.  Pulls are named bay{i}_pull{j}_{k} so the visualizer
+    # can animate them alongside the matching face (bay{i}_face{j}).
+    if include_faces:
+        from .pulls import pull_positions as _pull_positions
+        pull_colour = cq.Color(0.40, 0.40, 0.45, 1.0)
+
+        for bay_idx, (cfg, bx) in enumerate(zip(bay_configs, x_offsets)):
+            if not cfg.drawer_pull or not cfg.openings:
+                continue
+            try:
+                pull_spec = get_pull(cfg.drawer_pull)
+            except KeyError:
+                continue
+
+            pull_body = _make_pull_shape(pull_spec)
+            if pull_body is None:
+                continue  # flush / recessed pulls have nothing to render
+
+            pull_py = -face_thickness - pull_spec.projection_mm / 2.0
+            for drw_idx, _ in enumerate(cfg.openings):
+                p = _drawer_face_at.get((bay_idx, drw_idx))
+                if p is None:
+                    continue
+                try:
+                    placements = _pull_positions(
+                        p.width, p.height, pull_spec, cfg.drawer_pull)
+                except ValueError:
+                    continue
+
+                for p_idx, placement in enumerate(placements):
+                    cx, cz = placement.center
+                    assy.add(
+                        pull_body,
+                        name=f"bay{bay_idx}_pull{drw_idx}_{p_idx}",
+                        loc=cq.Location((p.x + cx, pull_py, p.z + cz)),
+                        color=pull_colour,
+                    )
+
+    # ── Door pull hardware ─────────────────────────────────────────────────────
+    # Place a pull body on every door / door_pair leaf for bays with door_pull
+    # set. Leaf rectangles come from face_layout.
+    if include_faces:
+        from .pulls import pull_positions as _pull_positions
+        pull_colour = cq.Color(0.40, 0.40, 0.45, 1.0)
+
+        for bay_idx, cfg in enumerate(bay_configs):
+            if not cfg.door_pull or not cfg.openings:
+                continue
+            try:
+                pull_spec = get_pull(cfg.door_pull)
+            except KeyError:
+                continue
+
+            pull_body = _make_pull_shape(pull_spec, vertical=True)
+            if pull_body is None:
+                continue
+
+            pull_py = -face_thickness - pull_spec.projection_mm / 2.0
+            for slot_idx, _ in enumerate(cfg.openings):
+                leaves = _door_leaves_at.get((bay_idx, slot_idx))
+                if not leaves:
+                    continue
+                for p in leaves:
+                    if len(leaves) == 2:
+                        # Pair: left leaf hinges left (outer), right leaf hinges
+                        # right (outer). Pulls go on the latch (inner) edges
+                        # regardless of cfg.door_hinge_side.
+                        hs: HingeSide = "left" if p.leaf == 0 else "right"
+                        pull_name = f"bay{bay_idx}_doorpull{slot_idx}_{p.leaf}"
+                    else:
+                        hs = cfg.door_hinge_side
+                        pull_name = f"bay{bay_idx}_doorpull{slot_idx}"
+                    cx = door_pull_x_center(
+                        p.width, pull_spec, hs, cfg.door_pull_inset_mm,
+                        vertical=True)
+                    try:
+                        placements = _pull_positions(
+                            p.width, p.height, pull_spec, cfg.door_pull,
+                            x_override_mm=cx,
+                            vertical="upper_third",
+                        )
+                    except ValueError:
+                        continue
+                    for p_idx, placement in enumerate(placements):
+                        _cx, cz = placement.center
+                        assy.add(
+                            pull_body,
+                            name=f"{pull_name}_{p_idx}",
+                            loc=cq.Location((p.x + _cx, pull_py, p.z + cz)),
+                            color=pull_colour,
+                        )
+
+    # ── Feet ───────────────────────────────────────────────────────────────────
+    if include_feet:
+        cfg0       = bay_configs[0]
+        depth      = cfg0.depth
+        foot_inset = cfg0.leg_inset
+
+        # Resolve leg spec from the first bay's config; fall back to caller overrides
+        try:
+            leg_spec = get_leg(cfg0.leg_key)
+            _foot_height   = foot_height   if foot_height   is not None else leg_spec.height_mm
+            _foot_diameter = foot_diameter if foot_diameter is not None else leg_spec.base_diameter_mm
+        except KeyError:
+            _foot_height   = foot_height   if foot_height   is not None else 102.0
+            _foot_diameter = foot_diameter if foot_diameter is not None else 50.0
+
+        # X positions: outer corners only, or also under each interior divider.
+        # Divider feet sit on the divider centreline, not its left edge.
+        foot_xs = [foot_inset, total_width - foot_inset]
+        if feet_at_dividers:
+            foot_xs += [dx + cfg0.side_thickness / 2 for dx in x_offsets[1:]]
+        foot_ys = [foot_inset, depth - foot_inset]
+
+        foot_shape = (
+            cq.Workplane("XY")
+            .cylinder(_foot_height, _foot_diameter / 2, centered=(True, True, False))
+        )
+        fi = 0
+        for fx in foot_xs:
+            for fy in foot_ys:
+                assy.add(foot_shape, name=f"foot_{fi}",
+                         loc=cq.Location((fx, fy, -_foot_height)),
+                         color=foot_colour)
+                fi += 1
+
+    return assy, all_parts

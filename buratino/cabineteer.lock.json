@@ -4,5 +4,8 @@
   "commit": "191ab1f9cf8ab9c3c9425312cbef07457db99b15",
   "selected_from": "refs/heads/main",
   "selected_on": "2026-10-26",
-  "checkout": ".local/cabineteer"
+  "patch": "patches/assembly-report.patch",
+  "patch_sha256": "0f7cc2eab870125499106c9710795f21078c158eb4e28d754f3689461e7343ff",
+  "source": "vendor/cabineteer",
+  "patch_import": "Applied to upstream source before import; retained for historical provenance only."
 }

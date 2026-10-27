@@ -1,0 +1,72 @@
+[project]
+name = "cabineteer"
+version = "0.1.0"
+description = "Parametric furniture design, evaluation, and cutlist optimization with CadQuery"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.9.0,!=1.27.0",
+    "numpy",
+]
+
+[project.optional-dependencies]
+# 3D geometry, interference checks, GLB export, and the self-contained HTML viewer
+cad = ["cadquery>=2.4"]
+# Sheet-goods nesting optimizer (opcut primary; rectpack fallback) + PDF export
+# opcut 0.1.3 is the last pure-Python release; 0.2+ are Linux-only compiled wheels.
+cutlist = ["opcut==0.1.3", "rectpack", "reportlab"]
+# Everything: cad + cutlist.  Recommended for normal use.
+full = ["cabineteer[cad,cutlist]"]
+# Lite: explicit alias for a base-only install (no extras needed — documented for clarity)
+lite = []
+# Developer tools
+dev = ["pytest>=7.0", "pytest-cov"]
+
+[dependency-groups]
+# uv-native mirrors of the extras above — lets "uv run" resolve groups without --extra flags
+cad     = ["cadquery>=2.4"]
+cutlist = ["opcut==0.1.3", "rectpack", "reportlab"]
+full    = [{include-group = "cad"}, {include-group = "cutlist"}]
+dev     = ["pytest>=7.0", "pytest-cov"]
+
+[tool.uv]
+# "uv run cabineteer" and "uv run pytest" both work out of the box.
+# For a lightweight install without CadQuery: uv run --no-group full cabineteer
+default-groups = ["full", "dev"]
+# opcut 0.1.3 pins jsonschema==3.0.1, but we only use opcut.common/csp which
+# never import jsonschema. Override to keep mcp's required jsonschema 4.x.
+override-dependencies = [
+    # opcut 0.1.3 pins jsonschema==3.0.1; we only use opcut.common/csp which
+    # never import jsonschema, so keep mcp's required jsonschema 4.x.
+    "jsonschema>=4.0",
+    # opcut 0.1.3 → doit==0.31.1 → pyinotify which fails to build on macOS.
+    # We only import opcut.common/csp (not doit at all), so any doit version works.
+    "doit>=0.36",
+    # opcut 0.1.3 pins pycairo==1.18.1, which has no Windows wheel and fails
+    # to build from source there (missing cairo.h). 1.26+ ships prebuilt
+    # wheels for every platform; we never import cairo/pycairo (opcut only
+    # drags it in), so any version is fine and no system cairo is needed.
+    "pycairo>=1.26",
+]
+
+[project.scripts]
+cabineteer = "cabineteer.server:main"
+# Headless CLI — drives the same tool handlers as the MCP server, no AI client.
+cabineteer-cli = "cabineteer.cli:main"
+# Deprecated alias — keeps pre-rename client configs launching until they
+# migrate to "cabineteer"; remove after one release.
+cabinet-mcp = "cabineteer.server:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cabineteer = ["data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"

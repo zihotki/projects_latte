@@ -85,7 +85,7 @@ def test_native_drawer_reference_dimensions_and_metadata(root):
     )
     assert "30 mm wide by 13 mm high" in relief_check["message"]
     issue_codes = {issue["code"] for issue in result["checks"]}
-    assert "cabineteer.domino_panel_thickness" in issue_codes
+    assert "cabineteer.domino_machining_unknown" in issue_codes
     assert {
         "drawer.hardware_limits_unverified",
         "drawer.load_capacity_unverified",

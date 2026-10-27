@@ -32,16 +32,16 @@ def test_upper_assembly_extends_the_unchanged_drawer_row_and_frame(root):
 
     assert result["overall_dimensions_mm"] == {
         "width": 1440,
-        "height": 2234,
-        "depth": 530,
+        "height": pytest.approx(2238.097, abs=0.001),
+        "depth": 526,
     }
     assert [cabinet["id"] for cabinet in result["cabinets"]] == [
         "left-drawers",
         "right-drawers",
     ]
     assert [cabinet["dimensions_mm"] for cabinet in result["cabinets"]] == [
-        {"width": 720, "height": 930, "depth": 510},
-        {"width": 720, "height": 930, "depth": 510},
+        {"width": 720, "height": 930, "depth": 506},
+        {"width": 720, "height": 930, "depth": 506},
     ]
 
     assert [cabinet["id"] for cabinet in result["upper_cabinets"]] == [
@@ -49,10 +49,10 @@ def test_upper_assembly_extends_the_unchanged_drawer_row_and_frame(root):
         "upper-right",
     ]
     for cabinet in result["upper_cabinets"]:
-        assert cabinet["placement_mm"]["y"] == 100
+        assert cabinet["placement_mm"]["y"] == 80
         assert cabinet["placement_mm"]["z"] == 1030
-        assert cabinet["bounds_mm"]["min"]["y"] == 100
-        assert cabinet["bounds_mm"]["max"]["y"] == 510
+        assert cabinet["bounds_mm"]["min"]["y"] == 80
+        assert cabinet["bounds_mm"]["max"]["y"] == 506
 
     frames = {frame["id"]: frame for frame in result["frames"]}
     assert {
@@ -67,8 +67,30 @@ def test_upper_assembly_extends_the_unchanged_drawer_row_and_frame(root):
         )
         for key, frame in frames.items()
     } == {
-        "bottom": (1440, 510, 50, 18, 0, 0, 0),
-        "top": (1440, 380, 50, 18, 0, 130, 980),
+        "bottom": (1440, 506, 50, 18, 0, 0, 0),
+        "top": (1440, 380, 50, 18, 0, 126, 980),
+    }
+
+
+def test_height_fit_includes_upper_fronts(root):
+    project = load_project(root / "projects/real-assembly")
+    project.variables["space_mm"] = {"height": 2236}
+    calculation = calculate(project)
+    assembly, _ = make_geometry(calculation)
+    fronts = [
+        part
+        for part in _upper_parts(calculation.result)
+        if part["component"] in {"face", "door"}
+    ]
+    physical_top = max(
+        assembly.objects[part["role"]].toCompound().BoundingBox().zmax
+        for part in fronts
+    )
+    assert calculation.result["overall_dimensions_mm"]["height"] == pytest.approx(
+        physical_top
+    )
+    assert "survey.height_exceeded" in {
+        issue["code"] for issue in calculation.result["checks"]
     }
 
 
@@ -155,10 +177,10 @@ def test_upper_panels_are_native_solids_and_slope_uses_a_local_stock_blank(root)
     blank = roof["blank_mm"]
     expected_sloped_length = math.hypot(joint_x, 2234 - 1265) + 18 * slope
     assert blank["length"] == pytest.approx(expected_sloped_length)
-    assert blank["width"] == pytest.approx(404)
+    assert blank["width"] == pytest.approx(420)
     assert blank["thickness"] == pytest.approx(18)
     assert blank["length"] > roof["size_mm"]["x"]
-    assert roof["profile"]["extrusion_mm"] == pytest.approx(404)
+    assert roof["profile"]["extrusion_mm"] == pytest.approx(420)
 
     spec = load_project(root / "projects/real-assembly").variables["upper"]
     assert spec["left_height_mm"] == 235
@@ -246,7 +268,7 @@ def test_upper_roof_butts_against_divider_and_flat_top_bears_on_it(root):
     ) == pytest.approx(18)
     assert min(flat_box.ymax, divider_box.ymax) - max(
         flat_box.ymin, divider_box.ymin
-    ) == pytest.approx(404)
+    ) == pytest.approx(420)
     assert sloped_top.intersect(divider).Volume() <= 1e-5
     assert flat_top.intersect(divider).Volume() <= 1e-5
 
@@ -275,7 +297,7 @@ def test_shelf_levels_align_and_fit_below_the_roof(root):
     ]
     assert horizontal
     assert {part["blank_mm"]["length"] for part in horizontal} == {333}
-    assert {part["blank_mm"]["width"] for part in horizontal} == {404}
+    assert {part["blank_mm"]["width"] for part in horizontal} == {420}
     assert {part["blank_mm"]["thickness"] for part in horizontal} == {18}
     bottom_starts = sorted(
         part["position_mm"]["x"] for part in horizontal if part["component"] == "bottom"

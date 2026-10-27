@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-progress runs for the same ref (e.g. rapid force-pushes to a PR).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Pure-Python paths — what the tests and evals are written against.
+  # No CadQuery/opcut/rectpack, so this stays fast. Runs on all three OSes:
+  # the core (MCP server, parametric, cutlist BOM, evals) must work on the
+  # platforms people actually run it — Windows (Claude Desktop) and macOS
+  # (dev). Catches path-separator, filename-validation, and encoding bugs.
+  lite:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    # Required on all three OSes. The pure-Python core must work where
+    # people run it — Windows (Claude Desktop) and macOS (dev) — and this
+    # is what caught the cp1252 UTF-8 bug fixed in #72.
+    strategy:
+      fail-fast: false          # let every OS/py combo report, don't cancel siblings
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+    defaults:
+      run:
+        # Uniform shell across OSes (Windows runners ship Git Bash) so the
+        # one-liners below don't need per-platform quoting.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Install (lite)
+        run: uv sync --no-group full
+      - name: Assert lite is lite
+        # If a dep change ever pulls any full-group package into the lite
+        # env, this job would silently test the full paths — fail loudly
+        # instead (cadquery, opcut, rectpack, reportlab all guarded).
+        run: uv run --no-group full python -c "import importlib.util, sys; missing = [m for m in ('cadquery', 'opcut', 'rectpack', 'reportlab') if importlib.util.find_spec(m) is not None]; sys.exit(1 if missing else 0)"
+      - name: Tests
+        run: uv run --no-group full pytest tests/ -q
+      - name: Evals
+        run: uv run --no-group full python -m evals
+      - name: README stats current
+        # Fails if a catalog/eval change moved a count the README quotes but
+        # forgot to run scripts/readme_stats.py. Cheap; one OS/py is plenty.
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: uv run --no-group full python scripts/readme_stats.py --check
+
+  # Full install — exercises the CadQuery-backed geometry tests and the
+  # opcut/rectpack/reportlab cutlist paths. All three OSes required.
+  # Windows works now that pycairo is overridden to a version with a
+  # prebuilt wheel (opcut's ==1.18.1 pin has no Windows wheel and failed
+  # to build against a missing cairo.h — see pyproject override-dependencies).
+  full:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: System deps (cairo headers for pycairo's source build)
+        # Linux/macOS build pycairo from sdist and need the cairo C library +
+        # pkg-config; Windows installs a prebuilt wheel, so this no-ops there.
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y libcairo2-dev pkg-config
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            brew install cairo pkg-config
+          fi
+      - name: Install (full)
+        run: uv sync
+      - name: Tests
+        run: uv run pytest tests/ -q
+      - name: Evals
+        run: uv run python -m evals

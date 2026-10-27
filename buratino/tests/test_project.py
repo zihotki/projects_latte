@@ -8,7 +8,9 @@ from buratino.project import InputError, input_identity, load_project
 
 def test_project_source_executes_once_in_fresh_worker(root, tmp_path):
     path = tmp_path / "cabinet"
-    shutil.copytree(root / "projects/simple-cabinet", path)
+    shutil.copytree(
+        root / "projects/simple-cabinet", path, ignore=shutil.ignore_patterns("build")
+    )
     marker = tmp_path / "runs.txt"
     with (path / "project.py").open("a", encoding="utf-8") as source:
         source.write(
@@ -43,7 +45,9 @@ def test_drawer_configs_keep_native_hardware_calculations_in_parent(root):
 
 def test_drawer_config_exports_must_use_native_configs(root, tmp_path):
     path = tmp_path / "cabinet"
-    shutil.copytree(root / "projects/simple-cabinet", path)
+    shutil.copytree(
+        root / "projects/simple-cabinet", path, ignore=shutil.ignore_patterns("build")
+    )
     with (path / "project.py").open("a", encoding="utf-8") as source:
         source.write("\ndrawer_configs = {'cabinet/opening-0': object()}\n")
 
