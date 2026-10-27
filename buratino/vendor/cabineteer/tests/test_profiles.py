@@ -240,3 +240,96 @@ def test_clipped_kinks_keep_back_vertices_and_side_cap_heights():
         (1440, 1186),
         (1071, 1186),
     )
+
+
+def test_profile_height_controls_bounds_and_following_stack_position():
+    from cabineteer.layout import LayoutLeaf, Row, Stack
+    from cabineteer.profiles import resolve_profile_assembly
+
+    frame = Frame("frame.support", 720, 380, 50, 18)
+    layout = Stack(
+        "stack",
+        (
+            LayoutLeaf("lower", 720, 550, 720),
+            frame,
+            Row(
+                "upper",
+                (
+                    LayoutLeaf("upper.left", 360, 420, 100),
+                    LayoutLeaf("upper.right", 360, 420, 100),
+                ),
+            ),
+            LayoutLeaf("next", 720, 420, 10),
+        ),
+    )
+    boxes = (
+        ProfiledBox("upper.left", 0, 360, 420, 18, 18, 6),
+        ProfiledBox("upper.right", 360, 360, 420, 18, 18, 6),
+    )
+    result = resolve_profile_assembly(
+        layout,
+        RoofProfile(((0, 300), (720, 600)), 18),
+        boxes,
+        "roof",
+        ("slope",),
+        frame,
+    )
+    placements = {p.name: p for p in result.layout.placements}
+    assert placements["upper.left"].carcass_bounds_mm.height_mm == 450
+    assert placements["upper.right"].carcass_bounds_mm.height_mm == 600
+    assert placements["next"].origin_mm[2] == 1370
+    assert result.layout.occupied_world_bounds_mm.max_z == 1380
+    assert max(
+        p.solid().val().BoundingBox().zmax for p in result.parts
+    ) == pytest.approx(1370)
+
+
+def test_roof_peak_in_gap_is_counted_once_in_stack_height():
+    from cabineteer.layout import LayoutLeaf, Row, Stack
+    from cabineteer.profiles import resolve_profile_assembly
+
+    frame = Frame("frame", 720, 380, 50, 18)
+    layout = Stack(
+        "stack",
+        (
+            frame,
+            Row(
+                "upper",
+                (LayoutLeaf("left", 360, 420, 1), LayoutLeaf("right", 320, 420, 1)),
+                gap_mm=40,
+            ),
+            LayoutLeaf("next", 720, 420, 10),
+        ),
+    )
+    boxes = (
+        ProfiledBox("left", 0, 360, 420, 18, 18, 6),
+        ProfiledBox("right", 400, 320, 420, 18, 18, 6),
+    )
+    roof = RoofProfile(((0, 300), (360, 400), (380, 600), (400, 400), (720, 300)), 18)
+    result = resolve_profile_assembly(
+        layout, roof, boxes, "roof", ("a", "b", "c", "d"), frame
+    )
+    placements = {p.name: p for p in result.layout.placements}
+    assert placements["left"].carcass_bounds_mm.height_mm == 400
+    assert placements["right"].carcass_bounds_mm.height_mm == 400
+    assert placements["next"].origin_mm[2] == 650
+
+
+def test_short_frame_rail_stock_follows_its_length_axis():
+    parts = frame_parts(Frame("frame", 40, 40, 50, 18))
+    for part in parts[2:]:
+        assert part.stock_mm == (4, 50, 18)
+        vertices = [
+            point
+            for vertex in part.local_profile_mm
+            for point in (
+                vertex,
+                tuple(
+                    x + d for x, d in zip(vertex, part.local_extrusion_mm, strict=True)
+                ),
+            )
+        ]
+        spans = tuple(
+            max(v[i] for v in vertices) - min(v[i] for v in vertices) for i in range(3)
+        )
+        assert spans == pytest.approx(part.stock_mm)

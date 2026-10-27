@@ -10,7 +10,16 @@ import math
 from dataclasses import dataclass, replace
 
 from .inclined import prism
-from .layout import Frame, LayoutNode, ResolvedLayout, resolve_layout
+from .layout import (
+    Bounds3D,
+    Frame,
+    LayoutLeaf,
+    LayoutNode,
+    ResolvedLayout,
+    Row,
+    Stack,
+    resolve_layout,
+)
 
 
 @dataclass(frozen=True)
@@ -293,7 +302,7 @@ def frame_parts(frame: Frame) -> tuple[ProfilePart, ...]:
             (x + rail.width_mm, z + rail.height_mm),
             (x, z + rail.height_mm),
         )
-        length = max(rail.width_mm, rail.depth_mm)
+        length = rail.width_mm if rail.name in ("front", "back") else rail.depth_mm
         parts.append(
             ProfilePart(
                 f"{frame.name}.{rail.name}",
@@ -316,6 +325,55 @@ class ProfileAssembly:
     parts: tuple[ProfilePart | NativeCarcassPart, ...]
 
 
+def _layout_with_profile_heights(
+    node: LayoutNode,
+    heights: dict[str, float],
+    cap_anchor: str,
+    cap_bounds: Bounds3D,
+    active: set[int] | None = None,
+) -> LayoutNode:
+    """Derive profiled leaf heights before resolving stack positions."""
+    if active is None:
+        active = set()
+    key = id(node)
+    if key in active:
+        raise ValueError("layout contains a cycle")
+    if isinstance(node, LayoutLeaf):
+        updates = {}
+        if node.name in heights:
+            updates["height_mm"] = heights[node.name]
+        if node.name == cap_anchor:
+            old = node.occupied_bounds_mm
+            updates["occupied_bounds_mm"] = (
+                cap_bounds
+                if old is None
+                else Bounds3D(
+                    min(old.min_x, cap_bounds.min_x),
+                    min(old.min_y, cap_bounds.min_y),
+                    min(old.min_z, cap_bounds.min_z),
+                    max(old.max_x, cap_bounds.max_x),
+                    max(old.max_y, cap_bounds.max_y),
+                    max(old.max_z, cap_bounds.max_z),
+                )
+            )
+        return replace(node, **updates) if updates else node
+    if isinstance(node, Frame):
+        return node
+    if isinstance(node, Row | Stack):
+        active.add(key)
+        try:
+            children = tuple(
+                _layout_with_profile_heights(
+                    child, heights, cap_anchor, cap_bounds, active
+                )
+                for child in node.children
+            )
+        finally:
+            active.remove(key)
+        return replace(node, children=children)
+    raise TypeError(f"unsupported layout node: {type(node).__name__}")
+
+
 def resolve_profile_assembly(
     layout: LayoutNode,
     roof: RoofProfile,
@@ -326,7 +384,24 @@ def resolve_profile_assembly(
     cap_material: str = "",
 ) -> ProfileAssembly:
     """Place row-owned caps, their boxes and a support frame on a native layout."""
-    resolved = resolve_layout(layout)
+    if not boxes or len({box.name for box in boxes}) != len(boxes):
+        raise ValueError("assembly needs distinct profiled boxes")
+    panels = {box.name: box_parts(box, roof) for box in boxes}
+    heights = {
+        box.name: max(z for _, z in panels[box.name][-1].profile_xz_mm) for box in boxes
+    }
+    anchor = boxes[0]
+    cap_bounds = Bounds3D(
+        roof.points[0][0] - anchor.x_mm,
+        0,
+        0,
+        roof.points[-1][0] - anchor.x_mm,
+        anchor.depth_mm - anchor.back_mm,
+        max(z for _, z in roof.points),
+    )
+    resolved = resolve_layout(
+        _layout_with_profile_heights(layout, heights, anchor.name, cap_bounds)
+    )
     placements = {p.name: p for p in resolved.placements}
     if len(placements) != len(resolved.placements) or not boxes:
         raise ValueError("assembly needs distinct placement names and boxes")
@@ -358,7 +433,7 @@ def resolve_profile_assembly(
         raise ValueError("profiled boxes must share a cap depth")
     origin = row_origins[0]
     for box in boxes:
-        parts.extend(part.placed(origin) for part in box_parts(box, roof))
+        parts.extend(part.placed(origin) for part in panels[box.name])
     parts.extend(
         part.placed(origin)
         for part in roof_parts(
