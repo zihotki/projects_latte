@@ -655,6 +655,35 @@ class ProfileAssemblySpec:
     cap_material: str = ""
     faces: ProfileFaceSpec | None = None
     shared_owner: str | None = None
+    roof_joint: str | None = None
+
+
+def resolved_profile_spec(spec: ProfileAssemblySpec) -> ProfileAssemblySpec:
+    """Place a transition joint on the shared divider's left face.
+
+    A single slope has no transition and is unchanged. The authored kink must
+    be at the section boundary, with a level segment to its right.
+    """
+    if spec.roof_joint is None:
+        return spec
+    if spec.roof_joint != "level_over_divider" or spec.shared_owner is None:
+        raise ValueError("roof joint requires a shared carcass")
+    if len(spec.roof.points) == 2:
+        return spec
+    if len(spec.boxes) != 2 or len(spec.roof.points) != 3:
+        raise ValueError("roof joint requires two sections and one transition")
+    left, right = spec.boxes
+    start, kink, end = spec.roof.points
+    if kink[0] != right.x_mm or kink[1] != end[1]:
+        raise ValueError(
+            "roof joint requires a level right segment at the section boundary"
+        )
+    joint_x = right.x_mm - left.side_mm / 2
+    if not start[0] < joint_x < end[0]:
+        raise ValueError("roof joint must fit the roof")
+    return replace(
+        spec, roof=RoofProfile((start, (joint_x, kink[1]), end), spec.roof.thickness_mm)
+    )
 
 
 def profile_spec_to_dict(spec: ProfileAssemblySpec) -> dict:
@@ -675,6 +704,7 @@ def profile_spec_from_dict(data: dict) -> ProfileAssemblySpec:
         cap_material=data.get("cap_material", ""),
         faces=ProfileFaceSpec(**data["faces"]) if data.get("faces") else None,
         shared_owner=data.get("shared_owner"),
+        roof_joint=data.get("roof_joint"),
     )
 
 

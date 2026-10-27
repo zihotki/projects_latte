@@ -41,7 +41,7 @@ from .layout import LayoutNode, layout_from_dict, layout_to_dict
 from .profiles import (
     ProfileAssembly, ProfileAssemblySpec, assembly_faces, layout_with_face_occupancy, native_carcass_parts,
     profile_spec_from_dict, profile_spec_to_dict, resolve_profile_assembly,
-    ProfilePart, with_profile_operations,
+    ProfilePart, with_profile_operations, resolved_profile_spec,
 )
 
 
@@ -264,7 +264,7 @@ class CabinetProject:
         """Resolve the optional profile assembly alongside legacy configs."""
         if self.layout is None or self.profile_assembly is None:
             raise ValueError("profile assembly and layout are required")
-        spec = self.profile_assembly
+        spec = resolved_profile_spec(self.profile_assembly)
         configs = dict(self.resolved())
         layout = layout_with_face_occupancy(self.layout, spec, configs[spec.lower])
         result = resolve_profile_assembly(layout, spec.roof, spec.boxes,

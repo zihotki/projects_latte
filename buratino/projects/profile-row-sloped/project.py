@@ -66,6 +66,7 @@ profile = ProfileAssemblySpec(
     "18 mm plywood",
     ProfileFaceSpec(drawer, 30, material="18 mm plywood"),
     shared_owner="upper",
+    roof_joint="level_over_divider",
 )
 project = CabinetProject(
     "profile-row-sloped",

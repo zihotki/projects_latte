@@ -203,10 +203,13 @@ def test_rendered_bounded_kink(tmp_path):
 
 @pytest.mark.parametrize("name", ["profile-row-sloped", "profile-row-transition"])
 def test_shared_upper_geometry_and_roundtrip(name):
+    from dataclasses import replace
+
     from cabineteer.profiles import (
         evaluate_assembly,
         profile_spec_from_dict,
         profile_spec_to_dict,
+        resolved_profile_spec,
     )
 
     root = Path(__file__).resolve().parents[3]
@@ -215,15 +218,14 @@ def test_shared_upper_geometry_and_roundtrip(name):
     assert profile_spec_from_dict(profile_spec_to_dict(spec)) == spec
     legacy = profile_spec_to_dict(spec)
     del legacy["shared_owner"]
+    del legacy["roof_joint"]
     assert profile_spec_from_dict(legacy).shared_owner is None
+    assert profile_spec_from_dict(legacy).roof_joint is None
+    assert resolved_profile_spec(replace(spec, roof_joint=None)).roof == spec.roof
     assembly = project.resolved_assembly()
     upper = [p for p in assembly.parts if p.owner == "upper"]
     divider = next(p for p in upper if p.id == "upper.divider")
-    assert (
-        {x for x, _ in divider.profile_xz_mm} == {351, 360, 369}
-        if name.endswith("transition")
-        else {x for x, _ in divider.profile_xz_mm} == {351, 369}
-    )
+    assert {x for x, _ in divider.profile_xz_mm} == {351, 369}
     assert sorted(p.stock_mm[0] for p in upper if p.component == "bottom") == [333, 333]
     sides = [p for p in upper if p.component in ("side_left", "side_right", "divider")]
     assert len(sides) == 3
@@ -248,11 +250,30 @@ def test_shared_upper_geometry_and_roundtrip(name):
     ]
     assert all(p.owner == "upper" for p in doors)
     if name.endswith("transition"):
-        assert divider.operations[0].kind == "profile_trim"
-        assert len(divider.operations[0].local_profile_mm) == 4
+        assert divider.profile_xz_mm == ((351, 0), (369, 0), (369, 582), (351, 582))
+        assert divider.stock_mm == (582, 414, 18)
+        assert divider.operations == ()
+        slope, level = caps
+        assert slope.profile_xz_mm[1] == (351, 600)
+        assert level.profile_xz_mm[:2] == ((351, 600), (720, 600))
+        assert level.stock_mm == (369, 414, 18)
+        assert slope.stock_mm[0] == pytest.approx(
+            (351**2 + 300**2) ** 0.5 + 18 * 300 / 351
+        )
+        assert slope.solid().val().distance(level.solid().val()) < 0.01
+        assert slope.solid().intersect(level.solid()).val().Volume() < 0.01
+        # The offset lines meet inside the left door, beyond the cap joint.
+        assert len(doors[0].profile_xz_mm) == 5
+        kink = doors[0].profile_xz_mm[3]
+        slope_value = 300 / 351
+        expected_x = 351 + 2 * (slope_value / (1 + slope_value**2) ** 0.5) / (
+            1 + (1 + slope_value**2) ** -0.5
+        )
+        assert kink[0] == pytest.approx(expected_x)
+        assert kink[1] == pytest.approx(598)
 
 
-def test_shared_transition_without_faces_exports_stepped_divider():
+def test_shared_transition_without_faces_exports_flat_divider():
     from dataclasses import replace
 
     from cabineteer.profiles import assembly_records, evaluate_assembly
@@ -269,8 +290,7 @@ def test_shared_transition_without_faces_exports_stepped_divider():
     record = next(
         p for p in assembly_records(assembly)["parts"] if p["id"] == divider.id
     )
-    assert len(divider.profile_xz_mm) == 6
-    assert record["operations"][0]["kind"] == "profile_trim"
-    assert len(record["operations"][0]["local_profile_mm"]) == 4
+    assert divider.profile_xz_mm == ((351, 0), (369, 0), (369, 582), (351, 582))
+    assert record["operations"] == []
     assert record["stock_mm"]["thickness"] == 18
     assert evaluate_assembly(assembly) == []
