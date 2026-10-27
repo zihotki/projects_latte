@@ -333,3 +333,39 @@ def test_short_frame_rail_stock_follows_its_length_axis():
             max(v[i] for v in vertices) - min(v[i] for v in vertices) for i in range(3)
         )
         assert spans == pytest.approx(part.stock_mm)
+
+
+def test_roof_dip_in_gap_is_included_in_stack_bounds():
+    from cabineteer.layout import LayoutLeaf, Row, Stack
+    from cabineteer.profiles import resolve_profile_assembly
+
+    frame = Frame("frame", 720, 380, 50, 18)
+    layout = Stack(
+        "stack",
+        (
+            frame,
+            Row(
+                "upper",
+                (LayoutLeaf("left", 360, 420, 1), LayoutLeaf("right", 320, 420, 1)),
+                gap_mm=40,
+            ),
+            LayoutLeaf("next", 720, 420, 10),
+        ),
+    )
+    boxes = (
+        ProfiledBox("left", 0, 360, 420, 18, 18, 6),
+        ProfiledBox("right", 400, 320, 420, 18, 18, 6),
+    )
+    roof = RoofProfile(((0, 300), (360, 300), (380, -30), (400, 300), (720, 300)), 18)
+    result = resolve_profile_assembly(
+        layout, roof, boxes, "roof", ("a", "b", "c", "d"), frame
+    )
+    placements = {p.name: p for p in result.layout.placements}
+    minimum = -30 - 18 * math.hypot(1, 330 / 20)
+    origin_z = 50 - minimum
+    assert placements["left"].occupied_world_bounds_mm.min_z == pytest.approx(50)
+    assert placements["left"].origin_mm[2] == pytest.approx(origin_z)
+    assert placements["next"].origin_mm[2] == pytest.approx(origin_z + 300)
+    caps = [p for p in result.parts if p.owner == "roof"]
+    assert min(p.solid().val().BoundingBox().zmin for p in caps) == pytest.approx(50)
+    assert result.layout.occupied_world_bounds_mm.max_z == pytest.approx(origin_z + 310)

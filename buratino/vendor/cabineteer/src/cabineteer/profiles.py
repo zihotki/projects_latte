@@ -391,13 +391,16 @@ def resolve_profile_assembly(
         box.name: max(z for _, z in panels[box.name][-1].profile_xz_mm) for box in boxes
     }
     anchor = boxes[0]
+    caps = roof_parts(
+        roof, anchor.depth_mm - anchor.back_mm, cap_owner, cap_names, cap_material
+    )
     cap_bounds = Bounds3D(
         roof.points[0][0] - anchor.x_mm,
         0,
-        0,
+        min(0, *(z for cap in caps for _, z in cap.profile_xz_mm)),
         roof.points[-1][0] - anchor.x_mm,
         anchor.depth_mm - anchor.back_mm,
-        max(z for _, z in roof.points),
+        max(0, *(z for cap in caps for _, z in cap.profile_xz_mm)),
     )
     resolved = resolve_layout(
         _layout_with_profile_heights(layout, heights, anchor.name, cap_bounds)
@@ -434,16 +437,7 @@ def resolve_profile_assembly(
     origin = row_origins[0]
     for box in boxes:
         parts.extend(part.placed(origin) for part in panels[box.name])
-    parts.extend(
-        part.placed(origin)
-        for part in roof_parts(
-            roof,
-            boxes[0].depth_mm - boxes[0].back_mm,
-            cap_owner,
-            cap_names,
-            cap_material,
-        )
-    )
+    parts.extend(part.placed(origin) for part in caps)
     parts.extend(
         part.placed(placements[frame.name].origin_mm) for part in frame_parts(frame)
     )
