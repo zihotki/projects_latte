@@ -20,6 +20,8 @@ const dimensionText = dims => `${number(dims.length)} × ${number(dims.width)} �
 
 let result;
 let selectedGroup = null;
+let selectedPartIds = new Set();
+let selectedLabel = null;
 let grainVisible = true;
 let viewer;
 let roleNodes = new Map();
@@ -50,12 +52,15 @@ function currentGroup() {
 
 function selectGroup(group) {
   selectedGroup = group?.id ?? null;
+  selectedPartIds = new Set(group?.members ?? []);
+  selectedLabel = group?.label ?? null;
   if (group) document.getElementById('parts-tab')?.click();
   for (const row of ui.table.querySelectorAll('tr')) {
     const active = row.dataset.groupId === selectedGroup;
     row.classList.toggle('selected', active);
-    row.querySelector('.group-select')?.setAttribute('aria-pressed', String(active));
+    row.setAttribute('aria-selected', String(active));
   }
+  updateTreeSelectionState();
   applyModelSelection();
   const selected = currentGroup();
   const memberProfiles = selected?.member_details
@@ -63,7 +68,34 @@ function selectGroup(group) {
     .filter(Boolean);
   ui.caption.textContent = selected
     ? `${selected.label} · ${selected.quantity} ${selected.quantity === 1 ? 'panel' : 'panels'} · ${selected.material} · ${selected.edge_treatment ?? 'Edge treatment unverified'}${selected.grain_status === 'confirmed' ? '' : ' · Grain direction unverified'} · Blank dimensions only; profile is not a machining instruction${memberProfiles?.length ? ` · Members: ${[...new Set(memberProfiles)].join('; ')}` : ''}`
-    : 'Select a part name or a panel to inspect its cutting blank.';
+    : selectedLabel ? `${selectedLabel} selected.` : 'Select a part or row.';
+}
+
+function selectTreeParts(parts, label) {
+  selectedPartIds = new Set(parts.map(part => part.id));
+  selectedLabel = label;
+  selectedGroup = parts.length === 1 ? groupByPartId.get(parts[0].id)?.id ?? null : null;
+  for (const row of ui.table.querySelectorAll('tr')) {
+    const active = row.dataset.groupId === selectedGroup;
+    row.classList.toggle('selected', active);
+    row.setAttribute('aria-selected', String(active));
+  }
+  updateTreeSelectionState();
+  applyModelSelection();
+  ui.caption.textContent = `${label} selected.`;
+}
+
+function updateTreeSelectionState() {
+  for (const row of document.querySelectorAll('.tree-owner')) {
+    const children = row.nextElementSibling;
+    const ids = [...children.querySelectorAll('[data-part-id]')].map(item => item.dataset.partId);
+    const selected = ids.length > 0 && ids.every(id => selectedPartIds.has(id));
+    row.querySelector('.tree-label').setAttribute('aria-pressed', String(selected));
+  }
+  for (const row of document.querySelectorAll('.tree-part')) {
+    const id = row.dataset.partId;
+    row.querySelector('.tree-label').setAttribute('aria-pressed', String(selectedPartIds.has(id)));
+  }
 }
 
 function profileLabel(profile) {
@@ -99,6 +131,8 @@ function renderTable() {
   result.cutting_groups.forEach(group => {
     const row = document.createElement('tr');
     row.dataset.groupId = group.id;
+    row.tabIndex = 0;
+    row.setAttribute('aria-selected', 'false');
     const details = group.member_details ?? [];
     const profileLabels = details
       .filter(member => member.profile)
@@ -107,12 +141,9 @@ function renderTable() {
     const dims = group.blank_mm ?? group.finished_mm;
     const nameCell = document.createElement('td');
     nameCell.className = 'part-name';
-    const select = document.createElement('button');
-    select.type = 'button';
+    const select = document.createElement('span');
     select.className = 'group-select';
     select.textContent = group.label;
-    select.setAttribute('aria-pressed', 'false');
-    select.addEventListener('click', () => selectGroup(group));
     nameCell.appendChild(select);
     const toggle = document.createElement('button');
     toggle.type = 'button';
@@ -122,6 +153,7 @@ function renderTable() {
       const visible = cuttingGroupVisibility.get(group.id) === false;
       cuttingGroupVisibility.set(group.id, visible);
       updateGroupVisibilityButton(group, toggle);
+      syncVisibilityControls();
       applyPartVisibility();
     });
     updateGroupVisibilityButton(group, toggle);
@@ -130,6 +162,11 @@ function renderTable() {
     addCell(row, String(group.quantity), 'numeric');
     addCell(row, `${number(dims.length)} × ${number(dims.width)} × ${number(dims.thickness)}`);
     row.addEventListener('click', () => selectGroup(group));
+    row.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      selectGroup(group);
+    });
     ui.table.appendChild(row);
   });
   selectGroup(null);
@@ -137,15 +174,21 @@ function renderTable() {
 
 function updateGroupVisibilityButton(group, button) {
   const visible = cuttingGroupVisibility.get(group.id) !== false;
-  button.textContent = visible ? '−' : '+';
-  button.setAttribute('aria-label', `${visible ? 'Hide' : 'Show'} ${group.label} in model; quantity ${group.quantity}`);
-  button.title = `${visible ? 'Hide' : 'Show'} all ${group.quantity} ${group.quantity === 1 ? 'panel' : 'panels'} in the model`;
+  updateEyeButton(button, visible, false, `${group.label}, ${group.quantity} ${group.quantity === 1 ? 'part' : 'parts'}`);
 }
 
 function humanizeProjectName(name) {
   return String(name || 'Bare cabinet')
     .replace(/[-_]+/g, ' ')
     .replace(/\b\w/g, letter => letter.toUpperCase());
+}
+
+function friendlyPartLabel(part) {
+  const label = String(part.label ?? '').trim();
+  const component = String(part.component ?? '').trim();
+  const codeLike = !label || label === component || label === part.id ||
+    /^[\w.-]+$/.test(label) && /[_.-]/.test(label);
+  return humanizeProjectName(codeLike ? component || part.id : label);
 }
 
 function nodeMatchesRole(name, role) {
@@ -203,115 +246,205 @@ function renderVisibilityControls() {
   const parts = result.parts;
   ui.visibility.replaceChildren();
   visibilityControls = new Map();
-  const cabinets = result.cabinets?.length
-    ? result.cabinets.map(cabinet => ({id: cabinet.id ?? cabinet.name, label: cabinet.name ?? cabinet.id}))
+  const owners = result.cabinets?.length
+    ? result.cabinets.map(owner => ({id: owner.id ?? owner.name, label: owner.name ?? owner.id}))
     : [...new Set(parts.map(part => part.cabinet_id ?? 'cabinet'))]
-      .map(id => ({id, label: humanizeProjectName(id)}));
+      .map(id => ({id, label: id}));
+  const knownOwners = new Set(owners.map(owner => owner.id));
+  for (const part of parts) {
+    const id = part.cabinet_id ?? 'cabinet';
+    if (!knownOwners.has(id)) {
+      owners.push({id, label: id});
+      knownOwners.add(id);
+    }
+  }
+  const ownerOrder = ['lower', 'upper.left', 'upper.right', 'roof', 'frame.support'];
+  owners.sort((left, right) => {
+    const leftIndex = ownerOrder.indexOf(String(left.id).toLowerCase().replaceAll('_', '.'));
+    const rightIndex = ownerOrder.indexOf(String(right.id).toLowerCase().replaceAll('_', '.'));
+    return (leftIndex < 0 ? ownerOrder.length : leftIndex) -
+      (rightIndex < 0 ? ownerOrder.length : rightIndex) || ownerLabel(left).localeCompare(ownerLabel(right));
+  });
+  const partsByOwner = new Map(owners.map(owner => [owner.id, []]));
+  for (const part of parts) {
+    const ownerId = part.cabinet_id ?? 'cabinet';
+    if (!partsByOwner.has(ownerId)) partsByOwner.set(ownerId, []);
+    partsByOwner.get(ownerId).push(part);
+    visibilityControls.set(`part:${part.id}`, true);
+  }
 
-  function addToggle(container, key, labelText, accessibleName = labelText) {
-    const label = document.createElement('label');
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.setAttribute('aria-label', accessibleName);
-    input.checked = true;
-    input.dataset.visibilityGroup = key;
-    input.addEventListener('change', () => {
-      visibilityControls.set(key, input.checked);
+  function ownerLabel(owner) {
+    const key = String(owner.id).toLowerCase().replaceAll('_', '.');
+    const known = {
+      lower: 'Lower',
+      'upper.left': 'Upper left',
+      'upper.right': 'Upper right',
+      roof: 'Roof',
+      'frame.support': 'Support frame',
+    };
+    return known[key] ?? humanizeProjectName(owner.label);
+  }
+
+  for (const owner of owners) {
+    const ownerParts = partsByOwner.get(owner.id) ?? [];
+    const row = document.createElement('div');
+    row.className = 'tree-row tree-owner';
+    row.setAttribute('role', 'treeitem');
+    row.setAttribute('aria-expanded', 'false');
+    const disclosure = document.createElement('button');
+    disclosure.type = 'button';
+    disclosure.className = 'tree-disclosure';
+    disclosure.setAttribute('aria-label', `Expand ${ownerLabel(owner)}`);
+    disclosure.textContent = '›';
+    const label = document.createElement('button');
+    label.type = 'button';
+    label.className = 'tree-label';
+    label.textContent = ownerLabel(owner);
+    label.dataset.selectionKey = `owner:${owner.id}`;
+    label.setAttribute('aria-pressed', 'false');
+    label.addEventListener('click', () => selectTreeParts(ownerParts, label.textContent));
+    disclosure.addEventListener('click', () => {
+      const expanded = row.getAttribute('aria-expanded') !== 'true';
+      row.setAttribute('aria-expanded', String(expanded));
+      disclosure.setAttribute('aria-label', `${expanded ? 'Collapse' : 'Expand'} ${ownerLabel(owner)}`);
+      disclosure.textContent = expanded ? '⌄' : '›';
+      children.hidden = !expanded;
+    });
+    const eye = makeEyeButton(`Hide ${ownerLabel(owner)}`, true, false);
+    eye.addEventListener('click', () => {
+      const allVisible = ownerParts.every(isPartVisible);
+      const nextVisible = !allVisible;
+      for (const part of ownerParts) visibilityControls.set(`part:${part.id}`, nextVisible);
+      if (nextVisible) {
+        for (const part of ownerParts) {
+          const group = groupByPartId.get(part.id);
+          if (group) cuttingGroupVisibility.set(group.id, true);
+        }
+      }
+      syncGroupVisibilityButtons();
+      syncVisibilityControls();
       applyPartVisibility();
     });
-    label.append(input, document.createTextNode(labelText));
-    container.appendChild(label);
-    visibilityControls.set(key, true);
-  }
+    row.append(disclosure, label, eye);
+    ui.visibility.appendChild(row);
 
-  if (result.frames?.length) {
-    const section = document.createElement('fieldset');
-    section.className = 'visibility-cabinet visibility-frames';
-    const heading = document.createElement('legend');
-    heading.textContent = 'Frames';
-    section.appendChild(heading);
-    for (const frame of result.frames) {
-      addToggle(section, `frame:${frame.id}`, `${frame.id} frame`);
-    }
-    ui.visibility.appendChild(section);
-  }
-
-  const upperGroups = [...new Set(parts.map(part => part.upper_id).filter(Boolean))];
-  if (upperGroups.length) {
-    const section = document.createElement('fieldset');
-    section.className = 'visibility-cabinet visibility-frames';
-    const heading = document.createElement('legend');
-    heading.textContent = 'Upper panels';
-    section.appendChild(heading);
-    const labels = {left: 'Left upper', right: 'Right upper', shared: 'Shared top'};
-    for (const upperId of ['left', 'right', 'shared']) {
-      if (upperGroups.includes(upperId)) {
-        addToggle(section, `upper:${upperId}`, labels[upperId] ?? humanizeProjectName(upperId));
-      }
-    }
-    for (const upperId of upperGroups.filter(id => !['left', 'right', 'shared'].includes(id))) {
-      addToggle(section, `upper:${upperId}`, humanizeProjectName(upperId));
-    }
-    ui.visibility.appendChild(section);
-  }
-
-  for (const cabinet of cabinets) {
-    const partsForCabinet = parts.filter(part => (part.cabinet_id ?? 'cabinet') === cabinet.id);
-    const section = document.createElement('fieldset');
-    section.className = 'visibility-cabinet';
-    const heading = document.createElement('legend');
-    heading.textContent = cabinet.label;
-    section.appendChild(heading);
-    const cabinetLabel = humanizeProjectName(cabinet.label);
-    addToggle(section, `cabinet:${cabinet.id}`, cabinetLabel);
     const children = document.createElement('div');
-    children.className = 'visibility-children';
-    addToggle(children, `carcass:${cabinet.id}`, 'Carcass');
-
-    const instances = [...new Set(partsForCabinet
-      .map(part => part.instance_id)
-      .filter(Boolean))].sort();
-    for (const instanceId of instances) {
-      const drawer = result.drawers?.find(item => item.instance_id === instanceId);
-      const drawerNumber = drawer?.drawer_index ?? instanceId;
-      addToggle(children, `drawer:${instanceId}`, `D${drawerNumber}`, `Drawer ${drawerNumber}`);
+    children.className = 'tree-children';
+    children.setAttribute('role', 'group');
+    children.hidden = true;
+    const labelCounts = new Map();
+    for (const part of ownerParts) {
+      const baseLabel = friendlyPartLabel(part);
+      labelCounts.set(baseLabel, (labelCounts.get(baseLabel) ?? 0) + 1);
     }
-    if (partsForCabinet.some(part => ['face', 'door', 'drawer_front'].includes(part.component))) {
-      addToggle(children, `fronts:${cabinet.id}`, 'Fronts');
+    const seenLabels = new Map();
+    for (const part of ownerParts) {
+      const baseLabel = friendlyPartLabel(part);
+      const ordinal = (seenLabels.get(baseLabel) ?? 0) + 1;
+      seenLabels.set(baseLabel, ordinal);
+      const partLabel = labelCounts.get(baseLabel) > 1 ? `${baseLabel} ${ordinal}` : baseLabel;
+      const childRow = document.createElement('div');
+      childRow.className = 'tree-row tree-part';
+      childRow.dataset.partId = part.id;
+      childRow.setAttribute('role', 'treeitem');
+      const spacer = document.createElement('span');
+      spacer.className = 'tree-spacer';
+      const partButton = document.createElement('button');
+      partButton.type = 'button';
+      partButton.className = 'tree-label';
+      partButton.textContent = partLabel;
+      partButton.dataset.selectionKey = `part:${part.id}`;
+      partButton.setAttribute('aria-pressed', 'false');
+      partButton.addEventListener('click', () => selectTreeParts([part], partLabel));
+      const partEye = makeEyeButton(`Hide ${partLabel}`, true, false);
+      partEye.addEventListener('click', () => {
+        const key = `part:${part.id}`;
+        const nextVisible = !isPartVisible(part);
+        visibilityControls.set(key, nextVisible);
+        const group = groupByPartId.get(part.id);
+        if (nextVisible && group) cuttingGroupVisibility.set(group.id, true);
+        syncGroupVisibilityButtons();
+        syncVisibilityControls();
+        applyPartVisibility();
+      });
+      childRow.append(spacer, partButton, partEye);
+      children.appendChild(childRow);
     }
-    const individual = document.createElement('details');
-    individual.className = 'part-visibility';
-    const summary = document.createElement('summary');
-    summary.textContent = 'Individual parts';
-    individual.appendChild(summary);
-    for (const part of partsForCabinet) {
-      addToggle(individual, `part:${part.id}`, part.label ?? part.component ?? part.id);
-    }
-    children.appendChild(individual);
-    section.appendChild(children);
-    ui.visibility.appendChild(section);
+    ui.visibility.appendChild(children);
   }
+  document.getElementById('group-count').textContent = `${parts.length} parts`;
+  syncVisibilityControls();
+}
+
+function makeEyeButton(label, visible, mixed) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tree-eye';
+  button.setAttribute('aria-label', label);
+  updateEyeButton(button, visible, mixed, label);
+  return button;
+}
+
+function updateEyeButton(button, visible, mixed, label) {
+  const eye = '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/>';
+  const slash = '<path d="m4 4 16 16"/>';
+  button.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${eye}${visible && !mixed ? '' : slash}</svg>`;
+  button.setAttribute('aria-pressed', mixed ? 'mixed' : String(visible));
+  button.classList.toggle('mixed', mixed);
+  button.classList.toggle('hidden-part', !visible && !mixed);
+  button.title = mixed ? `Some ${label.replace(/^Hide /, '')} parts are hidden. Show all.` : `${visible ? 'Hide' : 'Show'} ${label.replace(/^Hide /, '')}`;
+  button.setAttribute('aria-label', mixed
+    ? `Some ${label.replace(/^Hide /, '')} parts hidden; show all`
+    : `${visible ? 'Hide' : 'Show'} ${label.replace(/^Hide /, '')}`);
+}
+
+function syncVisibilityControls() {
+  for (const row of document.querySelectorAll('.tree-owner')) {
+    const children = row.nextElementSibling;
+    const inputs = [...children.querySelectorAll('[data-part-id]')];
+    const states = inputs.map(item => {
+      const part = result.parts.find(candidate => candidate.id === item.dataset.partId);
+      return part ? isPartVisible(part) : false;
+    });
+    const allVisible = states.every(Boolean);
+    const allHidden = states.every(state => !state);
+    updateEyeButton(row.querySelector('.tree-eye'), allVisible, !allVisible && !allHidden, `Hide ${row.querySelector('.tree-label').textContent}`);
+    for (const item of inputs) {
+      const part = result.parts.find(candidate => candidate.id === item.dataset.partId);
+      const visible = part ? isPartVisible(part) : false;
+      item.classList.toggle('hidden-part', !visible);
+    }
+  }
+  for (const part of result.parts) {
+    const row = [...document.querySelectorAll('.tree-part')]
+      .find(item => item.querySelector('.tree-label')?.dataset.selectionKey === `part:${part.id}`);
+    if (!row) continue;
+    const visible = isPartVisible(part);
+    const label = row.querySelector('.tree-label').textContent;
+    updateEyeButton(row.querySelector('.tree-eye'), visible, false, `Hide ${label}`);
+    row.classList.toggle('hidden-part', !visible);
+  }
+}
+
+function isPartVisible(part) {
+  const group = groupByPartId.get(part.id);
+  return visibilityControls.get(`part:${part.id}`) !== false &&
+    (!group || cuttingGroupVisibility.get(group.id) !== false);
+}
+
+function syncGroupVisibilityButtons() {
+  document.querySelectorAll('.group-visibility-toggle').forEach((button, index) => {
+    updateGroupVisibilityButton(result.cutting_groups[index], button);
+  });
 }
 
 function applyPartVisibility() {
   for (const part of result.parts) {
     const root = partRoots.get(part.role);
-    const cabinetId = part.cabinet_id ?? 'cabinet';
-    const instanceId = part.instance_id;
-    const cabinetVisible = part.upper_id
-      ? visibilityControls.get(`upper:${part.upper_id}`) !== false
-      : part.frame_id
-        ? visibilityControls.get(`frame:${part.frame_id}`) !== false
-        : visibilityControls.get(`cabinet:${cabinetId}`) !== false;
-    const subgroupVisible = part.upper_id || part.frame_id || (instanceId
-      ? visibilityControls.get(`drawer:${instanceId}`) !== false
-      : visibilityControls.get(`carcass:${cabinetId}`) !== false);
-    const frontVisible = !['face', 'door', 'drawer_front'].includes(part.component) ||
-      visibilityControls.get(`fronts:${cabinetId}`) !== false;
     const group = groupByPartId.get(part.id);
     const groupVisible = !group || cuttingGroupVisibility.get(group.id) !== false;
-    const visible = cabinetVisible && subgroupVisible && frontVisible && groupVisible;
     const partVisible = visibilityControls.get(`part:${part.id}`) !== false;
+    const visible = partVisible && groupVisible;
     if (root) root.visible = visible && partVisible;
     for (const line of outlines.get(part.role) ?? []) line.visible = visible && partVisible;
     const mark = grainMarks.get(part.role);
@@ -679,9 +812,8 @@ function createGrainMark(role, meshes) {
 }
 
 function applyModelSelection() {
-  const active = currentGroup();
   const memberRoles = new Set(result.parts
-    .filter(part => active?.members.includes(part.id))
+    .filter(part => selectedPartIds.has(part.id))
     .map(part => part.role));
   for (const [role, meshes] of roleNodes) {
     const selected = memberRoles.has(role);
@@ -980,6 +1112,7 @@ async function start() {
       const part = result.parts.find(item => item.role === role);
       const group = result.cutting_groups.find(item => item.members.includes(part?.id));
       if (group) selectGroup(group);
+      else if (part) selectTreeParts([part], friendlyPartLabel(part));
       return;
     }
   });
@@ -1007,32 +1140,22 @@ document.getElementById('sheet-toggle')?.addEventListener('click', event => {
 });
 document.getElementById('show-all')?.addEventListener('click', () => {
   for (const key of visibilityControls.keys()) visibilityControls.set(key, true);
-  document.querySelectorAll('#visibility-options input').forEach(input => { input.checked = true; });
   for (const group of result.cutting_groups) cuttingGroupVisibility.set(group.id, true);
-  document.querySelectorAll('.group-visibility-toggle').forEach((button, index) => {
-    updateGroupVisibilityButton(result.cutting_groups[index], button);
-  });
+  syncGroupVisibilityButtons();
+  syncVisibilityControls();
   applyPartVisibility();
 });
 document.getElementById('isolate-selection')?.addEventListener('click', () => {
-  const group = currentGroup();
-  if (!group) return;
-  for (const key of visibilityControls.keys()) visibilityControls.set(key, true);
-  document.querySelectorAll('#visibility-options input').forEach(input => { input.checked = true; });
-  for (const part of result.parts) visibilityControls.set(`part:${part.id}`, group.members.includes(part.id));
-  document.querySelectorAll('#visibility-options input').forEach(input => {
-    if (input.dataset.visibilityGroup?.startsWith('part:')) {
-      input.checked = visibilityControls.get(input.dataset.visibilityGroup) !== false;
-    }
-  });
-  for (const item of result.cutting_groups) cuttingGroupVisibility.set(item.id, item.id === group.id);
-  document.querySelectorAll('.group-visibility-toggle').forEach((button, index) => {
-    updateGroupVisibilityButton(result.cutting_groups[index], button);
-  });
+  if (!selectedPartIds.size) return;
+  for (const part of result.parts) visibilityControls.set(`part:${part.id}`, selectedPartIds.has(part.id));
+  for (const item of result.cutting_groups) {
+    cuttingGroupVisibility.set(item.id, item.members.some(id => selectedPartIds.has(id)));
+  }
+  syncGroupVisibilityButtons();
+  syncVisibilityControls();
   applyPartVisibility();
 });
 document.getElementById('reset-selection')?.addEventListener('click', () => {
-  document.getElementById('show-all')?.click();
   selectGroup(null);
 });
 ui.drawerPose?.addEventListener('click', () => {

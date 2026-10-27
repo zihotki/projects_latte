@@ -96,6 +96,20 @@ class TestBuildHtml:
         assert "PropertyBinding?.sanitizeNodeName" in html
         assert "EdgesGeometry" in html
 
+    def test_model_visibility_uses_owner_part_tree_and_eye_actions(self):
+        html = _build_html("Test", "ZmFrZQ==", {}, viewer_data={"parts": []})
+        assert 'id="model-hint"' in html
+        assert 'role="tree"' in html
+        assert "function selectTreeParts" in html
+        assert "function makeEyeButton" in html
+        assert "function isPartVisible" in html
+        assert "function friendlyPartLabel" in html
+        assert "const select = document.createElement('span')" in html
+        assert "select.type = 'button'" not in html
+        assert "input.type = 'checkbox'" not in html
+        assert "Individual parts" not in html
+        assert "Clear selection" in html
+
 
 class TestDrawerOpenCycle:
     """O cycles closed → partial (gradient) → fully open → closed."""
