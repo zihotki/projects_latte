@@ -38,6 +38,10 @@ from .joinery import (
     DowelSpec,
 )
 from .layout import LayoutNode, layout_from_dict, layout_to_dict
+from .profiles import (
+    ProfileAssembly, ProfileAssemblySpec, native_carcass_parts,
+    profile_spec_from_dict, profile_spec_to_dict, resolve_profile_assembly,
+)
 
 
 # Fields on SharedDesign that map 1:1 to a CabinetConfig attribute.
@@ -241,6 +245,7 @@ class CabinetProject:
     worktop: Optional[WorktopSpec] = None
     # Optional native layout used by composite projects.
     layout: Optional[LayoutNode] = None
+    profile_assembly: Optional[ProfileAssemblySpec] = None
 
     def resolved(self) -> tuple[tuple[str, CabinetConfig], ...]:
         """Return ``((name, merged_config), ...)`` with shared tokens applied."""
@@ -248,6 +253,20 @@ class CabinetProject:
             (pc.name, _merge(pc.config, self.shared, pc.overrides))
             for pc in self.cabinets
         )
+
+
+    def resolved_assembly(self) -> ProfileAssembly:
+        """Resolve the optional profile assembly alongside legacy configs."""
+        if self.layout is None or self.profile_assembly is None:
+            raise ValueError("profile assembly and layout are required")
+        spec = self.profile_assembly
+        result = resolve_profile_assembly(self.layout, spec.roof, spec.boxes,
+                                          spec.cap_owner, spec.cap_names, spec.frame,
+                                          spec.cap_material)
+        configs = dict(self.resolved())
+        placements = {p.name: p for p in result.layout.placements}
+        lower = native_carcass_parts(spec.lower, configs[spec.lower], placements[spec.lower])
+        return ProfileAssembly(result.layout, lower + result.parts)
 
 
 def _merge(
@@ -1041,6 +1060,8 @@ def project_to_dict(project: CabinetProject) -> dict:
         out["worktop"] = _worktop_to_dict(project.worktop)
     if project.layout is not None:
         out["layout"] = layout_to_dict(project.layout)
+    if project.profile_assembly is not None:
+        out["profile_assembly"] = profile_spec_to_dict(project.profile_assembly)
     return out
 
 
@@ -1067,6 +1088,8 @@ def project_from_dict(d: dict) -> CabinetProject:
         forked_at=str(at_raw) if at_raw is not None else None,
         worktop=worktop_from_dict(d.get("worktop")),
         layout=layout_from_dict(d["layout"]) if d.get("layout") is not None else None,
+        profile_assembly=(profile_spec_from_dict(d["profile_assembly"])
+                          if d.get("profile_assembly") is not None else None),
     )
 
 
@@ -1163,6 +1186,8 @@ def build_project(payload: dict) -> CabinetProject:
         forked_at=str(at_raw) if at_raw is not None else None,
         worktop=worktop_from_dict(payload.get("worktop")),
         layout=layout_from_dict(payload["layout"]) if payload.get("layout") is not None else None,
+        profile_assembly=(profile_spec_from_dict(payload["profile_assembly"])
+                          if payload.get("profile_assembly") is not None else None),
     )
 
 
