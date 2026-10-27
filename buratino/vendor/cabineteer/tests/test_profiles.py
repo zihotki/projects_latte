@@ -369,3 +369,273 @@ def test_roof_dip_in_gap_is_included_in_stack_bounds():
     caps = [p for p in result.parts if p.owner == "roof"]
     assert min(p.solid().val().BoundingBox().zmin for p in caps) == pytest.approx(50)
     assert result.layout.occupied_world_bounds_mm.max_z == pytest.approx(origin_z + 310)
+
+
+def test_face_offsets_intersect_at_shifted_kink():
+    from cabineteer.profiles import profile_face
+
+    roof = RoofProfile(((0, 300), (360, 600), (720, 600)), 18)
+    face = profile_face(
+        roof,
+        name="fixture.face.applied_faceboard",
+        owner="fixture.face",
+        face_type="applied_faceboard",
+        x0=2,
+        x1=718,
+        bottom=2,
+        thickness=18,
+        outer_reveal=2,
+        depth_offset=2,
+    )
+    expected = (
+        (2, 2),
+        (718, 2),
+        (718, 598),
+        (360 + (2 * math.sqrt(61) - 12) / 5, 598),
+        (2, 300 + 5 * 2 / 6 - math.sqrt(61) / 3),
+    )
+    for actual, target in zip(face.profile_xz_mm, expected, strict=True):
+        assert actual == pytest.approx(target)
+    assert face.y_mm == -20
+    assert face.extrusion_mm == 18
+
+
+def test_independent_face_gaps_and_snapshot():
+    from cabineteer.cabinet import CabinetConfig, OpeningConfig, face_layout
+    from cabineteer.project import (
+        CabinetProject,
+        ProjectCabinet,
+        project_from_dict,
+        project_to_dict,
+    )
+
+    for door_gap, drawer_gap in ((3, 2), (2, 3)):
+        cfg = CabinetConfig(
+            height=836,
+            face_gap_mm=4,
+            door_gap_mm=door_gap,
+            drawer_front_gap_mm=drawer_gap,
+            openings=[
+                OpeningConfig(200, "drawer"),
+                OpeningConfig(200, "drawer"),
+                OpeningConfig(200, "door"),
+                OpeningConfig(200, "door"),
+            ],
+        )
+        project = CabinetProject("gaps", (ProjectCabinet("cabinet", cfg),))
+        restored = project_from_dict(project_to_dict(project)).resolved()[0][1]
+        assert (restored.door_gap_mm, restored.drawer_front_gap_mm) == (
+            door_gap,
+            drawer_gap,
+        )
+        panels = [p for p in face_layout([restored]) if p.kind != "top_cap"]
+        assert [
+            panels[i + 1].z - panels[i].z - panels[i].height for i in range(3)
+        ] == pytest.approx([drawer_gap, max(door_gap, drawer_gap), door_gap])
+
+
+@pytest.mark.parametrize("level", [False, True])
+def test_full_native_profile_assembly(level):
+    from cabineteer.cabinet import CabinetConfig, OpeningConfig
+    from cabineteer.drawer import DrawerConfig, build_drawer, drawer_part_offsets
+    from cabineteer.layout import LayoutLeaf, Row, Stack
+    from cabineteer.profiles import ProfileAssemblySpec, ProfileFaceSpec
+    from cabineteer.project import (
+        CabinetProject,
+        ProjectCabinet,
+        project_from_dict,
+        project_to_dict,
+    )
+
+    frame = Frame("frame.support", 720, 380, 50, 18, "18 mm plywood")
+    boxes = (
+        ProfiledBox("upper.left", 0, 360, 420, 18, 18, 6),
+        ProfiledBox("upper.right", 360, 360, 420, 18, 18, 6),
+    )
+    layout = Stack(
+        "assembly",
+        (
+            LayoutLeaf("lower", 720, 550, 720),
+            frame,
+            Row(
+                "upper",
+                (
+                    LayoutLeaf("upper.left", 360, 420, 600),
+                    LayoutLeaf("upper.right", 360, 420, 600),
+                ),
+            ),
+        ),
+    )
+    cfg = CabinetConfig(
+        width=720,
+        height=720,
+        depth=550,
+        back_thickness=6,
+        door_gap_mm=2,
+        drawer_front_gap_mm=2,
+        openings=[OpeningConfig(240, "drawer"), OpeningConfig(444, "door")],
+    )
+    drawer_data = dict(
+        opening_width=cfg.interior_width,
+        opening_height=240,
+        opening_depth=cfg.interior_depth,
+        slide_key="buratino_hettich_quadro_v6_eb20_480",
+        side_thickness=16,
+        front_back_thickness=18,
+        bottom_thickness=12,
+        bottom_dado_depth=6,
+        bottom_dado_inset=13,
+        front_gap=0,
+        vertical_gap=60,
+        use_standard_height=False,
+        applied_face=False,
+        joinery_style="butt",
+    )
+    drawer = DrawerConfig(
+        **{
+            **drawer_data,
+            "joinery_style": __import__(
+                "cabineteer.joinery", fromlist=["DrawerJoineryStyle"]
+            ).DrawerJoineryStyle.BUTT,
+        }
+    )
+    assert drawer.box_height == 180
+    assert drawer.opening_depth == 544
+    roof = RoofProfile(
+        ((0, 300), (360, 600), (720, 600)) if level else ((0, 300), (720, 600)), 18
+    )
+    spec = ProfileAssemblySpec(
+        roof,
+        boxes,
+        "roof",
+        ("slope", "level") if level else ("slope",),
+        frame,
+        "lower",
+        faces=ProfileFaceSpec(drawer_data, 30),
+    )
+    project = CabinetProject(
+        "fixture", (ProjectCabinet("lower", cfg),), layout=layout, profile_assembly=spec
+    )
+    result = project_from_dict(project_to_dict(project)).resolved_assembly()
+    parts = {part.id: part for part in result.parts}
+    assert len(parts) == (29 if level else 28)
+    assert parts["upper.left.door"].profile_xz_mm[0:2] == ((2, 2), (359, 2))
+    assert parts["upper.right.door"].profile_xz_mm[0:2] == ((361, 2), (718, 2))
+    for name, x0, x1 in (("upper.left.door", 2, 359), ("upper.right.door", 361, 718)):
+        if level and x0 >= 360:
+            heights = (598, 598)
+        else:
+            slope = 5 / 6 if level else 5 / 12
+            drop = math.sqrt(61) / 3 if level else 13 / 6
+            heights = (300 + slope * x0 - drop, 300 + slope * x1 - drop)
+        expected = ((x0, 2), (x1, 2), (x1, heights[1]), (x0, heights[0]))
+        for actual, target in zip(parts[name].profile_xz_mm, expected, strict=True):
+            assert actual == pytest.approx(target)
+    assert parts["upper.left.door"].y_mm == -20
+    assert parts["upper.left.side_left"].operations[0].kind == "edge_bevel"
+    assert parts["upper.left.door"].operations[0].kind == "profile_trim"
+    side = parts["lower.drawer.side_left"]
+    assert side.stock_mm[1] == pytest.approx(180)
+    _, native_parts = build_drawer(drawer)
+    native_side = next(p for p in native_parts if p.name == "drawer_side_L")
+    off = drawer_part_offsets(drawer)["side_L"]
+    expected_origin = (
+        cfg.side_thickness + drawer.side_gap + off[0],
+        drawer.front_gap + off[1],
+        cfg.bottom_thickness + 30 + off[2],
+    )
+    expected_shape = native_side.shape.translate(expected_origin)
+    assert side.solid().val().Volume() == pytest.approx(expected_shape.val().Volume())
+    assert side.solid().val().distance(expected_shape.val()) == pytest.approx(0)
+    assert result.hardware_status == "unverified"
+    for part in parts.values():
+        frame = part.local_frame
+        a, b, c = frame.length_axis, frame.width_axis, frame.thickness_axis
+        assert (
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ) == pytest.approx(c)
+        for op in part.operations:
+            for point in op.local_profile_mm:
+                assert all(
+                    -0.01 <= point[i] <= part.stock_mm[i] + 0.01 for i in range(3)
+                )
+
+
+def test_face_types_share_outline_and_keep_mounting_metadata():
+    from cabineteer.profiles import profile_face, with_profile_operations
+
+    roof = RoofProfile(((0, 300), (360, 600), (720, 600)), 18)
+    parts = [
+        profile_face(
+            roof,
+            name=f"fixture.face.{kind}",
+            owner="fixture.face",
+            face_type=kind,
+            x0=2,
+            x1=359,
+            bottom=2,
+            thickness=18,
+            outer_reveal=2,
+            depth_offset=2,
+        )
+        for kind in ("door", "drawer_front", "applied_faceboard")
+    ]
+    expected = (
+        (2, 2),
+        (359, 2),
+        (359, 300 + 5 * 359 / 6 - math.sqrt(61) / 3),
+        (2, 300 + 5 * 2 / 6 - math.sqrt(61) / 3),
+    )
+    for part in parts:
+        for actual, target in zip(part.profile_xz_mm, expected, strict=True):
+            assert actual == pytest.approx(target)
+        assert with_profile_operations(part).operations[0].kind == "profile_trim"
+    assert [p.mounting for p in parts] == ["hinged", "drawer-mounted", "fixed"]
+    assert [p.component for p in parts] == ["door", "drawer_front", "applied_faceboard"]
+
+
+def test_face_rejects_concave_roof_and_invalid_offset():
+    from cabineteer.profiles import profile_face
+
+    with pytest.raises(ValueError, match="convex"):
+        profile_face(
+            RoofProfile(((0, 100), (50, 100), (100, 120)), 18),
+            name="face",
+            owner="fixture",
+            face_type="door",
+            x0=2,
+            x1=98,
+            bottom=0,
+            thickness=18,
+            outer_reveal=2,
+            depth_offset=2,
+        )
+
+
+def test_fixed_faceboard_boundary_gap():
+    from cabineteer.profiles import face_boundary_gap
+
+    assert (
+        face_boundary_gap(
+            "applied_faceboard", "door", door_gap_mm=3, drawer_front_gap_mm=2
+        )
+        == 3
+    )
+    assert (
+        face_boundary_gap(
+            "drawer_front", "applied_faceboard", door_gap_mm=3, drawer_front_gap_mm=2
+        )
+        == 2
+    )
+    assert (
+        face_boundary_gap(
+            "applied_faceboard",
+            "door",
+            door_gap_mm=3,
+            drawer_front_gap_mm=2,
+            explicit_gap_mm=4,
+        )
+        == 4
+    )

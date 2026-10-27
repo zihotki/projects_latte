@@ -257,6 +257,8 @@ class CabinetConfig:
     # reveal the builder sets with shims at install. Half is trimmed from
     # each face at every internal opening boundary. SharedDesign token.
     face_gap_mm: float = DEFAULT_FACE_GAP_MM
+    door_gap_mm: Optional[float] = None
+    drawer_front_gap_mm: Optional[float] = None
     # Top/bottom show-face style — two INDEPENDENT axes (Charlie's ask,
     # 2026-09: "furniture_top" conflated whether the top panel gets a cap
     # strip with whether the bottom face drops flush, and a build can want
@@ -389,6 +391,9 @@ class CabinetConfig:
 
     def __post_init__(self) -> None:
         """Normalize openings and column openings to OpeningConfig objects."""
+        for value in (self.door_gap_mm, self.drawer_front_gap_mm):
+            if value is not None and (not math.isfinite(value) or value < 0):
+                raise ValueError("face gaps must be finite and nonnegative")
         self.edge_band_stock = normalize_band_stock(self.edge_band_stock)
         self.openings = [to_opening(op) for op in self.openings]
         # Normalize per element — to_opening is a no-op for OpeningConfig, so
@@ -1989,6 +1994,16 @@ def face_layout(
         slots = opening_stack(cfg)
         shelf_t = float(cfg.shelf_thickness)
 
+        def _face_gap(kind: str) -> float:
+            if face_gap is not None:
+                return face_gap
+            value = (cfg.drawer_front_gap_mm if kind == "drawer" else cfg.door_gap_mm)
+            return cfg.face_gap_mm if value is None else value
+
+        def _boundary_gap(i: int) -> float:
+            return max(_face_gap(cfg.openings[i - 1].opening_type),
+                       _face_gap(cfg.openings[i].opening_type))
+
         def _boundary(i: int) -> float:
             """Plane the faces meet at, below slot ``i``."""
             sl = slots[i]
@@ -2004,13 +2019,15 @@ def face_layout(
             slot_type = op.opening_type
             is_first = slot_idx == 0
             is_last  = slot_idx == n_slots - 1
+            bottom_gap = _boundary_gap(slot_idx) if not is_first else gap
+            top_gap = _boundary_gap(slot_idx + 1) if not is_last else gap
 
             if slot_type == "drawer":
-                face_z_bot = z_face_start if is_first else bot_bound + gap / 2
+                face_z_bot = z_face_start if is_first else bot_bound + bottom_gap / 2
                 if slot_idx == last_drawer and is_last:
                     face_z_top = z_face_end
                 else:
-                    face_z_top = top_bound - gap / 2
+                    face_z_top = top_bound - top_gap / 2
                 panels.append(FacePanel(
                     kind="drawer_face", bay=bay_idx, slot=slot_idx, leaf=0,
                     x=face_x, z=face_z_bot,
@@ -2025,14 +2042,15 @@ def face_layout(
                     num_doors=n_doors,
                     hinge_key=op.hinge_key or cfg.door_hinge,
                     door_thickness=op.door_thickness or face_thickness,
+                    gap_between=cfg.door_gap_mm if cfg.door_gap_mm is not None else 2.0,
                 )
                 inset = dc.hinge.overlay_type.name == "INSET"
                 if inset:
                     face_z_bot = z_acc + dc.gap_bottom
                     face_z_top = z_acc + opening_h - dc.gap_top
                 else:
-                    face_z_bot = z_face_start if is_first else bot_bound + gap / 2
-                    face_z_top = z_face_end if is_last else top_bound - gap / 2
+                    face_z_bot = z_face_start if is_first else bot_bound + bottom_gap / 2
+                    face_z_top = z_face_end if is_last else top_bound - top_gap / 2
                 interior_left = bx + cfg.side_thickness
                 for leaf in range(n_doors):
                     if inset:

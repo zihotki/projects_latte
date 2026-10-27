@@ -39,8 +39,9 @@ from .joinery import (
 )
 from .layout import LayoutNode, layout_from_dict, layout_to_dict
 from .profiles import (
-    ProfileAssembly, ProfileAssemblySpec, native_carcass_parts,
+    ProfileAssembly, ProfileAssemblySpec, assembly_faces, native_carcass_parts,
     profile_spec_from_dict, profile_spec_to_dict, resolve_profile_assembly,
+    ProfilePart, with_profile_operations,
 )
 
 
@@ -61,6 +62,8 @@ _SHARED_FIELDS = (
     "edge_band_material",
     "edge_band_stock",
     "face_gap_mm",
+    "door_gap_mm",
+    "drawer_front_gap_mm",
     "face_top_style",
     "face_bottom_style",
     "carcass_joinery",
@@ -113,6 +116,8 @@ class SharedDesign:
     # {"furniture_top": ...} key at load time so an old saved snapshot still
     # round-trips (none of the projects on disk today carry one).
     face_gap_mm: Optional[float] = None
+    door_gap_mm: Optional[float] = None
+    drawer_front_gap_mm: Optional[float] = None
     face_top_style: Optional[str] = None      # plain | cap | flush
     face_bottom_style: Optional[str] = None   # plain | flush
 
@@ -266,7 +271,14 @@ class CabinetProject:
         configs = dict(self.resolved())
         placements = {p.name: p for p in result.layout.placements}
         lower = native_carcass_parts(spec.lower, configs[spec.lower], placements[spec.lower])
-        return ProfileAssembly(result.layout, lower + result.parts)
+        anchor = spec.boxes[0]
+        p = placements[anchor.name].origin_mm
+        row_origin = (p[0] - anchor.x_mm, p[1], p[2])
+        faces = assembly_faces(spec, configs[spec.lower], placements[spec.lower], row_origin)
+        parts = lower + result.parts + faces
+        if spec.faces is not None:
+            parts = tuple(with_profile_operations(p) if isinstance(p, ProfilePart) else p for p in parts)
+        return ProfileAssembly(result.layout, parts)
 
 
 def _merge(
@@ -881,6 +893,8 @@ def _config_to_dict(cfg: CabinetConfig) -> dict:
         "edge_band_material": cfg.edge_band_material,
         "edge_band_stock": dict(cfg.edge_band_stock) if cfg.edge_band_stock else None,
         "face_gap_mm": cfg.face_gap_mm,
+        "door_gap_mm": cfg.door_gap_mm,
+        "drawer_front_gap_mm": cfg.drawer_front_gap_mm,
         # face_top_style / face_bottom_style are the real stored fields —
         # NOT cfg.furniture_top, which is now a derived, LOSSY boolean (it
         # collapses "flush" and "plain" tops to the same False). Persisting

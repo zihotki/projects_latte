@@ -89,6 +89,7 @@ class ProfilePart:
     orientation: str = ""
     world_offset_mm: tuple[float, float, float] = (0, 0, 0)
     operations: tuple = ()
+    mounting: str = ""
 
     @property
     def local_frame(self) -> LocalFrame:
@@ -323,6 +324,7 @@ def frame_parts(frame: Frame) -> tuple[ProfilePart, ...]:
 class ProfileAssembly:
     layout: ResolvedLayout
     parts: tuple[ProfilePart | NativeCarcassPart, ...]
+    hardware_status: str = "unverified"
 
 
 def _layout_with_profile_heights(
@@ -529,6 +531,33 @@ def native_carcass_parts(name, cfg, placement):
 
 
 @dataclass(frozen=True)
+class ProfileFaceSpec:
+    """Explicit face and drawer inputs for the composite assembly."""
+
+    drawer: dict
+    drawer_box_bottom_clearance_mm: float
+    outer_reveal_mm: float = 2
+    roof_reveal_mm: float = 2
+    depth_offset_mm: float = 2
+    thickness_mm: float = 18
+    material: str = ""
+
+    def __post_init__(self):
+        values = (
+            self.drawer_box_bottom_clearance_mm,
+            self.outer_reveal_mm,
+            self.roof_reveal_mm,
+            self.depth_offset_mm,
+        )
+        if any(not math.isfinite(v) or v < 0 for v in values):
+            raise ValueError("face clearances must be finite and nonnegative")
+        if not math.isfinite(self.thickness_mm) or self.thickness_mm <= 0:
+            raise ValueError("face thickness must be positive and finite")
+        if not self.drawer.get("slide_key"):
+            raise ValueError("drawer slide must be selected explicitly")
+
+
+@dataclass(frozen=True)
 class ProfileAssemblySpec:
     roof: RoofProfile
     boxes: tuple[ProfiledBox, ...]
@@ -537,6 +566,7 @@ class ProfileAssemblySpec:
     frame: Frame
     lower: str
     cap_material: str = ""
+    faces: ProfileFaceSpec | None = None
 
 
 def profile_spec_to_dict(spec: ProfileAssemblySpec) -> dict:
@@ -555,4 +585,261 @@ def profile_spec_from_dict(data: dict) -> ProfileAssemblySpec:
         frame=Frame(**data["frame"]),
         lower=data["lower"],
         cap_material=data.get("cap_material", ""),
+        faces=ProfileFaceSpec(**data["faces"]) if data.get("faces") else None,
     )
+
+
+def profile_face(
+    roof: RoofProfile,
+    *,
+    name: str,
+    owner: str,
+    face_type: str,
+    x0: float,
+    x1: float,
+    bottom: float,
+    thickness: float,
+    outer_reveal: float,
+    depth_offset: float,
+    material: str = "",
+) -> ProfilePart:
+    """Build a front from the lower envelope of normal-offset roof lines.
+
+    Adjacent roof segments must form a convex upper outline.  Their offset
+    lines intersect away from the original kink, so clipping the unshifted
+    vertices would give the wrong face profile.
+    """
+    if face_type not in ("door", "drawer_front", "applied_faceboard"):
+        raise ValueError("unsupported face type")
+    values = (x0, x1, bottom, thickness, outer_reveal, depth_offset)
+    if any(not math.isfinite(v) for v in values) or (
+        x0 >= x1 or thickness <= 0 or outer_reveal < 0 or depth_offset < 0
+    ):
+        raise ValueError("invalid face dimensions")
+    if x0 < roof.points[0][0] or x1 > roof.points[-1][0]:
+        raise ValueError("face must fit the roof")
+    segments = list(roof.segments())
+    lines = [
+        (slope, a[1] - slope * a[0] - outer_reveal * math.hypot(1, slope))
+        for a, _, slope, _ in segments
+    ]
+    breaks = []
+    for (m1, c1), (m2, c2) in zip(lines, lines[1:], strict=False):
+        if m1 <= m2:
+            raise ValueError("face roof must have strictly convex kinks")
+        breaks.append((c2 - c1) / (m1 - m2))
+    if any(a >= b for a, b in zip(breaks, breaks[1:], strict=False)):
+        raise ValueError("offset roof has unsupported intersections")
+
+    def top(x):
+        return min(m * x + c for m, c in lines)
+
+    top_points = [(x0, top(x0))]
+    top_points.extend((x, top(x)) for x in breaks if x0 < x < x1)
+    top_points.append((x1, top(x1)))
+    if min(z for _, z in top_points) <= bottom:
+        raise ValueError("roof leaves no face height")
+    points = ((x0, bottom), (x1, bottom), *reversed(top_points))
+    return ProfilePart(
+        name,
+        owner,
+        face_type,
+        material,
+        points,
+        -depth_offset - thickness,
+        thickness,
+        (x1 - x0, max(z for _, z in top_points) - bottom, thickness),
+        orientation="back",
+        mounting={
+            "door": "hinged",
+            "drawer_front": "drawer-mounted",
+            "applied_faceboard": "fixed",
+        }[face_type],
+    )
+
+
+def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
+    """Resolve upper fronts and lower drawer using existing native builders."""
+    from .cabinet import face_layout
+    from .drawer import DrawerConfig, build_drawer, drawer_part_offsets
+    from .joinery import DrawerJoineryStyle
+
+    face = spec.faces
+    if face is None:
+        return ()
+    if len(cfg.openings) != 2 or [o.opening_type for o in cfg.openings] != [
+        "drawer",
+        "door",
+    ]:
+        raise ValueError("profile lower cabinet requires a drawer below one door")
+    inputs = dict(face.drawer)
+    if "joinery_style" in inputs:
+        inputs["joinery_style"] = DrawerJoineryStyle(inputs["joinery_style"])
+    drawer = DrawerConfig(**inputs)
+    if (drawer.opening_width, drawer.opening_height, drawer.opening_depth) != (
+        cfg.interior_width,
+        cfg.openings[0].height_mm,
+        cfg.interior_depth,
+    ):
+        raise ValueError("drawer opening differs from lower cabinet")
+    if drawer.applied_face:
+        raise ValueError("drawer face must be resolved by the cabinet")
+    if (
+        drawer.box_height <= 0
+        or drawer.box_height + face.drawer_box_bottom_clearance_mm
+        > drawer.opening_height
+    ):
+        raise ValueError("drawer box does not fit its opening")
+    _ = drawer.box_depth  # Apply native slide depth and stock constraints.
+    _, drawer_parts = build_drawer(drawer)
+    offsets = drawer_part_offsets(drawer)
+    names = {
+        "drawer_side_L": ("side_left", "side_L"),
+        "drawer_side_R": ("side_right", "side_R"),
+        "drawer_sub_front": ("inner_front", "sub_front"),
+        "drawer_back": ("inner_back", "back"),
+        "drawer_bottom": ("bottom", "bottom"),
+    }
+    origin = (
+        placement.origin_mm[0] + cfg.side_thickness + drawer.side_gap,
+        placement.origin_mm[1] + drawer.front_gap,
+        placement.origin_mm[2]
+        + cfg.bottom_thickness
+        + face.drawer_box_bottom_clearance_mm,
+    )
+    parts = []
+    for part in drawer_parts:
+        component, key = names[part.name]
+        pos = tuple(a + b for a, b in zip(origin, offsets[key], strict=True))
+        shape = part.shape.translate(pos)
+        bounds = shape.val().BoundingBox()
+        if component.startswith("side"):
+            axes = ((0, 1, 0), (0, 0, 1), (1, 0, 0))
+            local_origin = (bounds.xmin, bounds.ymin, bounds.zmin)
+            stock = (bounds.ylen, bounds.zlen, bounds.xlen)
+        elif component == "bottom":
+            axes = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+            local_origin = (bounds.xmin, bounds.ymin, bounds.zmin)
+            stock = (bounds.xlen, bounds.ylen, bounds.zlen)
+        else:
+            axes = ((1, 0, 0), (0, 0, 1), (0, -1, 0))
+            local_origin = (bounds.xmin, bounds.ymax, bounds.zmin)
+            stock = (bounds.xlen, bounds.zlen, bounds.ylen)
+        parts.append(
+            NativeCarcassPart(
+                f"{spec.lower}.drawer.{component}",
+                spec.lower,
+                component,
+                cfg.carcass_material,
+                shape,
+                LocalFrame(local_origin, *axes),
+                stock,
+            )
+        )
+    for panel in face_layout(
+        [cfg], face_thickness=face.thickness_mm, face_top_style="plain"
+    ):
+        if panel.kind not in ("door", "drawer_face"):
+            continue
+        component = "door" if panel.kind == "door" else "face"
+        prefix = "face" if component == "door" else "drawer"
+        points = (
+            (panel.x, panel.z),
+            (panel.x + panel.width, panel.z),
+            (panel.x + panel.width, panel.z + panel.height),
+            (panel.x, panel.z + panel.height),
+        )
+        parts.append(
+            ProfilePart(
+                f"{spec.lower}.{prefix}.{component}",
+                spec.lower,
+                component,
+                cfg.face_material,
+                points,
+                -face.thickness_mm,
+                face.thickness_mm,
+                (panel.width, panel.height, face.thickness_mm),
+                orientation="back",
+                world_offset_mm=placement.origin_mm,
+            )
+        )
+    door_gap = cfg.face_gap_mm if cfg.door_gap_mm is None else cfg.door_gap_mm
+    for i, box in enumerate(spec.boxes):
+        x0 = box.x_mm + (face.outer_reveal_mm if i == 0 else door_gap / 2)
+        x1 = (
+            box.x_mm
+            + box.width_mm
+            - (face.outer_reveal_mm if i == len(spec.boxes) - 1 else door_gap / 2)
+        )
+        parts.append(
+            profile_face(
+                spec.roof,
+                name=f"{box.name}.door",
+                owner=box.name,
+                face_type="door",
+                x0=x0,
+                x1=x1,
+                bottom=face.outer_reveal_mm,
+                thickness=face.thickness_mm,
+                outer_reveal=face.roof_reveal_mm,
+                depth_offset=face.depth_offset_mm,
+                material=face.material,
+            ).placed(row_origin)
+        )
+    return tuple(parts)
+
+
+@dataclass(frozen=True)
+class ProfileOperation:
+    kind: str
+    target: str
+    local_profile_mm: tuple[tuple[float, float, float], ...]
+    status: str = "unverified"
+    angle_deg: float | None = None
+
+
+def with_profile_operations(part: ProfilePart) -> ProfilePart:
+    """Record only cuts represented by the finished profile."""
+    profile = part.local_profile_mm
+    if part.orientation == "side":
+        top = profile[2:]
+        if max(p[0] for p in top) - min(p[0] for p in top) <= 1e-9:
+            return part
+        a, b = sorted((top[0], top[-1]), key=lambda p: p[2])
+        angle = math.degrees(math.atan2(b[0] - a[0], b[2] - a[2]))
+        operation = ProfileOperation("edge_bevel", "top", top, angle_deg=angle)
+    elif part.component in ("back", "door", "drawer_front", "applied_faceboard"):
+        if len(profile) == 4 and abs(profile[2][1] - profile[3][1]) <= 1e-9:
+            return part
+        operation = ProfileOperation("profile_trim", "broad_face", profile)
+    else:
+        return part
+    return replace(part, operations=(operation,))
+
+
+def face_boundary_gap(
+    kind: str,
+    neighbor: str,
+    *,
+    door_gap_mm: float,
+    drawer_front_gap_mm: float,
+    explicit_gap_mm: float | None = None,
+) -> float:
+    """Resolve one total gap, including a fixed faceboard boundary."""
+    kinds = {"door", "drawer_front", "applied_faceboard"}
+    if kind not in kinds or neighbor not in kinds:
+        raise ValueError("unsupported face kind")
+    values = (door_gap_mm, drawer_front_gap_mm)
+    if explicit_gap_mm is not None:
+        values += (explicit_gap_mm,)
+    if any(not math.isfinite(v) or v < 0 for v in values):
+        raise ValueError("face gaps must be finite and nonnegative")
+    if explicit_gap_mm is not None:
+        return explicit_gap_mm
+    gaps = {"door": door_gap_mm, "drawer_front": drawer_front_gap_mm}
+    named = [gaps[k] for k in (kind, neighbor) if k in gaps]
+    if not named:
+        raise ValueError(
+            "a fixed faceboard boundary needs a named face neighbor or gap"
+        )
+    return max(named)
