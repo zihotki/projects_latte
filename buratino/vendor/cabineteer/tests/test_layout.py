@@ -86,6 +86,22 @@ def test_row_fixed_and_fill_widths_use_parent_span_and_named_alignment():
     assert resolve_layout(centered).placements[0].origin_mm == (310, 0, 0)
 
 
+def test_stack_passes_its_constrained_width_to_a_fill_row():
+    row = Row(
+        "upper_row",
+        (
+            LayoutLeaf("left", 100, 20, 10),
+            LayoutLeaf("middle", Fill(), 20, 10),
+            LayoutLeaf("right", 100, 20, 10),
+        ),
+        gap_mm=10,
+    )
+    result = resolve_layout(Stack("assembly", (row,), width_mm=720))
+    placements = {placement.name: placement for placement in result.placements}
+    assert placements["middle"].carcass_bounds_mm.width_mm == 500
+    assert placements["right"].origin_mm == (620, 0, 0)
+
+
 def test_stack_uses_occupied_height_once_and_keeps_bounds_distinct():
     first = LayoutLeaf(
         "first",
@@ -102,6 +118,51 @@ def test_stack_uses_occupied_height_once_and_keeps_bounds_distinct():
     assert placements["first"].occupied_world_bounds_mm.height_mm == 60
     assert result.carcass_bounds_mm.max_z == 85
     assert result.occupied_world_bounds_mm.min_y == -20
+
+
+def test_row_aligns_carcass_bases_and_stack_advances_by_union_occupied_height():
+    row = Row(
+        "row",
+        (
+            LayoutLeaf("extended", 50, 10, 20, Bounds3D(0, 0, -2, 50, 10, 20)),
+            LayoutLeaf("plain", 50, 10, 20),
+        ),
+        span_mm=100,
+    )
+    result = resolve_layout(
+        Stack("stack", (row, LayoutLeaf("next", 100, 10, 5)), gap_mm=3, width_mm=100)
+    )
+    placements = {placement.name: placement for placement in result.placements}
+    assert placements["extended"].origin_mm[2] == 0
+    assert placements["plain"].origin_mm[2] == 0
+    assert placements["next"].origin_mm[2] == 25
+
+
+def test_occupied_bounds_include_the_carcass_for_fixed_and_fill_leaves():
+    extension = Bounds3D(-10, -5, -2, 90, 95, 45)
+    fixed = LayoutLeaf("fixed", 100, 100, 50, extension)
+    fill = LayoutLeaf("fill", Fill(), 100, 50, extension)
+    result = resolve_layout(Row("row", (fixed, fill), span_mm=220))
+    placements = {placement.name: placement for placement in result.placements}
+    for name in ("fixed", "fill"):
+        placement = placements[name]
+        bounds = placement.occupied_world_bounds_mm
+        carcass = placement.carcass_bounds_mm
+        x = placement.origin_mm[0]
+        assert (bounds.min_x, bounds.min_y, bounds.min_z) == (x - 10, -5, -2)
+        assert (bounds.max_x, bounds.max_y, bounds.max_z) == (
+            carcass.max_x,
+            carcass.max_y,
+            carcass.max_z,
+        )
+
+
+def test_layout_rejects_finite_inputs_that_overflow_during_resolution():
+    wide = LayoutLeaf("wide", 1e308, 10, 10)
+    with pytest.raises(ValueError, match="finite"):
+        resolve_layout(Row("row", (wide, LayoutLeaf("also_wide", 1e308, 10, 10))))
+    with pytest.raises(ValueError, match="finite"):
+        resolve_layout(LayoutLeaf("position_overflow", 1e308, 10, 10), (1e308, 0, 0))
 
 
 @pytest.mark.parametrize(

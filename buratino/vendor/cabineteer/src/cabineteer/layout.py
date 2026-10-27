@@ -160,7 +160,10 @@ def resolve_layout(
 
 
 def _resolve(
-    node: LayoutNode, origin: tuple[float, float, float], active: set[int]
+    node: LayoutNode,
+    origin: tuple[float, float, float],
+    active: set[int],
+    available_width: float | None = None,
 ) -> ResolvedLayout:
     key = id(node)
     if key in active:
@@ -179,20 +182,27 @@ def _resolve(
             occupied = node.occupied_bounds_mm if isinstance(node, LayoutLeaf) else None
             if occupied is not None:
                 _validate_bounds(occupied)
-            world = _translate(occupied, origin) if occupied else carcass
+            world = _union(
+                [carcass, _translate(occupied, origin)]
+                if occupied is not None
+                else [carcass]
+            )
             placement = ResolvedPlacement(node.name, origin, carcass, world)
             return ResolvedLayout((placement,), carcass, world)
         if isinstance(node, Row):
-            return _resolve_row(node, origin, active)
+            return _resolve_row(node, origin, active, available_width)
         if isinstance(node, Stack):
-            return _resolve_stack(node, origin, active)
+            return _resolve_stack(node, origin, active, available_width)
         raise TypeError(f"unsupported layout node: {type(node).__name__}")
     finally:
         active.remove(key)
 
 
 def _resolve_row(
-    node: Row, origin: tuple[float, float, float], active: set[int]
+    node: Row,
+    origin: tuple[float, float, float],
+    active: set[int],
+    available_width: float | None = None,
 ) -> ResolvedLayout:
     _alignment(node.alignment, ("left", "center", "right"), "row alignment")
     _alignment(node.depth_alignment, ("front", "center", "back"), "depth alignment")
@@ -209,50 +219,66 @@ def _resolve_row(
             fill_count += 1
         else:
             fixed += width
-    gaps = gap * (len(node.children) - 1)
+    gaps = _finite(gap * (len(node.children) - 1), "row gaps")
     span = _size(node.span_mm, "row span") if node.span_mm is not None else None
+    if fill_count and span is None:
+        span = (
+            _size(available_width, "parent row span")
+            if available_width is not None
+            else None
+        )
     if fill_count and span is None:
         raise ValueError("fill width requires a finite parent row span")
     if span is None:
-        span = fixed + gaps
-    remainder = span - fixed - gaps
-    if remainder < -1e-9:
+        span = _finite(fixed + gaps, "row span")
+    remainder = _finite(span - fixed - gaps, "row remainder")
+    if remainder < 0:
         raise ValueError("row fixed widths and gaps exceed the available span")
-    fill_width = max(0.0, remainder) / fill_count if fill_count else 0.0
-    used = fixed + gaps + fill_count * fill_width
+    fill_width = (
+        _finite(max(0.0, remainder) / fill_count, "fill width") if fill_count else 0.0
+    )
+    used = _finite(fixed + gaps + fill_count * fill_width, "row used width")
     offset = _align_offset(span, used, node.alignment)
     depths = [_node_depth(child, active) for child in node.children]
     row_depth = max(depths)
     children = []
-    cursor = origin[0] + offset
+    cursor = _finite(origin[0] + offset, "row X position")
     for child, child_width, child_depth in zip(
         node.children, widths, depths, strict=True
     ):
         width = fill_width if isinstance(child_width, Fill) else child_width
-        y = origin[1] + _align_offset(row_depth, child_depth, node.depth_alignment)
-        z = origin[2] - _occupied_min_z(child, active)
+        y = _finite(
+            origin[1] + _align_offset(row_depth, child_depth, node.depth_alignment),
+            "row Y position",
+        )
+        z = origin[2]
         children.append(_resolve_with_width(child, (cursor, y, z), width, active))
-        cursor += width + gap
+        cursor = _finite(cursor + width + gap, "row X position")
     return _combine(children)
 
 
 def _resolve_stack(
-    node: Stack, origin: tuple[float, float, float], active: set[int]
+    node: Stack,
+    origin: tuple[float, float, float],
+    active: set[int],
+    available_width: float | None = None,
 ) -> ResolvedLayout:
     _alignment(node.alignment, ("left", "center", "right"), "stack alignment")
     _alignment(node.depth_alignment, ("front", "center", "back"), "depth alignment")
     gap = _size(node.gap_mm, "stack gap")
     if not node.children:
         raise ValueError("stack must contain at least one child")
-    widths = [_node_width(child, active) for child in node.children]
-    if any(isinstance(width, Fill) for width in widths):
-        raise ValueError("fill width is only valid in a row")
-    depths = [_node_depth(child, active) for child in node.children]
     stack_width = (
         _size(node.width_mm, "stack width")
         if node.width_mm is not None
-        else max(widths)
+        else _size(available_width, "parent stack width")
+        if available_width is not None
+        else max(_resolved_width(child, active) for child in node.children)
     )
+    widths = [_node_width(child, active, stack_width) for child in node.children]
+    if any(isinstance(width, Fill) for width in widths):
+        raise ValueError("fill width requires a finite parent stack width")
+    depths = [_node_depth(child, active) for child in node.children]
     stack_depth = (
         _size(node.depth_mm, "stack depth")
         if node.depth_mm is not None
@@ -265,12 +291,20 @@ def _resolve_stack(
     children = []
     cursor = origin[2]
     for child, width, depth in zip(node.children, widths, depths, strict=True):
-        x = origin[0] + _align_offset(stack_width, width, node.alignment)
-        y = origin[1] + _align_offset(stack_depth, depth, node.depth_alignment)
-        z = cursor - _occupied_min_z(child, active)
-        resolved = _resolve_with_width(child, (x, y, z), width, active)
+        x = _finite(
+            origin[0] + _align_offset(stack_width, width, node.alignment),
+            "stack X position",
+        )
+        y = _finite(
+            origin[1] + _align_offset(stack_depth, depth, node.depth_alignment),
+            "stack Y position",
+        )
+        resolved = _resolve_with_width(child, (x, y, cursor), width, active)
         children.append(resolved)
-        cursor += resolved.occupied_world_bounds_mm.max_z - cursor + gap
+        occupied_height = _finite(
+            resolved.occupied_world_bounds_mm.height_mm, "occupied height"
+        )
+        cursor = _finite(cursor + occupied_height + gap, "stack Z position")
     return _combine(children)
 
 
@@ -282,22 +316,26 @@ def _resolve_with_width(
             origin,
             (width, _size(node.depth_mm, "depth"), _size(node.height_mm, "height")),
         )
-        world = (
-            _translate(node.occupied_bounds_mm, origin)
-            if node.occupied_bounds_mm
-            else bounds
-        )
         if node.occupied_bounds_mm is not None:
             _validate_bounds(node.occupied_bounds_mm)
+        world = _union(
+            [bounds, _translate(node.occupied_bounds_mm, origin)]
+            if node.occupied_bounds_mm is not None
+            else [bounds]
+        )
         return ResolvedLayout(
             (ResolvedPlacement(node.name, origin, bounds, world),), bounds, world
         )
     if isinstance(node, Frame) and width != node.width_mm:
         raise ValueError("frame width cannot use row fill")
-    return _resolve(node, origin, active)
+    return _resolve(
+        node, origin, active, available_width=width if isinstance(node, Row) else None
+    )
 
 
-def _node_width(node: LayoutNode, active: set[int]) -> Width:
+def _node_width(
+    node: LayoutNode, active: set[int], available_width: float | None = None
+) -> Width:
     if isinstance(node, LayoutLeaf | Frame):
         return _width(node.width_mm)
     if id(node) in active:
@@ -310,16 +348,19 @@ def _node_width(node: LayoutNode, active: set[int]) -> Width:
             fixed = sum(size for size in sizes if not isinstance(size, Fill))
             span = _size(node.span_mm, "row span") if node.span_mm is not None else None
             if fills and span is None:
+                span = available_width
+            if fills and span is None:
                 raise ValueError("fill width requires a finite parent row span")
-            return (
-                span
-                if span is not None
-                else fixed + node.gap_mm * max(0, len(sizes) - 1)
-            )
+            gaps = _finite(node.gap_mm * max(0, len(sizes) - 1), "row gaps")
+            return span if span is not None else _finite(fixed + gaps, "row width")
         return (
             _size(node.width_mm, "stack width")
             if node.width_mm is not None
-            else max(_resolved_width(child, active) for child in node.children)
+            else (
+                _size(available_width, "parent stack width")
+                if available_width is not None
+                else max(_resolved_width(child, active) for child in node.children)
+            )
         )
     finally:
         active.remove(id(node))
@@ -346,12 +387,6 @@ def _node_depth(node: LayoutNode, active: set[int]) -> float:
         active.remove(id(node))
 
 
-def _occupied_min_z(node: LayoutNode, active: set[int]) -> float:
-    if isinstance(node, LayoutLeaf) and node.occupied_bounds_mm:
-        return node.occupied_bounds_mm.min_z
-    return 0.0
-
-
 def _combine(children: list[ResolvedLayout]) -> ResolvedLayout:
     carcass = _union([child.carcass_bounds_mm for child in children])
     occupied = _union([child.occupied_world_bounds_mm for child in children])
@@ -361,7 +396,7 @@ def _combine(children: list[ResolvedLayout]) -> ResolvedLayout:
 
 
 def _union(bounds: list[Bounds3D]) -> Bounds3D:
-    return Bounds3D(
+    result = Bounds3D(
         min(b.min_x for b in bounds),
         min(b.min_y for b in bounds),
         min(b.min_z for b in bounds),
@@ -369,6 +404,8 @@ def _union(bounds: list[Bounds3D]) -> Bounds3D:
         max(b.max_y for b in bounds),
         max(b.max_z for b in bounds),
     )
+    _validate_bounds(result)
+    return result
 
 
 def _bounds(
@@ -376,38 +413,49 @@ def _bounds(
 ) -> Bounds3D:
     x, y, z = origin
     width, depth, height = size
-    return Bounds3D(x, y, z, x + width, y + depth, z + height)
+    return Bounds3D(
+        x,
+        y,
+        z,
+        _finite(x + width, "maximum X"),
+        _finite(y + depth, "maximum Y"),
+        _finite(z + height, "maximum Z"),
+    )
 
 
 def _translate(bounds: Bounds3D, origin: tuple[float, float, float]) -> Bounds3D:
     x, y, z = origin
     return Bounds3D(
-        bounds.min_x + x,
-        bounds.min_y + y,
-        bounds.min_z + z,
-        bounds.max_x + x,
-        bounds.max_y + y,
-        bounds.max_z + z,
+        _finite(bounds.min_x + x, "occupied minimum X"),
+        _finite(bounds.min_y + y, "occupied minimum Y"),
+        _finite(bounds.min_z + z, "occupied minimum Z"),
+        _finite(bounds.max_x + x, "occupied maximum X"),
+        _finite(bounds.max_y + y, "occupied maximum Y"),
+        _finite(bounds.max_z + z, "occupied maximum Z"),
     )
 
 
 def _validate_bounds(bounds: Bounds3D) -> None:
-    values = (
-        bounds.min_x,
-        bounds.min_y,
-        bounds.min_z,
-        bounds.max_x,
-        bounds.max_y,
-        bounds.max_z,
+    tuple(
+        _finite(value, "occupied bound")
+        for value in (
+            bounds.min_x,
+            bounds.min_y,
+            bounds.min_z,
+            bounds.max_x,
+            bounds.max_y,
+            bounds.max_z,
+        )
     )
-    if any(not math.isfinite(value) for value in values):
-        raise ValueError("occupied bounds must be finite")
     if (
         bounds.max_x < bounds.min_x
         or bounds.max_y < bounds.min_y
         or bounds.max_z < bounds.min_z
     ):
         raise ValueError("occupied bounds must have non-negative sizes")
+    _finite(bounds.max_x - bounds.min_x, "occupied width")
+    _finite(bounds.max_y - bounds.min_y, "occupied depth")
+    _finite(bounds.max_z - bounds.min_z, "occupied height")
 
 
 def layout_to_dict(node: LayoutNode) -> dict:
@@ -534,9 +582,9 @@ def _align_offset(container: float, child: float, alignment: str) -> float:
     if alignment in ("left", "front"):
         return 0.0
     if alignment == "center":
-        return (container - child) / 2
+        return _finite((container - child) / 2, "alignment offset")
     if alignment in ("right", "back"):
-        return container - child
+        return _finite(container - child, "alignment offset")
     raise ValueError(f"invalid alignment: {alignment}")
 
 
@@ -564,10 +612,12 @@ def _validate_size(value: float | int, name: str) -> None:
 
 
 def _finite(value: float | int, name: str) -> float:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int | float)
-        or not math.isfinite(value)
-    ):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError(f"{name} must be finite")
-    return float(value)
+    try:
+        result = float(value)
+    except OverflowError as exc:
+        raise ValueError(f"{name} must be finite") from exc
+    if not math.isfinite(result):
+        raise ValueError(f"{name} must be finite")
+    return result
