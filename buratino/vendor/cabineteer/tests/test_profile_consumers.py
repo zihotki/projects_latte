@@ -250,3 +250,27 @@ def test_shared_upper_geometry_and_roundtrip(name):
     if name.endswith("transition"):
         assert divider.operations[0].kind == "profile_trim"
         assert len(divider.operations[0].local_profile_mm) == 4
+
+
+def test_shared_transition_without_faces_exports_stepped_divider():
+    from dataclasses import replace
+
+    from cabineteer.profiles import assembly_records, evaluate_assembly
+
+    root = Path(__file__).resolve().parents[3]
+    project = runpy.run_path(
+        str(root / "projects" / "profile-row-transition" / "project.py")
+    )["project"]
+    project = replace(
+        project, profile_assembly=replace(project.profile_assembly, faces=None)
+    )
+    assembly = project.resolved_assembly()
+    divider = next(p for p in assembly.parts if p.id == "upper.divider")
+    record = next(
+        p for p in assembly_records(assembly)["parts"] if p["id"] == divider.id
+    )
+    assert len(divider.profile_xz_mm) == 6
+    assert record["operations"][0]["kind"] == "profile_trim"
+    assert len(record["operations"][0]["local_profile_mm"]) == 4
+    assert record["stock_mm"]["thickness"] == 18
+    assert evaluate_assembly(assembly) == []

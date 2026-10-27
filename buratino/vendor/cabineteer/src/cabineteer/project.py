@@ -277,8 +277,7 @@ class CabinetProject:
         row_origin = (p[0] - anchor.x_mm, p[1], p[2])
         faces = assembly_faces(spec, configs[spec.lower], placements[spec.lower], row_origin)
         parts = lower + result.parts + faces
-        if spec.faces is not None:
-            parts = tuple(with_profile_operations(p) if isinstance(p, ProfilePart) else p for p in parts)
+        parts = tuple(with_profile_operations(p) if isinstance(p, ProfilePart) else p for p in parts)
         hardware = ()
         if spec.faces is not None:
             hardware = ({
