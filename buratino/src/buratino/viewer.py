@@ -29,6 +29,9 @@ def viewer_extension() -> str:
     <button type="button" id="drawer-pose-toggle" aria-pressed="false" hidden>
       Drawers closed
     </button>
+    <button type="button" id="door-pose-toggle" aria-pressed="false" hidden>
+      Upper doors closed
+    </button>
   </nav>
 </header>
 <section id="parts-dock" aria-label="Cutting parts">
@@ -45,8 +48,8 @@ def viewer_extension() -> str:
     <table aria-label="Grouped cutting parts">
       <thead><tr>
         <th scope="col">Part</th><th scope="col">Qty</th>
-        <th scope="col">Length mm</th><th scope="col">Width mm</th>
-        <th scope="col">Thickness mm</th>
+        <th scope="col">Max blank length mm</th><th scope="col">Max blank width mm</th>
+        <th scope="col">Blank thickness mm</th>
         <th scope="col">Grain</th><th scope="col">Model</th>
       </tr></thead>
       <tbody id="parts-body"></tbody>

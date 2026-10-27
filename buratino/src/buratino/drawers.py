@@ -37,6 +37,19 @@ HETTICH_PROFILE = {
     ],
 }
 HETTICH_PROFILES = {
+    380: {
+        **HETTICH_PROFILE,
+        "runner_length_mm": 380,
+        "left_runner_sku": "9047682",
+        "right_runner_sku": "9047683",
+        "minimum_body_depth_mm": 393,
+        "box_length_mm": 380,
+        "native_max_load_kg": 25,
+        "sources": [
+            "https://shop.hettich.com/gb_EN/Runner-systems/Concealed-drawer-runners/Quadro-drawer-runners/Quadro-V6/Quadro-V6-with-Silent-System%2C-380-mm%2C-left/p/9047682",
+            "https://shop.hettich.com/gb_EN/Runner-systems/Concealed-drawer-runners/Quadro-drawer-runners/Quadro-V6/Quadro-V6-with-Silent-System%2C-380-mm%2C-right/p/9047683",
+        ],
+    },
     450: HETTICH_PROFILE,
     480: {
         **HETTICH_PROFILE,
@@ -53,7 +66,11 @@ HETTICH_PROFILES = {
     },
 }
 EB20_SLIDE_KEY = "buratino_hettich_quadro_v6_eb20"
-EB20_SLIDE_KEYS = {450: EB20_SLIDE_KEY, 480: f"{EB20_SLIDE_KEY}_480"}
+EB20_SLIDE_KEYS = {
+    380: f"{EB20_SLIDE_KEY}_380",
+    450: EB20_SLIDE_KEY,
+    480: f"{EB20_SLIDE_KEY}_480",
+}
 
 
 def eb20_profile_for_key(slide_key):
@@ -89,7 +106,7 @@ def register_eb20_profile(runner_length_mm=450):
         min_top_clearance=0,
         min_bottom_clearance=0,
         available_lengths=(runner_length_mm,),
-        max_load_kg=30,
+        max_load_kg=source.get("native_max_load_kg", 30),
         min_drawer_height=0,
         max_drawer_width=0,
         rear_bracket_inset=0,
@@ -107,6 +124,7 @@ def register_eb20_profile(runner_length_mm=450):
 
 EB20_SLIDE = register_eb20_profile()
 EB20_SLIDE_480 = register_eb20_profile(480)
+EB20_SLIDE_380 = register_eb20_profile(380)
 
 
 def make_eb20_drawer_config(
@@ -140,7 +158,8 @@ def make_eb20_drawer_config(
     from cabineteer.joinery import DrawerJoineryStyle
 
     if runner_length_mm not in HETTICH_PROFILES:
-        raise ValueError("This profile supports only 450 or 480 mm runners.")
+        supported = ", ".join(str(length) for length in sorted(HETTICH_PROFILES))
+        raise ValueError(f"This profile supports only {supported} mm runners.")
     source = HETTICH_PROFILES[runner_length_mm]
     if side_thickness > HETTICH_PROFILE["side_thickness_max_mm"]:
         raise ValueError("EB20 drawer sides must be 16 mm or thinner.")

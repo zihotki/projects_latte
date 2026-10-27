@@ -5,7 +5,7 @@ import json
 
 
 def _signature(part: dict) -> tuple:
-    dims = part["finished_mm"]
+    dims = part.get("blank_mm", part["finished_mm"])
     return (
         dims["length"],
         dims["width"],
@@ -77,12 +77,28 @@ def group_cutting_blanks(parts: list[dict]) -> list[dict]:
     ):
         members = sorted(members, key=lambda part: part["id"])
         first = members[0]
+        blank_dims = dict(first.get("blank_mm", first["finished_mm"]))
+        member_details = []
+        for part in members:
+            detail = {
+                "id": part["id"],
+                "label": _label([part]),
+                "role": part["role"],
+                "finished_mm": dict(part["finished_mm"]),
+            }
+            for key in ("component", "profile", "machining_assumptions"):
+                if key in part:
+                    detail[key] = part[key]
+            member_details.append(detail)
         groups.append(
             {
                 "id": _group_id(signature),
                 "label": _label(members),
                 "quantity": sum(part["quantity"] for part in members),
+                # Keep finished dimensions for existing consumers. Blank dimensions
+                # are the stock envelope in the part's local panel axes.
                 "finished_mm": dict(first["finished_mm"]),
+                "blank_mm": blank_dims,
                 "material": first["material"],
                 "grain_direction": first["grain_direction"],
                 "grain_status": first["grain_status"],
@@ -90,6 +106,7 @@ def group_cutting_blanks(parts: list[dict]) -> list[dict]:
                 "grouping_scope": "cutting_blank",
                 "machining_status": "unverified",
                 "members": [part["id"] for part in members],
+                "member_details": member_details,
             }
         )
     return groups

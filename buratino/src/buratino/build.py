@@ -29,7 +29,7 @@ def write_json(path: Path, value: object) -> None:
 def _table(result: dict) -> str:
     rows = []
     for group in result["cutting_groups"]:
-        dims = group["finished_mm"]
+        dims = group.get("blank_mm", group["finished_mm"])
         members = ", ".join(group["members"])
         rows.append(
             f"<tr><td>{html.escape(group['label'])}</td>"
@@ -41,8 +41,10 @@ def _table(result: dict) -> str:
             f"<td>{html.escape(members)}</td></tr>"
         )
     return (
+        "<p>Equal stock blanks are grouped. Blank size is the maximum local-axis "
+        "stock envelope; profile geometry is not a machining instruction.</p>"
         "<table><thead><tr><th>Cutting group</th><th>Quantity</th>"
-        "<th>Finished size, mm</th><th>Material</th><th>Grain</th>"
+        "<th>Max blank size, mm</th><th>Material</th><th>Grain</th>"
         "<th>Physical part IDs</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"
@@ -161,29 +163,42 @@ def render_documents(directory: Path, result: dict) -> None:
             "status",
             "id",
             "quantity",
-            "length_mm",
-            "width_mm",
-            "thickness_mm",
+            "max_blank_length_mm",
+            "max_blank_width_mm",
+            "blank_thickness_mm",
             "material",
             "grain_direction",
             "grain_status",
             "member_ids",
+            "length_mm",
+            "width_mm",
+            "thickness_mm",
+            "member_details_json",
         ]
     )
     for group in result["cutting_groups"]:
         dims = group["finished_mm"]
+        blank = group.get("blank_mm", dims)
         writer.writerow(
             [
                 "DRAFT_NOT_FOR_MANUFACTURING",
                 group["id"],
                 group["quantity"],
-                dims["length"],
-                dims["width"],
-                dims["thickness"],
+                blank["length"],
+                blank["width"],
+                blank["thickness"],
                 group["material"],
                 group["grain_direction"],
                 group["grain_status"],
                 ", ".join(group["members"]),
+                dims["length"],
+                dims["width"],
+                dims["thickness"],
+                json.dumps(
+                    group.get("member_details", []),
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ),
             ]
         )
     (directory / "parts.csv").write_text(buffer.getvalue(), encoding="utf-8")

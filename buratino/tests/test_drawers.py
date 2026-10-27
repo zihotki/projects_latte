@@ -1,6 +1,13 @@
 import pytest
 
-from buratino.drawers import drawer_shapes, make_eb20_drawer_config
+from buratino.drawers import (
+    EB20_SLIDE_380,
+    EB20_SLIDE_KEYS,
+    HETTICH_PROFILES,
+    drawer_shapes,
+    eb20_profile_for_key,
+    make_eb20_drawer_config,
+)
 from buratino.engine import calculate, make_geometry
 from buratino.project import load_project
 
@@ -132,7 +139,7 @@ def test_eb20_profile_rejects_unverified_side_and_length_choices():
     )
     with pytest.raises(ValueError, match="16 mm or thinner"):
         make_eb20_drawer_config(**{**args, "side_thickness": 16.1})
-    with pytest.raises(ValueError, match="only 450 or 480 mm"):
+    with pytest.raises(ValueError, match="only 380, 450, 480 mm"):
         make_eb20_drawer_config(**{**args, "runner_length_mm": 500})
     with pytest.raises(ValueError, match="usable cavity depth"):
         make_eb20_drawer_config(**{**args, "opening_depth": 462})
@@ -182,3 +189,35 @@ def test_480_runner_uses_manufacturer_depth_limit():
     assert config.box_depth == 480
     with pytest.raises(ValueError, match="at least 493 mm"):
         make_eb20_drawer_config(**{**args, "opening_depth": 492})
+
+
+def test_380_runner_profile_and_minimum_body_depth():
+    from cabineteer.hardware import SLIDES
+
+    profile = HETTICH_PROFILES[380]
+    assert profile["runner_length_mm"] == 380
+    assert profile["box_length_mm"] == 380
+    assert profile["minimum_body_depth_mm"] == 393
+    assert profile["side_thickness_max_mm"] == 16
+    assert profile["left_runner_sku"] == "9047682"
+    assert profile["right_runner_sku"] == "9047683"
+    assert EB20_SLIDE_KEYS[380] != EB20_SLIDE_KEYS[450]
+    assert eb20_profile_for_key(EB20_SLIDE_KEYS[380]) is profile
+    assert SLIDES[EB20_SLIDE_KEYS[380]] is EB20_SLIDE_380
+
+    args = dict(
+        opening_width=684,
+        opening_height=233.5,
+        opening_depth=393,
+        side_thickness=16,
+        front_back_thickness=18,
+        bottom_thickness=12,
+        box_height=180,
+        vertical_gap=30,
+        runner_length_mm=380,
+    )
+    config = make_eb20_drawer_config(**args)
+    assert config.box_depth == 380
+    assert config.slide_key == EB20_SLIDE_KEYS[380]
+    with pytest.raises(ValueError, match="at least 393 mm"):
+        make_eb20_drawer_config(**{**args, "opening_depth": 392})

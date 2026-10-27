@@ -78,6 +78,45 @@ def test_blank_variants_do_not_merge_and_group_ids_ignore_input_order(project):
     assert reverse == forward
 
 
+def test_equal_blanks_keep_member_profiles_and_finished_dimensions(project):
+    parts = calculate(load_project(project)).result["parts"]
+    left, right = (
+        deepcopy(next(part for part in parts if part["component"] == role))
+        for role in ("left_side", "right_side")
+    )
+    left["blank_mm"] = {"length": 780, "width": 400, "thickness": 18}
+    right["blank_mm"] = dict(left["blank_mm"])
+    left["component"] = left["role"] = "top"
+    right["component"] = right["role"] = "bottom"
+    left["finished_mm"] = {"length": 750, "width": 400, "thickness": 18}
+    right["finished_mm"] = {"length": 720, "width": 400, "thickness": 18}
+    left["profile"] = {
+        "shape": "sloped",
+        "angle_deg": 12,
+        "points": [[0, 0], [780, 80]],
+    }
+    right["profile"] = {"shape": "square", "angle_deg": 0}
+
+    groups = group_cutting_blanks([left, right])
+
+    assert len(groups) == 1
+    group = groups[0]
+    assert group["blank_mm"] == {"length": 780, "width": 400, "thickness": 18}
+    assert group["finished_mm"] == left["finished_mm"]
+    assert [member["profile"] for member in group["member_details"]] == [
+        left["profile"],
+        right["profile"],
+    ]
+    assert [member["finished_mm"] for member in group["member_details"]] == [
+        left["finished_mm"],
+        right["finished_mm"],
+    ]
+    assert [member["label"] for member in group["member_details"]] == [
+        "Top panels",
+        "Bottom panels",
+    ]
+
+
 def test_drawer_components_group_with_useful_labels_and_keep_all_physical_ids():
     parts = []
     blanks = {

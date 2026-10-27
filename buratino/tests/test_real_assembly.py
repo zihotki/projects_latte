@@ -22,10 +22,10 @@ def test_real_assembly_keeps_two_equal_independent_drawer_carcasses(root):
         0,
         720,
     ]
-    assert result["dimensions_mm"] == {"width": 1440, "height": 1030, "depth": 510}
+    assert result["dimensions_mm"] == {"width": 1440, "height": 2234, "depth": 510}
     assert result["overall_dimensions_mm"] == {
         "width": 1440,
-        "height": 1030,
+        "height": 2234,
         "depth": 530,
     }
     assert [cabinet["placement_mm"]["z"] for cabinet in result["cabinets"]] == [
@@ -61,23 +61,46 @@ def test_real_assembly_keeps_two_equal_independent_drawer_carcasses(root):
         if part["id"].endswith((".carcass.left_side", ".carcass.right_side"))
     ]
     assert len(carcass_sides) == 4
-    assert len(result["drawers"]) == 8
-    assert all(drawer["box_mm"]["depth"] == 480 for drawer in result["drawers"])
-    assert result["drawer_layout"]["display_open_distance_mm"] == 480
-    assert result["hardware_profile"]["runner_length_mm"] == 480
-    assert result["hardware_profile"]["minimum_body_depth_mm"] == 493
-    runner = next(
-        item for item in result["hardware"] if item["type"] == "drawer_runner"
+    lower_drawers = [
+        drawer
+        for drawer in result["drawers"]
+        if drawer["cabinet_id"] in {"left-drawers", "right-drawers"}
+    ]
+    upper_drawers = [
+        drawer for drawer in result["drawers"] if drawer["cabinet_id"] == "upper-left"
+    ]
+    assert len(lower_drawers) == 8
+    assert len(upper_drawers) == 1
+    assert all(drawer["box_mm"]["depth"] == 480 for drawer in lower_drawers)
+    assert all(
+        drawer["hardware_profile"]["runner_length_mm"] == 480
+        and drawer["hardware_profile"]["minimum_body_depth_mm"] == 493
+        for drawer in lower_drawers
     )
-    assert runner["length_mm"] == 480
-    assert runner["part_numbers"] == ["9047756", "9047757"]
+    assert upper_drawers[0]["box_mm"]["depth"] == 380
+    assert result["drawer_layout"]["display_open_distance_mm"] is None
+    assert result["drawer_layout"]["face_thickness_by_cabinet_mm"] == {
+        "left-drawers": 18,
+        "right-drawers": 18,
+    }
+    assert result["hardware_profile"] is None
+    runners_by_length = {
+        item["length_mm"]: item
+        for item in result["hardware"]
+        if item["type"] == "drawer_runner"
+    }
+    assert set(runners_by_length) == {380, 480}
+    assert runners_by_length[480]["quantity"] == 16
+    assert runners_by_length[480]["part_numbers"] == ["9047756", "9047757"]
+    assert runners_by_length[380]["quantity"] == 2
+    assert runners_by_length[380]["part_numbers"] == ["9047682", "9047683"]
     frame_ids = {
         f"frame.{frame_id}.{rail}"
         for frame_id in ("bottom", "top")
         for rail in ("front", "back", "left", "right")
     }
     assert frame_ids <= {part["id"] for part in result["parts"]}
-    assert len(result["parts"]) == 66
+    assert len(result["parts"]) == 96
 
     frame_cut_groups = [
         group for group in result["cutting_groups"] if set(group["members"]) & frame_ids
@@ -114,9 +137,7 @@ def test_real_assembly_keeps_two_equal_independent_drawer_carcasses(root):
         ),
         "Depth is reported as 500 to 550 mm. Exact clear depth remains open.",
     ]
-    assert project.variables["future_upper_cabinet_count"] == 2
-    assert project.variables["future_upper_dimensions_mm"] is None
-    assert project.variables["future_upper_connection"] is None
+    assert len(result["upper_cabinets"]) == 2
     assert not result["manufacturing_ready"]
 
 

@@ -7,6 +7,7 @@ const ui = {
   message: document.getElementById('viewer-message'),
   grain: document.getElementById('grain-toggle'),
   drawerPose: document.getElementById('drawer-pose-toggle'),
+  doorPose: document.getElementById('door-pose-toggle'),
   visibility: document.getElementById('visibility-options'),
   panelOpacity: document.getElementById('panel-opacity'),
   panelOpacityValue: document.getElementById('panel-opacity-value'),
@@ -28,6 +29,8 @@ let outlines = new Map();
 let grainMarks = new Map();
 let drawerPartNodes = [];
 let drawersOpen = false;
+let doorPartNodes = [];
+let doorsOpen = false;
 let partRoots = new Map();
 let visibilityControls = new Map();
 let cuttingGroupVisibility = new Map();
@@ -53,9 +56,22 @@ function selectGroup(group) {
   }
   applyModelSelection();
   const selected = currentGroup();
+  const memberProfiles = selected?.member_details
+    ?.map(member => `${member.label}${member.profile ? ` · ${profileLabel(member.profile)}` : ''}`)
+    .filter(Boolean);
   ui.caption.textContent = selected
-    ? `${selected.label} · ${selected.quantity} ${selected.quantity === 1 ? 'panel' : 'panels'} · ${selected.material} · ${selected.edge_treatment ?? 'Edge treatment unverified'} · ${selected.grain_status === 'assumed' ? 'Grain direction assumed' : 'Grain direction recorded'}`
+    ? `${selected.label} · ${selected.quantity} ${selected.quantity === 1 ? 'panel' : 'panels'} · ${selected.material} · ${selected.edge_treatment ?? 'Edge treatment unverified'} · ${selected.grain_status === 'assumed' ? 'Grain direction assumed' : 'Grain direction recorded'} · Blank dimensions only; profile is not a machining instruction${memberProfiles?.length ? ` · Members: ${[...new Set(memberProfiles)].join('; ')}` : ''}`
     : 'Select a part name or a panel to inspect its cutting blank.';
+}
+
+function profileLabel(profile) {
+  if (typeof profile === 'string') return profile;
+  if (!profile || typeof profile !== 'object') return 'profile recorded';
+  if (profile.label || profile.name || profile.shape) {
+    return profile.label ?? profile.name ?? profile.shape;
+  }
+  const pointCount = profile.points_mm?.length ?? profile.points?.length;
+  return `${profile.plane ? `${profile.plane.toUpperCase()} ` : ''}profile${pointCount ? ` (${pointCount} points)` : ''}`;
 }
 
 function addCell(row, value, className = '') {
@@ -73,8 +89,12 @@ function renderTable() {
   result.cutting_groups.forEach(group => {
     const row = document.createElement('tr');
     row.dataset.groupId = group.id;
-    row.title = `${group.label} · ${group.quantity} ${group.quantity === 1 ? 'panel' : 'panels'} · ${group.material}`;
-    const dims = group.finished_mm;
+    const details = group.member_details ?? [];
+    const profileLabels = details
+      .filter(member => member.profile)
+      .map(member => `${member.label}: ${profileLabel(member.profile)}`);
+    row.title = `${group.label} · ${group.quantity} ${group.quantity === 1 ? 'panel' : 'panels'} · ${group.material}${profileLabels.length ? ` · ${[...new Set(profileLabels)].join('; ')}` : ''} · Profile machining unverified`;
+    const dims = group.blank_mm ?? group.finished_mm;
     const nameCell = document.createElement('td');
     nameCell.className = 'part-name';
     const select = document.createElement('button');
@@ -180,6 +200,25 @@ function renderVisibilityControls() {
     ui.visibility.appendChild(section);
   }
 
+  const upperGroups = [...new Set(parts.map(part => part.upper_id).filter(Boolean))];
+  if (upperGroups.length) {
+    const section = document.createElement('fieldset');
+    section.className = 'visibility-cabinet visibility-frames';
+    const heading = document.createElement('legend');
+    heading.textContent = 'Upper panels';
+    section.appendChild(heading);
+    const labels = {left: 'Left upper', right: 'Right upper', shared: 'Shared top'};
+    for (const upperId of ['left', 'right', 'shared']) {
+      if (upperGroups.includes(upperId)) {
+        addToggle(section, `upper:${upperId}`, labels[upperId] ?? humanizeProjectName(upperId));
+      }
+    }
+    for (const upperId of upperGroups.filter(id => !['left', 'right', 'shared'].includes(id))) {
+      addToggle(section, `upper:${upperId}`, humanizeProjectName(upperId));
+    }
+    ui.visibility.appendChild(section);
+  }
+
   for (const cabinet of cabinets) {
     const partsForCabinet = parts.filter(part => (part.cabinet_id ?? 'cabinet') === cabinet.id);
     const section = document.createElement('fieldset');
@@ -212,10 +251,12 @@ function applyPartVisibility() {
     const root = partRoots.get(part.role);
     const cabinetId = part.cabinet_id ?? 'cabinet';
     const instanceId = part.instance_id;
-    const cabinetVisible = part.frame_id
-      ? visibilityControls.get(`frame:${part.frame_id}`) !== false
-      : visibilityControls.get(`cabinet:${cabinetId}`) !== false;
-    const subgroupVisible = part.frame_id || (instanceId
+    const cabinetVisible = part.upper_id
+      ? visibilityControls.get(`upper:${part.upper_id}`) !== false
+      : part.frame_id
+        ? visibilityControls.get(`frame:${part.frame_id}`) !== false
+        : visibilityControls.get(`cabinet:${cabinetId}`) !== false;
+    const subgroupVisible = part.upper_id || part.frame_id || (instanceId
       ? visibilityControls.get(`drawer:${instanceId}`) !== false
       : visibilityControls.get(`carcass:${cabinetId}`) !== false);
     const frontVisible = part.component !== 'face' ||
@@ -277,6 +318,200 @@ function addPartOverlays() {
   }
 }
 
+function createProfileGrainMark(role, part, meshes, partNode) {
+  const {THREE} = viewer;
+  const axisNames = ['x', 'y', 'z'];
+  const grainAxis = part.grain_axis_local;
+  const normalAxis = part.surface_normal_axis_local;
+  if (!axisNames.includes(grainAxis) || !axisNames.includes(normalAxis) || grainAxis === normalAxis) {
+    return null;
+  }
+
+  partNode.updateWorldMatrix(true, false);
+  const worldToPart = partNode.matrixWorld.clone().invert();
+  const expectedNormal = new THREE.Vector3();
+  expectedNormal[normalAxis] = 1;
+  if (normalAxis === 'z' && Array.isArray(part.profile?.points_mm)) {
+    const points = part.profile.points_mm;
+    let broadEdge = null;
+    for (let i = 0; i < points.length; i += 1) {
+      const start = points[i];
+      const end = points[(i + 1) % points.length];
+      const dx = end[0] - start[0];
+      const dz = end[1] - start[1];
+      if (!broadEdge || Math.abs(dx) > Math.abs(broadEdge.dx)) broadEdge = {dx, dz};
+    }
+    if (broadEdge && Math.abs(broadEdge.dx) > 1e-7) {
+      expectedNormal.set(-broadEdge.dz, 0, broadEdge.dx).normalize();
+    }
+  }
+  const grainDirection = new THREE.Vector3();
+  grainDirection[grainAxis] = 1;
+  const surfaces = [];
+
+  for (const mesh of meshes) {
+    if (!mesh.geometry) continue;
+    mesh.updateWorldMatrix(true, false);
+    const geometry = mesh.geometry;
+    const positions = geometry.attributes.position;
+    if (!positions) continue;
+    const relative = worldToPart.clone().multiply(mesh.matrixWorld);
+    const index = geometry.index;
+    const vertexCount = index ? index.count : positions.count;
+    for (let triangle = 0; triangle < Math.floor(vertexCount / 3); triangle += 1) {
+      const vertices = [];
+      for (let corner = 0; corner < 3; corner += 1) {
+        const item = triangle * 3 + corner;
+        const vertexIndex = index ? index.getX(item) : item;
+        vertices.push(new THREE.Vector3().fromBufferAttribute(positions, vertexIndex).applyMatrix4(relative));
+      }
+      const faceNormal = vertices[1].clone().sub(vertices[0])
+        .cross(vertices[2].clone().sub(vertices[0])).normalize();
+      if (Math.abs(faceNormal.dot(expectedNormal)) < 0.9999) continue;
+      const surfaceGrain = grainDirection.clone()
+        .addScaledVector(faceNormal, -grainDirection.dot(faceNormal));
+      if (surfaceGrain.lengthSq() < 1e-10) continue;
+      surfaceGrain.normalize();
+      const surfaceAcross = faceNormal.clone().cross(surfaceGrain).normalize();
+      const plane = faceNormal.dot(vertices[0]);
+      let surface = surfaces.find(item => item.normal.dot(faceNormal) > 0.9999 &&
+        Math.abs(item.plane - plane) < 0.02);
+      if (!surface) {
+        surface = {
+          normal: faceNormal,
+          grain: surfaceGrain,
+          across: surfaceAcross,
+          plane,
+          triangles: [],
+          acrossMin: Infinity,
+          acrossMax: -Infinity,
+          grainMin: Infinity,
+          grainMax: -Infinity,
+        };
+        surfaces.push(surface);
+      }
+      const projectedTriangle = vertices.map(vertex => ({
+        grain: vertex.dot(surface.grain),
+        across: vertex.dot(surface.across),
+      }));
+      for (const point of projectedTriangle) {
+        surface.acrossMin = Math.min(surface.acrossMin, point.across);
+        surface.acrossMax = Math.max(surface.acrossMax, point.across);
+        surface.grainMin = Math.min(surface.grainMin, point.grain);
+        surface.grainMax = Math.max(surface.grainMax, point.grain);
+      }
+      surface.triangles.push(projectedTriangle);
+    }
+  }
+
+  function mergeIntervals(intervals) {
+    intervals.sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    for (const interval of intervals) {
+      const last = merged[merged.length - 1];
+      if (last && interval[0] <= last[1] + 0.01) last[1] = Math.max(last[1], interval[1]);
+      else merged.push(interval.slice());
+    }
+    return merged;
+  }
+
+  function intervalsAt(surface, across) {
+    const intervals = [];
+    for (const triangle of surface.triangles) {
+      const crossings = [];
+      for (let edge = 0; edge < 3; edge += 1) {
+        const start = triangle[edge];
+        const end = triangle[(edge + 1) % 3];
+        if (across < Math.min(start.across, end.across) - 1e-7 ||
+            across > Math.max(start.across, end.across) + 1e-7) continue;
+        if (Math.abs(start.across - end.across) < 1e-7) {
+          if (Math.abs(across - start.across) < 1e-7) crossings.push(start.grain, end.grain);
+          continue;
+        }
+        const t = (across - start.across) / (end.across - start.across);
+        if (t >= -1e-7 && t <= 1 + 1e-7) {
+          crossings.push(start.grain + (end.grain - start.grain) * t);
+        }
+      }
+      if (crossings.length >= 2) {
+        const low = Math.min(...crossings);
+        const high = Math.max(...crossings);
+        if (high - low > 0.01) intervals.push([low, high]);
+      }
+    }
+    return mergeIntervals(intervals);
+  }
+
+  function pointOnFace(surface, grain, across) {
+    return surface.grain.clone().multiplyScalar(grain)
+      .addScaledVector(surface.across, across)
+      .addScaledVector(surface.normal, surface.plane + 0.4);
+  }
+
+  const hatchVertices = [];
+  const arrowVertices = [];
+  for (const surface of surfaces) {
+    const acrossLength = surface.acrossMax - surface.acrossMin;
+    const grainLength = surface.grainMax - surface.grainMin;
+    if (acrossLength <= 0 || grainLength <= 0) continue;
+    const spacing = Math.max(15, Math.min(22, Math.min(acrossLength, grainLength) / 18));
+    for (let across = surface.acrossMin + spacing / 2;
+      across < surface.acrossMax; across += spacing) {
+      for (const [start, end] of intervalsAt(surface, across)) {
+        hatchVertices.push(pointOnFace(surface, start, across), pointOnFace(surface, end, across));
+      }
+    }
+
+    const centerAcross = (surface.acrossMin + surface.acrossMax) / 2;
+    const centerIntervals = intervalsAt(surface, centerAcross);
+    const longest = centerIntervals.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]))[0];
+    if (!longest) continue;
+    const length = longest[1] - longest[0];
+    const arrowLength = Math.min(length, 220, Math.max(150, Math.min(acrossLength, grainLength) * 0.56));
+    const arrowHead = Math.min(22, arrowLength * 0.14);
+    const start = (longest[0] + longest[1] - arrowLength) / 2;
+    const end = start + arrowLength;
+    const tip = pointOnFace(surface, end, centerAcross);
+    const base = pointOnFace(surface, end - arrowHead, centerAcross);
+    const left = base.clone().addScaledVector(surface.across, arrowHead * 0.55);
+    const right = base.clone().addScaledVector(surface.across, -arrowHead * 0.55);
+    arrowVertices.push(pointOnFace(surface, start, centerAcross), tip, tip, left, tip, right);
+  }
+
+  return createGrainMarkGroup(role, partNode, hatchVertices, arrowVertices);
+}
+
+function createGrainMarkGroup(role, partNode, hatchVertices, arrowVertices) {
+  const {THREE} = viewer;
+  if (!hatchVertices.length) return null;
+  const mark = new THREE.Group();
+  const hatchGeometry = new THREE.BufferGeometry().setFromPoints(hatchVertices);
+  const hatches = new THREE.LineSegments(hatchGeometry, new THREE.LineBasicMaterial({
+    color: 0x597c70,
+    depthTest: true,
+    depthWrite: false,
+    transparent: true,
+    opacity: 0.42,
+  }));
+  hatches.name = `grain-hatching-${role}`;
+  mark.add(hatches);
+  const arrowGeometry = new THREE.BufferGeometry().setFromPoints(arrowVertices);
+  const arrows = new THREE.LineSegments(arrowGeometry, new THREE.LineBasicMaterial({
+    color: 0x126c5e,
+    depthTest: true,
+    depthWrite: false,
+    transparent: true,
+    opacity: 0.98,
+  }));
+  arrows.name = `grain-direction-arrow-${role}`;
+  mark.add(arrows);
+  mark.name = `grain-direction-${role}`;
+  mark.renderOrder = 6;
+  partNode.add(mark);
+  mark.visible = grainVisible;
+  return mark;
+}
+
 function createGrainMark(role, meshes) {
   const part = result.parts.find(item => item.role === role);
   if (!part || !meshes.length || part.grain_axis_local == null) return null;
@@ -285,6 +520,7 @@ function createGrainMark(role, meshes) {
   while (partNode.parent && partNode.name !== role) partNode = partNode.parent;
   if (partNode.name !== role) partNode = meshes[0].parent;
   if (!partNode) return null;
+  if (part.profile) return createProfileGrainMark(role, part, meshes, partNode);
   partNode.updateWorldMatrix(true, false);
   const worldToPart = partNode.matrixWorld.clone().invert();
   const bounds = new THREE.Box3();
@@ -391,32 +627,7 @@ function createGrainMark(role, meshes) {
     );
   }
 
-  const mark = new THREE.Group();
-  const hatchGeometry = new THREE.BufferGeometry().setFromPoints(hatchVertices);
-  const hatches = new THREE.LineSegments(hatchGeometry, new THREE.LineBasicMaterial({
-    color: 0x597c70,
-    depthTest: true,
-    depthWrite: false,
-    transparent: true,
-    opacity: 0.42,
-  }));
-  hatches.name = `grain-hatching-${role}`;
-  mark.add(hatches);
-  const arrowGeometry = new THREE.BufferGeometry().setFromPoints(arrowVertices);
-  const arrows = new THREE.LineSegments(arrowGeometry, new THREE.LineBasicMaterial({
-    color: 0x126c5e,
-    depthTest: true,
-    depthWrite: false,
-    transparent: true,
-    opacity: 0.98,
-  }));
-  arrows.name = `grain-direction-arrow-${role}`;
-  mark.add(arrows);
-  mark.name = `grain-direction-${role}`;
-  mark.renderOrder = 6;
-  partNode.add(mark);
-  mark.visible = grainVisible;
-  return mark;
+  return createGrainMarkGroup(role, partNode, hatchVertices, arrowVertices);
 }
 
 function applyModelSelection() {
@@ -518,6 +729,45 @@ function setDrawerPose(open) {
   ui.drawerPose.setAttribute('aria-pressed', String(open));
 }
 
+function collectDoorPartNodes() {
+  doorPartNodes = result.parts
+    .filter(part => part.component === 'door' && part.hinge_side === 'right')
+    .map(part => ({part, node: viewer.scene.getObjectByName(part.role)}))
+    .filter(item => item.node)
+    .map(({part, node}) => ({
+      part,
+      node,
+      closedPosition: node.position.clone(),
+      closedRotationZ: node.rotation.z,
+      width: Number(part.size_mm?.x),
+    }))
+    .filter(item => Number.isFinite(item.width) && item.width > 0);
+  ui.doorPose.hidden = doorPartNodes.length === 0;
+  if (doorPartNodes.length) setDoorPose(false);
+}
+
+function setDoorPose(open) {
+  doorsOpen = open;
+  const angle = open ? Math.PI * 75 / 180 : 0;
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  for (const {node, closedPosition, closedRotationZ, width} of doorPartNodes) {
+    // Rotate each preview root about its right edge in the native X/Z profile
+    // plane. The positive native Z swing moves the free edge toward -Y.
+    node.rotation.z = closedRotationZ + angle;
+    node.position.set(
+      closedPosition.x + width * (1 - cosine),
+      closedPosition.y - width * sine,
+      closedPosition.z,
+    );
+  }
+  ui.doorPose.textContent = open ? 'Upper doors open' : 'Upper doors closed';
+  const caveat = 'Illustrative 75° preview pose about each right edge; hinge hardware, clearances, and actual travel are unverified.';
+  ui.doorPose.title = caveat;
+  ui.doorPose.setAttribute('aria-label', `${ui.doorPose.textContent}. ${caveat}`);
+  ui.doorPose.setAttribute('aria-pressed', String(open));
+}
+
 function setStandardView(name) {
   const model = viewer.scene.getObjectByName('base_cabinet');
   const box = new viewer.THREE.Box3().setFromObject(model ?? viewer.scene);
@@ -603,6 +853,7 @@ async function start() {
   addPartOverlays();
   applyPartVisibility();
   collectDrawerPartNodes();
+  collectDoorPartNodes();
   for (const light of viewer.scene.children) {
     if (light.isDirectionalLight && light.castShadow) {
       light.shadow.bias = -0.0002;
@@ -658,6 +909,9 @@ ui.grain.addEventListener('click', () => {
 });
 ui.drawerPose?.addEventListener('click', () => {
   if (viewer && drawerPartNodes.length) setDrawerPose(!drawersOpen);
+});
+ui.doorPose?.addEventListener('click', () => {
+  if (viewer && doorPartNodes.length) setDoorPose(!doorsOpen);
 });
 ui.panelOpacity?.addEventListener('input', () => {
   setPanelOpacity(Number(ui.panelOpacity.value) / 100);

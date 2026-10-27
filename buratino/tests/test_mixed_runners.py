@@ -10,6 +10,7 @@ from buratino.preview import latest_build
 from buratino.project import InputError, load_project
 
 RUNNER_KEYS = {
+    380: "buratino_hettich_quadro_v6_eb20_380",
     450: "buratino_hettich_quadro_v6_eb20",
     480: "buratino_hettich_quadro_v6_eb20_480",
 }
@@ -54,6 +55,7 @@ def test_cabinet_runner_override_applies_to_all_drawers_and_keeps_frames(
         480,
         480,
         480,
+        380,
     ]
     cabinets = {cabinet["id"]: cabinet for cabinet in result["cabinets"]}
     assert cabinets["left-drawers"]["hardware_profile"]["runner_length_mm"] == 450
@@ -113,6 +115,7 @@ def test_two_cabinet_profiles_keep_bom_warnings_geometry_and_snapshot(root, tmp_
     assert set(result["hardware_profiles"]) == set(RUNNER_KEYS.values())
     assert result["hardware_profiles"][RUNNER_KEYS[450]]["minimum_body_depth_mm"] == 463
     assert result["hardware_profiles"][RUNNER_KEYS[480]]["minimum_body_depth_mm"] == 493
+    assert result["hardware_profiles"][RUNNER_KEYS[380]]["minimum_body_depth_mm"] == 393
 
     runners = {
         item["length_mm"]: item
@@ -120,6 +123,8 @@ def test_two_cabinet_profiles_keep_bom_warnings_geometry_and_snapshot(root, tmp_
         if item["type"] == "drawer_runner"
     }
     assert runners[450]["quantity"] == runners[480]["quantity"] == 8
+    assert runners[380]["quantity"] == 2
+    assert runners[380]["part_numbers"] == ["9047682", "9047683"]
     assert runners[450]["part_numbers"] == ["9047751", "9047752"]
     assert runners[480]["part_numbers"] == ["9047756", "9047757"]
     assert runners[450]["quantity_by_part_number"] == {
@@ -135,10 +140,10 @@ def test_two_cabinet_profiles_keep_bom_warnings_geometry_and_snapshot(root, tmp_
         for item in result["hardware"]
         if item["type"] == "compatible_grooved_bottom_catch_pair"
     )
-    assert catches["quantity"] == 8
+    assert catches["quantity"] == 9
     assert catches["quantity_by_part_number"] == {
-        "9144830": 8,
-        "9144841": 8,
+        "9144830": 9,
+        "9144841": 9,
     }
 
     assert result["manufacturing_ready"] is False
@@ -157,7 +162,11 @@ def test_two_cabinet_profiles_keep_bom_warnings_geometry_and_snapshot(root, tmp_
     assert len(geometry) == len(result["parts"])
     assert {part["role"] for part in result["parts"]} <= set(assembly.objects)
     for drawer in result["drawers"]:
-        expected_length = 450 if drawer["cabinet_id"] == "left-drawers" else 480
+        expected_length = {
+            "left-drawers": 450,
+            "right-drawers": 480,
+            "upper-left": 380,
+        }[drawer["cabinet_id"]]
         part = next(
             part
             for part in result["parts"]

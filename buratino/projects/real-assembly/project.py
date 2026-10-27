@@ -69,8 +69,8 @@ variables = {
             "selection, quantity, capacity, and position remain unverified."
         ),
         (
-            "Two future upper cabinets are planned. Their dimensions and connection "
-            "are unknown; they are not modeled."
+            "The upper cabinet fastening, wall restraint, shelf support, back, "
+            "and top-panel joinery remain unverified."
         ),
     ],
     "frame_height_mm": 50,
@@ -112,10 +112,54 @@ variables = {
     "drawer_face_overlay_top_mm": 3,
     "drawer_face_overlay_bottom_mm": 3,
     "drawer_material": "Melamine-faced board; core and measured thickness unverified",
-    "future_upper_cabinet_count": 2,
-    "future_upper_dimensions_mm": None,
-    "future_upper_connection": None,
+    "upper": {
+        "cabinet_width_mm": 720,
+        "depth_mm": 410,
+        "thickness_mm": 18,
+        "back_thickness_mm": 6,
+        "back_material": "6 mm board; material and fastening unconfirmed",
+        "left_height_mm": 235,
+        "right_height_mm": 1204,
+        "shelf_levels_mm": [270, 550, 830],
+        "runner_length_mm": 380,
+        "drawer_side_thickness_mm": 16,
+        "drawer_front_back_thickness_mm": 18,
+        "drawer_bottom_thickness_mm": 12,
+        "drawer_bottom_recess_mm": 13,
+        "drawer_rear_corner_clearance_width_mm": 30,
+        "drawer_box_height_mm": 140,
+        "drawer_bottom_clearance_mm": 20,
+        "front_thickness_mm": 18,
+        "front_gap_mm": 3,
+        "front_bottom_projection_mm": 10,
+        "x": 0,
+        "y": 100,
+        "z": 1030,
+        "material": "Melamine-faced board; core and measured thickness unverified",
+    },
 }
+variables["upper"]["y"] = variables["depth_mm"] - variables["upper"]["depth_mm"]
+variables["upper"]["z"] = variables["height_mm"] + 2 * variables["frame_height_mm"]
+variables["assumptions"].extend(
+    [
+        "The upper cabinets stand on the top frame, flush to the lower backs.",
+        "The upper front projects 30 mm past the top frame; support is unverified.",
+        "Upper shelf levels are draft choices; attachments are unknown.",
+        (
+            "The sloped top is 18 mm thick normal to its surface and butts "
+            "against the right divider and the edge of the flat top above it. "
+            "The flat top covers the divider and the right section; their "
+            "fastening remains unverified. The divider is centered in the right "
+            "cabinet, and the slope transition aligns with its left face. "
+            "The four section clear widths are 333 mm."
+        ),
+        (
+            "The upper profile uses the stated endpoint heights and an adjusted "
+            "slope for equal sections. Confirm ceiling fit before construction."
+        ),
+        "Upper 6 mm backs, their stock and fastening are provisional.",
+    ]
+)
 variables["face_material"] = variables["drawer_material"]
 # The top frame is flush with the cabinet backs.
 variables["cabinet_base_z_mm"] = variables["frame_height_mm"]
@@ -188,7 +232,8 @@ _left = _resolved["left-drawers"]
 # Use the same native opening and box layout for each cabinet.
 calculated = {
     "body_assembly_width_mm": 2 * variables["width_mm"],
-    "assembly_height_mm": variables["height_mm"] + 2 * variables["frame_height_mm"],
+    "assembly_height_mm": variables["upper"]["z"]
+    + variables["upper"]["right_height_mm"],
     "closed_depth_mm": (
         variables["depth_mm"]
         + variables["drawer_face_thickness_mm"]
