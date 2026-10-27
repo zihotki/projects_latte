@@ -9,7 +9,7 @@ import pytest
 
 
 @pytest.mark.parametrize(
-    "name,count", [("profile-row-sloped", 28), ("profile-row-transition", 29)]
+    "name,count", [("profile-row-sloped", 27), ("profile-row-transition", 28)]
 )
 def test_native_project_consumers(monkeypatch, tmp_path, name, count):
     from cabineteer import server
@@ -199,3 +199,54 @@ def test_rendered_bounded_kink(tmp_path):
         open_browser=False,
     )
     assert_rendered_profiles(Path(result["glb"]), native)
+
+
+@pytest.mark.parametrize("name", ["profile-row-sloped", "profile-row-transition"])
+def test_shared_upper_geometry_and_roundtrip(name):
+    from cabineteer.profiles import (
+        evaluate_assembly,
+        profile_spec_from_dict,
+        profile_spec_to_dict,
+    )
+
+    root = Path(__file__).resolve().parents[3]
+    project = runpy.run_path(str(root / "projects" / name / "project.py"))["project"]
+    spec = project.profile_assembly
+    assert profile_spec_from_dict(profile_spec_to_dict(spec)) == spec
+    legacy = profile_spec_to_dict(spec)
+    del legacy["shared_owner"]
+    assert profile_spec_from_dict(legacy).shared_owner is None
+    assembly = project.resolved_assembly()
+    upper = [p for p in assembly.parts if p.owner == "upper"]
+    divider = next(p for p in upper if p.id == "upper.divider")
+    assert (
+        {x for x, _ in divider.profile_xz_mm} == {351, 360, 369}
+        if name.endswith("transition")
+        else {x for x, _ in divider.profile_xz_mm} == {351, 369}
+    )
+    assert sorted(p.stock_mm[0] for p in upper if p.component == "bottom") == [333, 333]
+    sides = [p for p in upper if p.component in ("side_left", "side_right", "divider")]
+    assert len(sides) == 3
+    assert evaluate_assembly(assembly) == []
+    for i, side in enumerate(sides):
+        for other in sides[i + 1 :]:
+            assert side.solid().intersect(other.solid()).val().Volume() < 0.01
+    caps = [p for p in assembly.parts if p.component == "cap"]
+    for cap in caps:
+        assert divider.solid().val().distance(cap.solid().val()) < 0.01
+        assert divider.solid().intersect(cap.solid()).val().Volume() < 0.01
+    bottoms = [p for p in upper if p.component == "bottom"]
+    for bottom in bottoms:
+        assert bottom.solid().val().distance(divider.solid().val()) < 0.01
+        assert bottom.solid().intersect(divider.solid()).val().Volume() < 0.01
+    doors = sorted(
+        (p for p in upper if p.component == "door"), key=lambda p: p.profile_xz_mm[0][0]
+    )
+    assert [(p.profile_xz_mm[0][0], p.profile_xz_mm[1][0]) for p in doors] == [
+        (2, 359),
+        (361, 718),
+    ]
+    assert all(p.owner == "upper" for p in doors)
+    if name.endswith("transition"):
+        assert divider.operations[0].kind == "profile_trim"
+        assert len(divider.operations[0].local_profile_mm) == 4

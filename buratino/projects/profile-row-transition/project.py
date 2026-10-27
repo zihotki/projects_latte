@@ -1,7 +1,7 @@
 """Synthetic native profile assembly. All measurements are draft inputs."""
 
 from cabineteer.cabinet import CabinetConfig, OpeningConfig
-from cabineteer.layout import Frame, LayoutLeaf, Row, Stack
+from cabineteer.layout import Frame, LayoutLeaf, Stack
 from cabineteer.profiles import (
     ProfileAssemblySpec,
     ProfiledBox,
@@ -22,13 +22,7 @@ layout = Stack(
     (
         LayoutLeaf("lower", 720, 550, 720),
         frame,
-        Row(
-            "upper",
-            (
-                LayoutLeaf("upper.left", 360, 420, 600),
-                LayoutLeaf("upper.right", 360, 420, 600),
-            ),
-        ),
+        LayoutLeaf("upper", 720, 420, 600),
     ),
 )
 boxes = (
@@ -71,6 +65,7 @@ profile = ProfileAssemblySpec(
     "lower",
     "18 mm plywood",
     ProfileFaceSpec(drawer, 30, material="18 mm plywood"),
+    shared_owner="upper",
 )
 project = CabinetProject(
     "profile-row-transition",

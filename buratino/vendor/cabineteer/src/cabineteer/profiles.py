@@ -385,15 +385,38 @@ def resolve_profile_assembly(
     cap_names: tuple[str, ...],
     frame: Frame,
     cap_material: str = "",
+    shared_owner: str | None = None,
 ) -> ProfileAssembly:
     """Place row-owned caps, their boxes and a support frame on a native layout."""
     if not boxes or len({box.name for box in boxes}) != len(boxes):
         raise ValueError("assembly needs distinct profiled boxes")
     panels = {box.name: box_parts(box, roof) for box in boxes}
+    if shared_owner is not None:
+        if len(boxes) != 2 or boxes[0].x_mm + boxes[0].width_mm != boxes[1].x_mm:
+            raise ValueError("shared carcass requires two contiguous sections")
+        left, right = boxes
+        if (
+            left.depth_mm,
+            left.side_mm,
+            left.bottom_mm,
+            left.back_mm,
+            left.material,
+            left.back_material,
+        ) != (
+            right.depth_mm,
+            right.side_mm,
+            right.bottom_mm,
+            right.back_mm,
+            right.material,
+            right.back_material,
+        ):
+            raise ValueError("shared sections must use the same stock")
     heights = {
         box.name: max(z for _, z in panels[box.name][-1].profile_xz_mm) for box in boxes
     }
     anchor = boxes[0]
+    if shared_owner is not None:
+        heights = {shared_owner: max(heights.values())}
     caps = roof_parts(
         roof, anchor.depth_mm - anchor.back_mm, cap_owner, cap_names, cap_material
     )
@@ -406,7 +429,9 @@ def resolve_profile_assembly(
         max(0, *(z for cap in caps for _, z in cap.profile_xz_mm)),
     )
     resolved = resolve_layout(
-        _layout_with_profile_heights(layout, heights, anchor.name, cap_bounds)
+        _layout_with_profile_heights(
+            layout, heights, shared_owner or anchor.name, cap_bounds
+        )
     )
     placements = {p.name: p for p in resolved.placements}
     if len(placements) != len(resolved.placements) or not boxes:
@@ -422,6 +447,8 @@ def resolve_profile_assembly(
     row_origins = []
     parts = []
     for box in boxes:
+        if shared_owner is not None:
+            break
         p = placements[box.name]
         if (
             abs(p.carcass_bounds_mm.width_mm - box.width_mm) > 1e-9
@@ -430,6 +457,15 @@ def resolve_profile_assembly(
             raise ValueError("box dimensions differ from its layout")
         x, y, z = p.origin_mm
         row_origins.append((x - box.x_mm, y, z))
+    if shared_owner is not None:
+        p = placements[shared_owner]
+        if (p.carcass_bounds_mm.width_mm, p.carcass_bounds_mm.depth_mm) != (
+            boxes[-1].x_mm + boxes[-1].width_mm - anchor.x_mm,
+            anchor.depth_mm,
+        ):
+            raise ValueError("shared carcass dimensions differ from its layout")
+        x, y, z = p.origin_mm
+        row_origins.append((x - anchor.x_mm, y, z))
     if any(origin != row_origins[0] for origin in row_origins):
         raise ValueError("profiled boxes must share a row datum")
     if any(
@@ -438,8 +474,58 @@ def resolve_profile_assembly(
     ):
         raise ValueError("profiled boxes must share a cap depth")
     origin = row_origins[0]
-    for box in boxes:
-        parts.extend(part.placed(origin) for part in panels[box.name])
+    if shared_owner is None:
+        for box in boxes:
+            parts.extend(part.placed(origin) for part in panels[box.name])
+    else:
+        left, right = boxes
+        seam = right.x_mm
+        half = left.side_mm / 2
+        depth = left.depth_mm - left.back_mm
+        top = _clip(roof, seam - half, seam + half, underside=True)
+        divider = ProfilePart(
+            f"{shared_owner}.divider",
+            shared_owner,
+            "divider",
+            left.material,
+            ((seam - half, 0), (seam + half, 0), *reversed(top)),
+            0,
+            depth,
+            (max(z for _, z in top), depth, left.side_mm),
+            orientation="side",
+        )
+        shared_parts = [panels[left.name][0], divider, panels[right.name][1]]
+        for i, box in enumerate(boxes):
+            x0 = box.x_mm + (box.side_mm if i == 0 else half)
+            x1 = box.x_mm + box.width_mm - (half if i == 0 else box.side_mm)
+            if x1 <= x0:
+                raise ValueError("shared section has no usable width")
+            bottom = panels[box.name][2]
+            shared_parts.append(
+                replace(
+                    bottom,
+                    profile_xz_mm=(
+                        (x0, 0),
+                        (x1, 0),
+                        (x1, box.bottom_mm),
+                        (x0, box.bottom_mm),
+                    ),
+                    stock_mm=(x1 - x0, depth, box.bottom_mm),
+                )
+            )
+            shared_parts.append(panels[box.name][3])
+        parts.extend(
+            replace(
+                part,
+                id=(
+                    f"{shared_owner}.{part.component}"
+                    if part.component.startswith("side_")
+                    else part.id
+                ),
+                owner=shared_owner,
+            ).placed(origin)
+            for part in shared_parts
+        )
     parts.extend(part.placed(origin) for part in caps)
     parts.extend(
         part.placed(placements[frame.name].origin_mm) for part in frame_parts(frame)
@@ -568,6 +654,7 @@ class ProfileAssemblySpec:
     lower: str
     cap_material: str = ""
     faces: ProfileFaceSpec | None = None
+    shared_owner: str | None = None
 
 
 def profile_spec_to_dict(spec: ProfileAssemblySpec) -> dict:
@@ -587,6 +674,7 @@ def profile_spec_from_dict(data: dict) -> ProfileAssemblySpec:
         lower=data["lower"],
         cap_material=data.get("cap_material", ""),
         faces=ProfileFaceSpec(**data["faces"]) if data.get("faces") else None,
+        shared_owner=data.get("shared_owner"),
     )
 
 
@@ -788,7 +876,7 @@ def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
             profile_face(
                 spec.roof,
                 name=f"{box.name}.door",
-                owner=box.name,
+                owner=spec.shared_owner or box.name,
                 face_type="door",
                 x0=x0,
                 x1=x1,
@@ -818,6 +906,10 @@ def with_profile_operations(part: ProfilePart) -> ProfilePart:
         top = profile[2:]
         if max(p[0] for p in top) - min(p[0] for p in top) <= 1e-9:
             return part
+        if len(top) > 2:
+            return replace(
+                part, operations=(ProfileOperation("profile_trim", "top", top),)
+            )
         a, b = sorted((top[0], top[-1]), key=lambda p: p[2])
         angle = math.degrees(math.atan2(b[0] - a[0], b[2] - a[2]))
         operation = ProfileOperation("edge_bevel", "top", top, angle_deg=angle)
@@ -868,6 +960,8 @@ def layout_with_face_occupancy(layout: LayoutNode, spec: ProfileAssemblySpec, cf
         spec, cfg, SimpleNamespace(origin_mm=(0, 0, 0)), (0, 0, 0)
     )
     box_x = {box.name: box.x_mm for box in spec.boxes}
+    if spec.shared_owner is not None:
+        box_x[spec.shared_owner] = spec.boxes[0].x_mm
     envelopes = {}
     for part in generated:
         if not isinstance(part, ProfilePart):
@@ -955,21 +1049,21 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
                 "triangles": triangles,
             }
         record = {
-                "id": part.id,
-                "owner": part.owner,
-                "component": part.component,
-                "material": part.material,
-                "quantity": part.quantity,
-                "stock_mm": dict(
-                    zip(("length", "width", "thickness"), part.stock_mm, strict=True)
-                ),
-                "local_frame": asdict(part.local_frame),
-                "geometry": geometry,
-                "profile_mm": part.local_profile_mm,
-                "extrusion_mm": part.local_extrusion_mm,
-                "operations": [asdict(operation) for operation in part.operations],
-                "mounting": getattr(part, "mounting", ""),
-            }
+            "id": part.id,
+            "owner": part.owner,
+            "component": part.component,
+            "material": part.material,
+            "quantity": part.quantity,
+            "stock_mm": dict(
+                zip(("length", "width", "thickness"), part.stock_mm, strict=True)
+            ),
+            "local_frame": asdict(part.local_frame),
+            "geometry": geometry,
+            "profile_mm": part.local_profile_mm,
+            "extrusion_mm": part.local_extrusion_mm,
+            "operations": [asdict(operation) for operation in part.operations],
+            "mounting": getattr(part, "mounting", ""),
+        }
         viewer = {"role": part.id, "cabinet_id": part.owner}
         if part.component in ("door", "drawer_front"):
             viewer["hinge_side"] = "right" if part.component == "door" else None
@@ -1003,27 +1097,36 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
         )
         groups_by_signature.setdefault(signature, []).append(part)
     cutting_groups = []
-    for index, (signature, members) in enumerate(sorted(groups_by_signature.items()), 1):
+    for index, (signature, members) in enumerate(
+        sorted(groups_by_signature.items()), 1
+    ):
         material, dimensions = signature
         label = members[0]["component"].replace("_", " ").title()
-        cutting_groups.append({
-            "id": f"profile-group-{index}",
-            "label": label,
-            "quantity": sum(member["quantity"] for member in members),
-            "material": material,
-            "members": [member["id"] for member in members],
-            "blank_mm": dict(zip(("length", "width", "thickness"), dimensions, strict=True)),
-        })
+        cutting_groups.append(
+            {
+                "id": f"profile-group-{index}",
+                "label": label,
+                "quantity": sum(member["quantity"] for member in members),
+                "material": material,
+                "members": [member["id"] for member in members],
+                "blank_mm": dict(
+                    zip(("length", "width", "thickness"), dimensions, strict=True)
+                ),
+            }
+        )
     drawers = {}
     for part in parts:
         viewer = viewer_parts[part["id"]]
         if viewer.get("instance_id"):
-            drawer = drawers.setdefault(viewer["instance_id"], {
-                "instance_id": viewer["instance_id"],
-                "drawer_index": 1,
-                "cabinet_id": part["owner"],
-                "box_mm": {"depth": viewer.get("display_open_distance_mm", 0)},
-            })
+            drawer = drawers.setdefault(
+                viewer["instance_id"],
+                {
+                    "instance_id": viewer["instance_id"],
+                    "drawer_index": 1,
+                    "cabinet_id": part["owner"],
+                    "box_mm": {"depth": viewer.get("display_open_distance_mm", 0)},
+                },
+            )
             if viewer.get("display_open_distance_mm"):
                 drawer["box_mm"]["depth"] = viewer["display_open_distance_mm"]
     return {
@@ -1048,12 +1151,12 @@ def evaluate_assembly(assembly: ProfileAssembly) -> list[dict]:
         p
         for p in assembly.parts
         if isinstance(p, ProfilePart)
-        and p.component in ("side_left", "side_right", "bottom", "back")
+        and p.component in ("side_left", "side_right", "divider", "bottom", "back")
     ]
     issues = []
     for panel in boxes:
         shape = panel.solid()
-        if panel.component in ("side_left", "side_right") and caps:
+        if panel.component in ("side_left", "side_right", "divider") and caps:
             distance = min(cap.solid().val().distance(shape.val()) for cap in caps)
             if distance > 0.01:
                 issues.append(

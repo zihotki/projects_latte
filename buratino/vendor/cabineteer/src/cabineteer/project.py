@@ -269,11 +269,11 @@ class CabinetProject:
         layout = layout_with_face_occupancy(self.layout, spec, configs[spec.lower])
         result = resolve_profile_assembly(layout, spec.roof, spec.boxes,
                                           spec.cap_owner, spec.cap_names, spec.frame,
-                                          spec.cap_material)
+                                          spec.cap_material, spec.shared_owner)
         placements = {p.name: p for p in result.layout.placements}
         lower = native_carcass_parts(spec.lower, configs[spec.lower], placements[spec.lower])
         anchor = spec.boxes[0]
-        p = placements[anchor.name].origin_mm
+        p = placements[spec.shared_owner or anchor.name].origin_mm
         row_origin = (p[0] - anchor.x_mm, p[1], p[2])
         faces = assembly_faces(spec, configs[spec.lower], placements[spec.lower], row_origin)
         parts = lower + result.parts + faces

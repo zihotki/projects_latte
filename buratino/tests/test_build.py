@@ -115,7 +115,8 @@ def test_drawer_reports_keep_actual_parts_and_unverified_work_visible(root, tmp_
     assert "Physical part IDs:" not in assembly
     assert 'id="drawer-pose-toggle"' in viewer
     assert 'id="drawer-pose-toggle" type="button" aria-pressed="false" hidden' in viewer
-    assert 'id="viewer-sidebar"' in viewer
+    assert 'id="viewer-toolbar" aria-label="Cabinet viewer controls"' in viewer
+    assert 'id="viewer-sheet" aria-label="Cabinet details"' in viewer
     assert 'id="parts-tab"' in viewer
     assert 'id="isolate-selection"' in viewer
     assert "ui.drawerPose.setAttribute('aria-pressed', String(open))" in viewer
