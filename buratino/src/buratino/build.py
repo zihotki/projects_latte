@@ -538,6 +538,33 @@ def render_documents(
             ]
         )
     (directory / "parts.csv").write_text(buffer.getvalue(), encoding="utf-8")
+    if result.get("assembly"):
+        buffer = io.StringIO(newline="")
+        fields = (
+            "id",
+            "owner",
+            "component",
+            "material",
+            "quantity",
+            "stock_mm",
+            "local_frame",
+            "profile_mm",
+            "extrusion_mm",
+            "operations",
+            "mounting",
+        )
+        writer = csv.DictWriter(buffer, fieldnames=fields)
+        writer.writeheader()
+        for part in result["assembly"]["parts"]:
+            writer.writerow(
+                {
+                    key: json.dumps(value)
+                    if isinstance(value, dict | list | tuple)
+                    else value
+                    for key, value in part.items()
+                }
+            )
+        (directory / "parts.csv").write_text(buffer.getvalue(), encoding="utf-8")
     unique_checks = {
         (issue["severity"], issue["code"], issue["message"])
         for issue in result["checks"]
@@ -582,6 +609,28 @@ def render_documents(
         )
         + f"</ul><p>Input identity: <code>{result['input_identity']}</code></p>"
     )
+    if result.get("assembly"):
+        operations = []
+        for part in result["assembly"]["parts"]:
+            for operation in part["operations"]:
+                operations.append(
+                    f"<li>{html.escape(part['id'])}: "
+                    f"{html.escape(operation['kind'])} on "
+                    f"{html.escape(operation['target'])} "
+                    f"({html.escape(operation['status'])})</li>"
+                )
+        content = (
+            f"<p>Occupied dimensions: {dims['width']:g} × {dims['height']:g} × "
+            f"{dims['depth']:g} mm.</p>"
+            '<p><a href="preview.html">Inspect 3D model</a> · '
+            '<a href="parts.csv">Draft cut list</a> · '
+            '<a href="result.json">Calculation JSON</a></p>'
+            + _table(cut_groups, part_codes)
+            + "<h2>Profile operations</h2><ul>"
+            + "".join(operations)
+            + "</ul><p>Hardware, support, joinery and installation "
+            "remain unverified.</p>"
+        )
     (directory / "report.html").write_text(
         _page(result["name"], content), encoding="utf-8"
     )
@@ -662,6 +711,11 @@ def render_documents(
         )
         + "<p><a href='report.html'>Return to the review report</a></p>"
     )
+    if result.get("assembly"):
+        assembly = (
+            "<p>Assembly and installation are unverified. See the modeled "
+            "panel profiles in the calculation JSON.</p>" + "".join(panel_sections)
+        )
     (directory / "assembly.html").write_text(
         _page("Draft cabinet assembly", assembly), encoding="utf-8"
     )

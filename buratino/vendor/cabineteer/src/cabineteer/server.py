@@ -2976,6 +2976,8 @@ async def list_tools() -> list[types.Tool]:
                         },
                     },
                     "worktop": _worktop_schema(),
+                    "layout": {"type": "object", "description": "Native row/stack layout."},
+                    "profile_assembly": {"type": "object", "description": "Native roof, frame, box and face inputs."},
                 },
                 "required": ["name", "cabinets"],
             },
@@ -6106,6 +6108,9 @@ def _project_summary(project, path) -> dict:
         "consistency_issues": check_project_consistency(project),
         "saved_to": str(path),
     }
+    if project.layout is not None or project.profile_assembly is not None:
+        from .profiles import assembly_records
+        out["assembly"] = assembly_records(project.resolved_assembly())
     if project.forked_from is not None:
         out["forked_from"] = project.forked_from
     if project.worktop is not None:
@@ -6247,9 +6252,15 @@ async def _tool_load_project(args: dict) -> list[types.TextContent]:
             "overrides":       sorted(pc.overrides),
         })
 
+    assembly = None
+    if project.layout is not None or project.profile_assembly is not None:
+        from .profiles import assembly_records
+        assembly = assembly_records(project.resolved_assembly())
+
     return _ok({
         "name": project.name,
         "cabinet_count": len(project.cabinets),
+        **({"assembly": assembly} if assembly is not None else {}),
         "project": project_to_dict(project),
         "resolved": per_cabinet,
         "note": (
@@ -6264,6 +6275,15 @@ async def _tool_evaluate_project(args: dict) -> list[types.TextContent]:
     from .project import check_project_consistency
 
     project = _project_from_args(args)
+
+    if project.layout is not None or project.profile_assembly is not None:
+        from .profiles import assembly_records, evaluate_assembly
+        native = project.resolved_assembly()
+        assembly = assembly_records(native)
+        issues = evaluate_assembly(native)
+        return _ok({"project": project.name, "assembly": assembly, "issues": issues,
+                    "summary": {"pass": not issues, "status": "draft",
+                                "note": "Cap contacts and overlaps checked; hardware and installation remain unverified."}})
 
     by_cabinet: dict[str, dict] = {}
     total_errors = 0
@@ -6343,6 +6363,27 @@ async def _tool_generate_project_cutlist(args: dict) -> list[types.TextContent]:
             )
         projects = [_project_from_args(args)]
         out_name = projects[0].name
+    if any(p.layout is not None or p.profile_assembly is not None for p in projects):
+        if len(projects) != 1:
+            raise ValueError("Native profile assemblies do not support batch cutlists")
+        from .profiles import assembly_records
+        import csv
+        import json
+        _safe_stem(out_name, kind="project name")
+        assembly = assembly_records(projects[0].resolved_assembly())
+        out_dir = data_dir() / "cutlists" / out_name
+        out_dir.mkdir(parents=True, exist_ok=True)
+        json_path = out_dir / "parts.json"
+        csv_path = out_dir / "parts.csv"
+        json_path.write_text(json.dumps(assembly, indent=2), encoding="utf-8")
+        with csv_path.open("w", newline="", encoding="utf-8") as stream:
+            writer = csv.DictWriter(stream, fieldnames=["id", "owner", "component", "material", "quantity", "stock_mm", "local_frame", "profile_mm", "extrusion_mm", "operations", "mounting"])
+            writer.writeheader()
+            for part in assembly["parts"]:
+                writer.writerow({key: json.dumps(value) if isinstance(value, (dict, list, tuple)) else value for key, value in part.items()})
+        return _ok({"project": projects[0].name, "assembly": assembly,
+                    "parts": assembly["parts"], "status": "draft",
+                    "files": {"json": str(json_path), "csv": str(csv_path)}})
     # Inline project payloads and batch names skip save_project's validation,
     # so re-check before the name becomes an output directory / file stem.
     _safe_stem(out_name, kind="batch name" if batch_names else "project name")
@@ -6736,6 +6777,21 @@ async def _tool_visualize_project(args: dict) -> list[types.TextContent]:
     import cadquery as cq  # raises in lite mode; call_tool wraps into an error
 
     project = _project_from_args(args)
+    if project.layout is not None or project.profile_assembly is not None:
+        from .profiles import assembly_records
+        native = project.resolved_assembly()
+        run_assy = cq.Assembly(name=project.name)
+        for part in native.parts:
+            run_assy.add(part.solid(), name=part.id)
+        result = _visualize_assembly(
+            run_assy, list(native.parts),
+            output_dir=str(args.get("output_dir", "~/.cabineteer/visualizations")),
+            name=project.name, open_browser=bool(args.get("open_browser", True)),
+            tolerance=float(args.get("tolerance", 0.1)),
+            info={"status": "Draft — not for manufacturing"},
+        )
+        return _ok({"project": project.name, **result,
+                    "assembly": assembly_records(native)})
     # Inline project payloads skip save_project's validation, so re-check the
     # name before it becomes an output GLB/HTML file stem.
     _safe_stem(project.name, kind="project name")

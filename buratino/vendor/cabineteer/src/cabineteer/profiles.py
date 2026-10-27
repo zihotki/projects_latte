@@ -932,3 +932,73 @@ def _bounds_union(a: Bounds3D, b: Bounds3D) -> Bounds3D:
         max(a.max_y, b.max_y),
         max(a.max_z, b.max_z),
     )
+
+
+def assembly_records(assembly: ProfileAssembly) -> dict:
+    """Return the durable, JSON-ready description used by assembly consumers."""
+    from dataclasses import asdict
+
+    parts = []
+    for part in assembly.parts:
+        parts.append(
+            {
+                "id": part.id,
+                "owner": part.owner,
+                "component": part.component,
+                "material": part.material,
+                "quantity": part.quantity,
+                "stock_mm": dict(
+                    zip(("length", "width", "thickness"), part.stock_mm, strict=True)
+                ),
+                "local_frame": asdict(part.local_frame),
+                "profile_mm": part.local_profile_mm,
+                "extrusion_mm": part.local_extrusion_mm,
+                "operations": [asdict(operation) for operation in part.operations],
+                "mounting": getattr(part, "mounting", ""),
+            }
+        )
+    return {
+        "layout": asdict(assembly.layout),
+        "parts": parts,
+        "hardware_status": assembly.hardware_status,
+        "status": "draft",
+        "manufacturing_ready": False,
+    }
+
+
+def evaluate_assembly(assembly: ProfileAssembly) -> list[dict]:
+    """Check cap contact and interference with profiled box panels."""
+    caps = [p for p in assembly.parts if p.component == "cap"]
+    boxes = [
+        p
+        for p in assembly.parts
+        if isinstance(p, ProfilePart)
+        and p.component in ("side_left", "side_right", "bottom", "back")
+    ]
+    issues = []
+    for panel in boxes:
+        shape = panel.solid()
+        if panel.component in ("side_left", "side_right") and caps:
+            distance = min(cap.solid().val().distance(shape.val()) for cap in caps)
+            if distance > 0.01:
+                issues.append(
+                    {
+                        "severity": "error",
+                        "code": "cap.contact",
+                        "part": panel.id,
+                        "distance_mm": distance,
+                    }
+                )
+        for cap in caps:
+            volume = cap.solid().intersect(shape).val().Volume()
+            if volume > 0.01:
+                issues.append(
+                    {
+                        "severity": "error",
+                        "code": "cap.overlap",
+                        "part": panel.id,
+                        "cap": cap.id,
+                        "volume_mm3": volume,
+                    }
+                )
+    return issues

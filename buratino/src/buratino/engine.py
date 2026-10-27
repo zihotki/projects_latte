@@ -27,6 +27,7 @@ class Calculation:
     configs: list
     result: dict
     drawer_instances: list
+    native_assembly: object = None
 
 
 def _slug(value: str) -> str:
@@ -295,8 +296,71 @@ def _domino_machining(variables: dict, resolved: list) -> dict | None:
     }
 
 
+def _calculate_native_assembly(project: ProjectInputs) -> Calculation:
+    from cabineteer.profiles import assembly_records
+
+    native = project.native_project.resolved_assembly()
+    data = assembly_records(native)
+    bounds = native.layout.occupied_world_bounds_mm
+    dimensions = {
+        "width": bounds.width_mm,
+        "height": bounds.height_mm,
+        "depth": bounds.depth_mm,
+    }
+    parts = []
+    for record in data["parts"]:
+        part = dict(record)
+        part.update(
+            role=record["id"],
+            finished_mm=record["stock_mm"],
+            blank_mm=record["stock_mm"],
+            grain_direction="unknown",
+            grain_status="unverified",
+            edge_treatment="unverified",
+        )
+        parts.append(part)
+    result = {
+        "schema_version": 2,
+        "name": project.native_project.name,
+        "input_identity": project.identity,
+        "status": "draft",
+        "validation_status": "blocked",
+        "manufacturing_ready": False,
+        "dimensions_mm": dimensions,
+        "overall_dimensions_mm": dimensions,
+        "variables": project.variables,
+        "calculated": project.calculated,
+        "cabinets": [],
+        "frames": [],
+        "upper_cabinets": [],
+        "parts": parts,
+        "drawers": [],
+        "joints": [],
+        "hardware": [],
+        "checks": [
+            {
+                "severity": "unknown",
+                "code": "assembly.unverified",
+                "message": (
+                    "Hardware, joinery, support and installation remain unverified."
+                ),
+            }
+        ],
+        "explanations": {"assembly": "Native resolved assembly and part profiles."},
+        "assembly": data,
+        "cutting_groups": group_cutting_blanks(parts),
+    }
+    return Calculation([], result, [], native)
+
+
 def calculate(project: ProjectInputs) -> Calculation:
     """Resolve native project configs into draft parts, checks, and placements."""
+    if (
+        project.native_project.layout is not None
+        or project.native_project.profile_assembly is not None
+    ):
+        return _calculate_native_assembly(project)
+
     from cabineteer.cabinet import (
         bay_x_offsets,
         face_layout,
@@ -1516,6 +1580,10 @@ def make_geometry(calculation: Calculation):
     from cabineteer.drawer import make_drawer_face
 
     assembly = cq.Assembly(name="base_cabinet")
+    if calculation.native_assembly is not None:
+        for part in calculation.native_assembly.parts:
+            assembly.add(part.solid(), name=part.id)
+        return assembly, list(calculation.native_assembly.parts)
     geometry = []
     cabinet_x = {
         entry["id"]: entry["placement_mm"]["x"]
