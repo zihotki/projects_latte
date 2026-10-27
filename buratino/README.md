@@ -19,6 +19,7 @@ packages and integrity-checked Three.js assets into `buratino/.local/`.
 
 The drawer example uses the same commands with `projects/drawer-cabinet`.
 The two-cabinet draft uses `projects/real-assembly`.
+The bare inclined example uses `projects/inclined-cabinet`.
 Open the loopback URL printed by `preview`. Each page shows one captured build.
 After a new build, refresh the page to load it; the server can stay running.
 Rotate or zoom the model, or choose a standard view. Drawer controls
@@ -34,6 +35,32 @@ from selected cabinet dimensions. Keep observations and unverified choices in
 `observations` and `assumptions`. The `calculated` map records useful resolved
 values. The `project` export is a native `CabinetProject`; optional
 `drawer_configs` entries use native `DrawerConfig` values.
+
+Create one folder under `projects/` for each design. Start from an example's
+`project.py`, then replace its measurements and assumptions. Keep decisions
+in that folder. Build and preview commands accept paths under `projects/`.
+Generated builds stay in the corresponding project's `build/` directory.
+
+Cabineteer owns cabinet dimensions, geometry, hardware, and native project
+models. Buratino loads the project, builds reports and previews, and records
+the source used for each build. The native source is in `vendor/cabineteer`.
+
+### Inclined cabinets
+
+For a bare cabinet, set `roof_angle_deg` on its native `CabinetConfig`. A
+positive angle rises from left to right; a negative angle falls. `height` is
+the maximum exterior height. The top caps the sides, and its thickness is
+measured normal to the slope. Stock dimensions are rectangular blanks that
+need trimming to the finished profiles.
+
+Inclined cabinets currently support bare butt carcasses with an unmachined
+back. Openings, drawers, doors, shelves, columns, edge banding, and machining
+plans are not supported. Separate cabinets need heights calculated from their
+positions to follow the same roof line; the tool does not calculate them yet.
+
+The native hardware catalog includes Hettich Quadro V6 EB20 runners in 380,
+450, and 480 mm lengths. Mounting details and other open assumptions remain
+in the project report and must be checked before construction.
 
 The bare cabinet is 720 × 970 × 500 mm, with 18 mm sides, top and bottom, and a
 6 mm back. The drawer example keeps four overlay fronts, 450 mm Quadro V6 EB20
@@ -66,7 +93,12 @@ need confirmation. A successful build does not approve manufacturing.
 ```bash
 ./buratino/bin/buratino check
 ./buratino/bin/buratino test
+./buratino/bin/buratino test-native
 ```
+
+`test` checks the Buratino project and build harness. `test-native` runs the
+Cabineteer suite in a separate process. The repository test script runs both.
+Some upstream tests skip when optional CAD or cutlist packages are absent.
 
 `doctor` checks Cabineteer provenance, the editable source location, the local
 runtime, and viewing assets. Cabineteer source is tracked in `vendor/cabineteer`.

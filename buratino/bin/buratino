@@ -25,12 +25,21 @@ case "${1:-}" in
   check)
     cd "$buratino_root"
     "$UV_PROJECT_ENVIRONMENT/bin/ruff" check .
-    exec "$UV_PROJECT_ENVIRONMENT/bin/ruff" format --check .
+    "$UV_PROJECT_ENVIRONMENT/bin/ruff" format --check .
+    exec "$UV_PROJECT_ENVIRONMENT/bin/ruff" check --select F821,F822,F823 \
+      vendor/cabineteer/src/cabineteer/{assembly,cabinet,drawer,evaluation,hardware,hettich_eb20,inclined,project,server}.py \
+      vendor/cabineteer/tests/test_inclined.py
     ;;
   test)
     cd "$buratino_root"
     shift
     exec "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest --basetemp .local/pytest "$@"
+    ;;
+  test-native)
+    cd "$buratino_root/vendor/cabineteer"
+    shift
+    exec "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest \
+      --basetemp "$buratino_root/.local/pytest-native" "$@"
     ;;
 esac
 

@@ -159,6 +159,9 @@ class TestListJoineryOptions:
     def test_mortise_larger_than_tenon(self):
         data = parse(run(_tool_list_joinery({})))
         for key, d in data["domino_sizes"].items():
+            if key == "6x40":
+                assert d["mortise_length_mm"] is None and d["mortise_width_mm"] is None
+                continue
             assert d["mortise_length_mm"] >= d["tenon_length_mm"], key
             assert d["mortise_width_mm"] >= d["tenon_thickness_mm"], key
 

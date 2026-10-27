@@ -2963,7 +2963,13 @@ async def list_tools() -> list[types.Tool]:
                                 "name": {"type": "string"},
                                 "config": {
                                     "type": "object",
-                                    "description": "Per-cabinet config — same shape as design_cabinet / design_multi_column_cabinet args.",
+                                    "description": (
+                                        "Per-cabinet config. For a bare inclined cabinet, "
+                                        "roof_angle_deg is signed left to right and height "
+                                        "is the maximum exterior height. The top caps the "
+                                        "sides. Openings, columns, shelves, edge banding, "
+                                        "and machined back captures are unsupported."
+                                    ),
                                 },
                             },
                             "required": ["name", "config"],

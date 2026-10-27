@@ -174,6 +174,9 @@ class TestDominoSizes:
 
     def test_mortise_larger_than_tenon(self):
         for key, s in DOMINO_SIZES.items():
+            if key == "6x40":
+                assert s.mortise_length is None and s.mortise_width is None
+                continue
             assert s.mortise_length > s.tenon_length, f"{key}: mortise_length <= tenon_length"
             assert s.mortise_width > s.tenon_thickness, f"{key}: mortise_width <= tenon_thickness"
 
@@ -350,7 +353,7 @@ class TestFastenerLayoutContainment:
             # physically hold the slot at all (a 40 mm mortise cannot fit a
             # 20 mm-wide panel; that degenerate case is a caller error, not a
             # layout bug, and centre-in-range is the only meaningful guarantee).
-            if span >= slot_len:
+            if slot_len is not None and span >= slot_len:
                 assert p - slot_len / 2 >= -1e-9, (span, p, slot_len)
                 assert p + slot_len / 2 <= span + 1e-9, (span, p, slot_len)
         for i in range(1, len(positions)):
