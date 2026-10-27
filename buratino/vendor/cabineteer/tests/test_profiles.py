@@ -537,12 +537,72 @@ def test_full_native_profile_assembly(level, overlay_top):
     assert parts["upper.left.door"].y_mm == -20
     drawer_face = parts["lower.drawer.face"]
     lower_door = parts["lower.face.door"]
+    assert drawer_face.profile_xz_mm[0][0] == pytest.approx(2)
+    assert drawer_face.profile_xz_mm[1][0] == pytest.approx(718)
+    assert drawer_face.stock_mm[0] == pytest.approx(716)
+    assert lower_door.profile_xz_mm[0][0] == pytest.approx(2)
+    assert lower_door.profile_xz_mm[1][0] == pytest.approx(718)
+    assert lower_door.stock_mm[0] == pytest.approx(716)
     assert drawer_face.profile_xz_mm[0][1] == 15
     assert drawer_face.profile_xz_mm[2][1] == 258 + overlay_top
     assert lower_door.profile_xz_mm[0][1] == 260 + overlay_top
     assert drawer_face.solid().intersect(
         lower_door.solid()
     ).val().Volume() == pytest.approx(0)
+    if level and overlay_top == 3:
+        from dataclasses import replace
+        from cabineteer.cabinet import face_layout
+
+        for num_doors in (1, 2):
+            adjusted_cfg = replace(
+                cfg,
+                openings=[
+                    cfg.openings[0],
+                    replace(cfg.openings[1], num_doors=num_doors),
+                ],
+            )
+            adjusted_spec = replace(
+                spec,
+                faces=replace(spec.faces, outer_reveal_mm=3),
+            )
+            adjusted_project = replace(
+                project,
+                cabinets=(ProjectCabinet("lower", adjusted_cfg),),
+                profile_assembly=adjusted_spec,
+            )
+            adjusted_parts = adjusted_project.resolved_assembly().parts
+            adjusted_drawer = next(
+                part for part in adjusted_parts if part.id == "lower.drawer.face"
+            )
+            adjusted_doors = sorted(
+                (
+                    part
+                    for part in adjusted_parts
+                    if part.id == "lower.face.door"
+                ),
+                key=lambda part: part.profile_xz_mm[0][0],
+            )
+            assert len(adjusted_doors) == num_doors
+            assert adjusted_drawer.profile_xz_mm[0][0] == pytest.approx(3)
+            assert adjusted_drawer.profile_xz_mm[1][0] == pytest.approx(717)
+            assert adjusted_drawer.stock_mm[0] == pytest.approx(714)
+            assert adjusted_doors[0].profile_xz_mm[0][0] == pytest.approx(3)
+            assert adjusted_doors[-1].profile_xz_mm[1][0] == pytest.approx(717)
+            if num_doors == 2:
+                native_doors = sorted(
+                    (
+                        panel
+                        for panel in face_layout([adjusted_cfg])
+                        if panel.kind == "door"
+                    ),
+                    key=lambda panel: panel.x,
+                )
+                assert adjusted_doors[0].profile_xz_mm[1][0] == pytest.approx(
+                    native_doors[0].x + native_doors[0].width
+                )
+                assert adjusted_doors[1].profile_xz_mm[0][0] == pytest.approx(
+                    native_doors[1].x
+                )
     placements = {p.name: p for p in result.layout.placements}
     assert placements["upper.left"].occupied_world_bounds_mm.min_y == 110
     assert result.layout.occupied_world_bounds_mm.min_y == -18

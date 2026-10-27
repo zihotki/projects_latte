@@ -903,6 +903,13 @@ def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
     panels = face_layout(
         [cfg], face_thickness=face.thickness_mm, face_top_style="plain"
     )
+    door_panels = sorted(
+        (panel for panel in panels if panel.kind == "door"), key=lambda panel: panel.x
+    )
+    door_left = door_panels[0].x if door_panels else None
+    door_right = (
+        door_panels[-1].x + door_panels[-1].width if door_panels else None
+    )
     drawer_bottom = cfg.bottom_thickness - drawer.face_overlay_bottom
     drawer_top = cfg.bottom_thickness + drawer.opening_height + drawer.face_overlay_top
     door_gap = cfg.face_gap_mm if cfg.door_gap_mm is None else cfg.door_gap_mm
@@ -915,15 +922,31 @@ def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
             continue
         component = "door" if panel.kind == "door" else "face"
         prefix = "face" if component == "door" else "drawer"
+        # The profile assembly uses one declared outer reveal for the lower
+        # fronts. Native drawer faces run flush to the cabinet sides, while
+        # door width comes from its hinge overlay. Adjust only the outer edge
+        # of each end leaf so a paired door keeps its center seam.
+        panel_x = panel.x
+        panel_width = panel.width
+        if component == "face":
+            panel_x = face.outer_reveal_mm
+            panel_width = cfg.width - 2 * face.outer_reveal_mm
+        else:
+            if panel.x == door_left:
+                right = panel.x + panel.width
+                panel_x = face.outer_reveal_mm
+                panel_width = right - panel_x
+            if panel.x + panel.width == door_right:
+                panel_width = cfg.width - face.outer_reveal_mm - panel_x
         bottom = drawer_top + mixed_gap if component == "door" else drawer_bottom
         top = panel.z + panel.height if component == "door" else drawer_top
         if top <= bottom:
             raise ValueError("drawer overlay leaves no usable face height")
         points = (
-            (panel.x, bottom),
-            (panel.x + panel.width, bottom),
-            (panel.x + panel.width, top),
-            (panel.x, top),
+            (panel_x, bottom),
+            (panel_x + panel_width, bottom),
+            (panel_x + panel_width, top),
+            (panel_x, top),
         )
         parts.append(
             ProfilePart(
@@ -934,7 +957,7 @@ def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
                 points,
                 -face.thickness_mm,
                 face.thickness_mm,
-                (panel.width, top - bottom, face.thickness_mm),
+                (panel_width, top - bottom, face.thickness_mm),
                 orientation="back",
                 world_offset_mm=placement.origin_mm,
             )
