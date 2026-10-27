@@ -736,18 +736,30 @@ def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
                 stock,
             )
         )
-    for panel in face_layout(
+    panels = face_layout(
         [cfg], face_thickness=face.thickness_mm, face_top_style="plain"
-    ):
+    )
+    drawer_bottom = cfg.bottom_thickness - drawer.face_overlay_bottom
+    drawer_top = cfg.bottom_thickness + drawer.opening_height + drawer.face_overlay_top
+    door_gap = cfg.face_gap_mm if cfg.door_gap_mm is None else cfg.door_gap_mm
+    drawer_gap = (
+        cfg.face_gap_mm if cfg.drawer_front_gap_mm is None else cfg.drawer_front_gap_mm
+    )
+    mixed_gap = max(door_gap, drawer_gap)
+    for panel in panels:
         if panel.kind not in ("door", "drawer_face"):
             continue
         component = "door" if panel.kind == "door" else "face"
         prefix = "face" if component == "door" else "drawer"
+        bottom = drawer_top + mixed_gap if component == "door" else drawer_bottom
+        top = panel.z + panel.height if component == "door" else drawer_top
+        if top <= bottom:
+            raise ValueError("drawer overlay leaves no usable face height")
         points = (
-            (panel.x, panel.z),
-            (panel.x + panel.width, panel.z),
-            (panel.x + panel.width, panel.z + panel.height),
-            (panel.x, panel.z + panel.height),
+            (panel.x, bottom),
+            (panel.x + panel.width, bottom),
+            (panel.x + panel.width, top),
+            (panel.x, top),
         )
         parts.append(
             ProfilePart(
@@ -758,7 +770,7 @@ def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
                 points,
                 -face.thickness_mm,
                 face.thickness_mm,
-                (panel.width, panel.height, face.thickness_mm),
+                (panel.width, top - bottom, face.thickness_mm),
                 orientation="back",
                 world_offset_mm=placement.origin_mm,
             )
@@ -843,3 +855,80 @@ def face_boundary_gap(
             "a fixed faceboard boundary needs a named face neighbor or gap"
         )
     return max(named)
+
+
+def layout_with_face_occupancy(layout: LayoutNode, spec: ProfileAssemblySpec, cfg):
+    """Include front envelopes before layout resolves stack positions."""
+    if spec.faces is None:
+        return layout
+    from types import SimpleNamespace
+
+    generated = assembly_faces(
+        spec, cfg, SimpleNamespace(origin_mm=(0, 0, 0)), (0, 0, 0)
+    )
+    box_x = {box.name: box.x_mm for box in spec.boxes}
+    envelopes = {}
+    for part in generated:
+        if not isinstance(part, ProfilePart):
+            continue
+        shift = box_x.get(part.owner, 0)
+        xs = [x - shift for x, _ in part.profile_xz_mm]
+        zs = [z for _, z in part.profile_xz_mm]
+        envelopes[part.owner] = (
+            Bounds3D(
+                min(xs),
+                part.y_mm,
+                min(zs),
+                max(xs),
+                part.y_mm + part.extrusion_mm,
+                max(zs),
+            )
+            if part.owner not in envelopes
+            else _bounds_union(
+                envelopes[part.owner],
+                Bounds3D(
+                    min(xs),
+                    part.y_mm,
+                    min(zs),
+                    max(xs),
+                    part.y_mm + part.extrusion_mm,
+                    max(zs),
+                ),
+            )
+        )
+
+    def include(node, active):
+        if isinstance(node, LayoutLeaf):
+            bounds = envelopes.get(node.name)
+            if bounds is None:
+                return node
+            if node.occupied_bounds_mm is not None:
+                bounds = _bounds_union(node.occupied_bounds_mm, bounds)
+            return replace(node, occupied_bounds_mm=bounds)
+        if isinstance(node, Frame):
+            return node
+        if id(node) in active:
+            raise ValueError("layout contains a cycle")
+        if isinstance(node, Row | Stack):
+            active.add(id(node))
+            try:
+                return replace(
+                    node,
+                    children=tuple(include(child, active) for child in node.children),
+                )
+            finally:
+                active.remove(id(node))
+        raise TypeError(f"unsupported layout node: {type(node).__name__}")
+
+    return include(layout, set())
+
+
+def _bounds_union(a: Bounds3D, b: Bounds3D) -> Bounds3D:
+    return Bounds3D(
+        min(a.min_x, b.min_x),
+        min(a.min_y, b.min_y),
+        min(a.min_z, b.min_z),
+        max(a.max_x, b.max_x),
+        max(a.max_y, b.max_y),
+        max(a.max_z, b.max_z),
+    )

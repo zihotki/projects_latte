@@ -39,7 +39,7 @@ from .joinery import (
 )
 from .layout import LayoutNode, layout_from_dict, layout_to_dict
 from .profiles import (
-    ProfileAssembly, ProfileAssemblySpec, assembly_faces, native_carcass_parts,
+    ProfileAssembly, ProfileAssemblySpec, assembly_faces, layout_with_face_occupancy, native_carcass_parts,
     profile_spec_from_dict, profile_spec_to_dict, resolve_profile_assembly,
     ProfilePart, with_profile_operations,
 )
@@ -265,10 +265,11 @@ class CabinetProject:
         if self.layout is None or self.profile_assembly is None:
             raise ValueError("profile assembly and layout are required")
         spec = self.profile_assembly
-        result = resolve_profile_assembly(self.layout, spec.roof, spec.boxes,
+        configs = dict(self.resolved())
+        layout = layout_with_face_occupancy(self.layout, spec, configs[spec.lower])
+        result = resolve_profile_assembly(layout, spec.roof, spec.boxes,
                                           spec.cap_owner, spec.cap_names, spec.frame,
                                           spec.cap_material)
-        configs = dict(self.resolved())
         placements = {p.name: p for p in result.layout.placements}
         lower = native_carcass_parts(spec.lower, configs[spec.lower], placements[spec.lower])
         anchor = spec.boxes[0]

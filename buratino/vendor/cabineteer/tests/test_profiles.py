@@ -435,7 +435,8 @@ def test_independent_face_gaps_and_snapshot():
 
 
 @pytest.mark.parametrize("level", [False, True])
-def test_full_native_profile_assembly(level):
+@pytest.mark.parametrize("overlay_top", [3, 7])
+def test_full_native_profile_assembly(level, overlay_top):
     from cabineteer.cabinet import CabinetConfig, OpeningConfig
     from cabineteer.drawer import DrawerConfig, build_drawer, drawer_part_offsets
     from cabineteer.layout import LayoutLeaf, Row, Stack
@@ -490,6 +491,8 @@ def test_full_native_profile_assembly(level):
         use_standard_height=False,
         applied_face=False,
         joinery_style="butt",
+        face_overlay_top=overlay_top,
+        face_overlay_bottom=3,
     )
     drawer = DrawerConfig(
         **{
@@ -532,6 +535,56 @@ def test_full_native_profile_assembly(level):
         for actual, target in zip(parts[name].profile_xz_mm, expected, strict=True):
             assert actual == pytest.approx(target)
     assert parts["upper.left.door"].y_mm == -20
+    drawer_face = parts["lower.drawer.face"]
+    lower_door = parts["lower.face.door"]
+    assert drawer_face.profile_xz_mm[0][1] == 15
+    assert drawer_face.profile_xz_mm[2][1] == 258 + overlay_top
+    assert lower_door.profile_xz_mm[0][1] == 260 + overlay_top
+    assert drawer_face.solid().intersect(
+        lower_door.solid()
+    ).val().Volume() == pytest.approx(0)
+    placements = {p.name: p for p in result.layout.placements}
+    assert placements["upper.left"].occupied_world_bounds_mm.min_y == 110
+    assert result.layout.occupied_world_bounds_mm.min_y == -18
+    for part in parts.values():
+        bounds = part.solid().val().BoundingBox()
+        occupied = result.layout.occupied_world_bounds_mm
+        assert occupied.min_x <= bounds.xmin + 0.01
+        assert occupied.min_y <= bounds.ymin + 0.01
+        assert occupied.min_z <= bounds.zmin + 0.01
+        assert occupied.max_x >= bounds.xmax - 0.01
+        assert occupied.max_y >= bounds.ymax - 0.01
+        assert occupied.max_z >= bounds.zmax - 0.01
+    if not level and overlay_top == 3:
+        from dataclasses import replace
+
+        legacy = replace(cfg, face_gap_mm=3, door_gap_mm=None, drawer_front_gap_mm=None)
+        fallback = replace(
+            project, cabinets=(ProjectCabinet("lower", legacy),)
+        ).resolved_assembly()
+        doors = {p.id: p for p in fallback.parts}
+        assert doors["upper.left.door"].profile_xz_mm[1][0] == 358.5
+        assert doors["upper.right.door"].profile_xz_mm[0][0] == 361.5
+        explicit = replace(legacy, door_gap_mm=4)
+        overridden = replace(
+            project, cabinets=(ProjectCabinet("lower", explicit),)
+        ).resolved_assembly()
+        doors = {p.id: p for p in overridden.parts}
+        assert doors["upper.left.door"].profile_xz_mm[1][0] == 358
+        assert doors["upper.right.door"].profile_xz_mm[0][0] == 362
+        assert (
+            doors["lower.face.door"].profile_xz_mm[0][1]
+            - doors["lower.drawer.face"].profile_xz_mm[2][1]
+        ) == 4
+        shifted_face = replace(
+            spec.faces, drawer={**drawer_data, "face_overlay_bottom": 25}
+        )
+        shifted = replace(
+            project, profile_assembly=replace(spec, faces=shifted_face)
+        ).resolved_assembly()
+        shifted_placements = {p.name: p for p in shifted.layout.placements}
+        assert shifted_placements["lower"].origin_mm[2] == 7
+        assert shifted_placements["frame.support"].origin_mm[2] == 727
     assert parts["upper.left.side_left"].operations[0].kind == "edge_bevel"
     assert parts["upper.left.door"].operations[0].kind == "profile_trim"
     side = parts["lower.drawer.side_left"]
@@ -639,3 +692,22 @@ def test_fixed_faceboard_boundary_gap():
         )
         == 4
     )
+
+
+def test_legacy_paired_door_gap_survives_snapshot():
+    from cabineteer.cabinet import CabinetConfig, OpeningConfig, face_layout
+    from cabineteer.project import (
+        CabinetProject,
+        ProjectCabinet,
+        project_from_dict,
+        project_to_dict,
+    )
+
+    cfg = CabinetConfig(face_gap_mm=3, openings=[OpeningConfig(684, "door_pair")])
+    project = CabinetProject("legacy", (ProjectCabinet("cabinet", cfg),))
+    restored = project_from_dict(project_to_dict(project)).resolved()[0][1]
+    doors = [p for p in face_layout([restored]) if p.kind == "door"]
+    assert doors[1].x - (doors[0].x + doors[0].width) == pytest.approx(2)
+    restored.door_gap_mm = 4
+    doors = [p for p in face_layout([restored]) if p.kind == "door"]
+    assert doors[1].x - (doors[0].x + doors[0].width) == pytest.approx(4)
