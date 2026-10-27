@@ -585,6 +585,22 @@ def test_full_native_profile_assembly(level, overlay_top):
         shifted_placements = {p.name: p for p in shifted.layout.placements}
         assert shifted_placements["lower"].origin_mm[2] == 7
         assert shifted_placements["frame.support"].origin_mm[2] == 727
+    from cabineteer.profiles import assembly_records
+
+    records = assembly_records(result)
+    viewer_parts = records["viewer"]["parts"]
+    assert "viewer" not in records["parts"][0]
+    door_record = viewer_parts["upper.left.door"]
+    assert door_record["role"] == "upper.left.door"
+    assert door_record["cabinet_id"] == "upper.left"
+    assert door_record["hinge_side"] == "right"
+    assert door_record["hinge_side_status"] == "assumed_for_preview"
+    assert len(door_record["hinge_pivot_mm"]) == 3
+    assert viewer_parts["lower.drawer.side_left"]["instance_id"] == "lower.drawer"
+    assert any(
+        "upper.left.door" in group["members"]
+        for group in records["viewer"]["cutting_groups"]
+    )
     assert parts["upper.left.side_left"].operations[0].kind == "edge_bevel"
     assert parts["upper.left.door"].operations[0].kind == "profile_trim"
     side = parts["lower.drawer.side_left"]

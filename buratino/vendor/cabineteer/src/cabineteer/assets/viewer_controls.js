@@ -6,7 +6,6 @@ const ui = {
   tableHint: document.getElementById('table-hint'),
   caption: document.getElementById('selection-caption'),
   message: document.getElementById('viewer-message'),
-  grain: document.getElementById('grain-toggle'),
   drawerPose: document.getElementById('drawer-pose-toggle'),
   doorPose: document.getElementById('door-pose-toggle'),
   visibility: document.getElementById('visibility-options'),
@@ -30,6 +29,7 @@ let outlines = new Map();
 let grainMarks = new Map();
 let drawerPartNodes = [];
 let drawersOpen = false;
+let legacyDrawerPose = false;
 let doorPartNodes = [];
 let doorsOpen = false;
 let partRoots = new Map();
@@ -50,6 +50,7 @@ function currentGroup() {
 
 function selectGroup(group) {
   selectedGroup = group?.id ?? null;
+  if (group) document.getElementById('parts-tab')?.click();
   for (const row of ui.table.querySelectorAll('tr')) {
     const active = row.dataset.groupId === selectedGroup;
     row.classList.toggle('selected', active);
@@ -113,29 +114,22 @@ function renderTable() {
     select.setAttribute('aria-pressed', 'false');
     select.addEventListener('click', () => selectGroup(group));
     nameCell.appendChild(select);
-    row.appendChild(nameCell);
-    addCell(row, String(group.quantity), 'numeric');
-    addCell(row, number(dims.length), 'numeric');
-    addCell(row, number(dims.width), 'numeric');
-    addCell(row, number(dims.thickness), 'numeric');
-    const grain = group.grain_direction === 'mixed' ? 'Mixed'
-      : group.grain_direction === 'length' ? 'Length'
-      : group.grain_direction === 'width' ? 'Width' : '—';
-    addCell(row, `${grain}${hasAssumedGrain(group) ? '*' : ''}`);
-    const visibilityCell = document.createElement('td');
-    visibilityCell.className = 'group-visibility-cell';
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'group-visibility-toggle';
-    toggle.addEventListener('click', () => {
+    toggle.addEventListener('click', event => {
+      event.stopPropagation();
       const visible = cuttingGroupVisibility.get(group.id) === false;
       cuttingGroupVisibility.set(group.id, visible);
       updateGroupVisibilityButton(group, toggle);
       applyPartVisibility();
     });
     updateGroupVisibilityButton(group, toggle);
-    visibilityCell.appendChild(toggle);
-    row.appendChild(visibilityCell);
+    nameCell.appendChild(toggle);
+    row.appendChild(nameCell);
+    addCell(row, String(group.quantity), 'numeric');
+    addCell(row, `${number(dims.length)} × ${number(dims.width)} × ${number(dims.thickness)}`);
+    row.addEventListener('click', () => selectGroup(group));
     ui.table.appendChild(row);
   });
   selectGroup(null);
@@ -143,7 +137,7 @@ function renderTable() {
 
 function updateGroupVisibilityButton(group, button) {
   const visible = cuttingGroupVisibility.get(group.id) !== false;
-  button.textContent = visible ? 'Hide' : 'Show';
+  button.textContent = visible ? '−' : '+';
   button.setAttribute('aria-label', `${visible ? 'Hide' : 'Show'} ${group.label} in model; quantity ${group.quantity}`);
   button.title = `${visible ? 'Hide' : 'Show'} all ${group.quantity} ${group.quantity === 1 ? 'panel' : 'panels'} in the model`;
 }
@@ -154,10 +148,39 @@ function humanizeProjectName(name) {
     .replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
+function nodeMatchesRole(name, role) {
+  const value = String(name || '');
+  const target = String(role || '');
+  const sanitize = viewer?.THREE?.PropertyBinding?.sanitizeNodeName;
+  const clean = candidate => sanitize
+    ? sanitize(String(candidate || ''))
+    : String(candidate || '').replace(/[.\/:\[\]]/g, '').replace(/\s/g, '_');
+  const canonical = value
+    .replace(/_part(?:_\d+)?$/, '')
+    .replace(/_\d+$/, '');
+  return value === target || clean(value) === clean(target) || canonical === target ||
+    clean(canonical) === clean(target) ||
+    value.startsWith(`${target}_part`) || value.startsWith(`${target}_`);
+}
+
+function partNode(part) {
+  const role = part.role ?? part.viewer_role ?? part.id;
+  const exact = viewer.scene.getObjectByName(role);
+  if (exact) return exact;
+  let match = null;
+  viewer.scene.traverse(node => {
+    if (!nodeMatchesRole(node.name, role)) return;
+    if (!match || (!node.isMesh && match.isMesh)) match = node;
+  });
+  return match;
+}
+
 function roleForNode(node) {
   let current = node;
   while (current) {
-    const part = result.parts.find(item => item.role === current.name);
+    const part = result.parts.find(item => nodeMatchesRole(
+      current.name, item.role ?? item.viewer_role ?? item.id,
+    ));
     if (part) return part.role;
     current = current.parent;
   }
@@ -167,7 +190,7 @@ function roleForNode(node) {
 function collectPartNodes() {
   roleNodes = new Map(result.parts.map(part => [part.role, []]));
   partRoots = new Map(result.parts.map(part => [
-    part.role, viewer.scene.getObjectByName(part.role),
+    part.role, partNode(part),
   ]));
   viewer.scene.traverse(node => {
     if (!node.isMesh) return;
@@ -253,9 +276,18 @@ function renderVisibilityControls() {
       const drawerNumber = drawer?.drawer_index ?? instanceId;
       addToggle(children, `drawer:${instanceId}`, `D${drawerNumber}`, `Drawer ${drawerNumber}`);
     }
-    if (partsForCabinet.some(part => part.component === 'face')) {
+    if (partsForCabinet.some(part => ['face', 'door', 'drawer_front'].includes(part.component))) {
       addToggle(children, `fronts:${cabinet.id}`, 'Fronts');
     }
+    const individual = document.createElement('details');
+    individual.className = 'part-visibility';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Individual parts';
+    individual.appendChild(summary);
+    for (const part of partsForCabinet) {
+      addToggle(individual, `part:${part.id}`, part.label ?? part.component ?? part.id);
+    }
+    children.appendChild(individual);
     section.appendChild(children);
     ui.visibility.appendChild(section);
   }
@@ -274,15 +306,16 @@ function applyPartVisibility() {
     const subgroupVisible = part.upper_id || part.frame_id || (instanceId
       ? visibilityControls.get(`drawer:${instanceId}`) !== false
       : visibilityControls.get(`carcass:${cabinetId}`) !== false);
-    const frontVisible = part.component !== 'face' ||
+    const frontVisible = !['face', 'door', 'drawer_front'].includes(part.component) ||
       visibilityControls.get(`fronts:${cabinetId}`) !== false;
     const group = groupByPartId.get(part.id);
     const groupVisible = !group || cuttingGroupVisibility.get(group.id) !== false;
     const visible = cabinetVisible && subgroupVisible && frontVisible && groupVisible;
-    if (root) root.visible = visible;
-    for (const line of outlines.get(part.role) ?? []) line.visible = visible;
+    const partVisible = visibilityControls.get(`part:${part.id}`) !== false;
+    if (root) root.visible = visible && partVisible;
+    for (const line of outlines.get(part.role) ?? []) line.visible = visible && partVisible;
     const mark = grainMarks.get(part.role);
-    if (mark) mark.visible = visible && grainVisible;
+    if (mark) mark.visible = visible && partVisible && grainVisible;
   }
 }
 
@@ -707,10 +740,14 @@ function collectDrawerPartNodes() {
   const seen = new Set();
   drawerPartNodes = result.parts
     .filter(part => part.instance_id && !seen.has(part.role) && seen.add(part.role))
-    .map(part => ({part, node: viewer.scene.getObjectByName(part.role)}))
+    .map(part => ({part, node: partNode(part)}))
     .filter(item => item.node)
     .map(({part, node}) => ({part, node, closedY: node.position.y}));
-  ui.drawerPose.hidden = drawerPartNodes.length === 0;
+  let hasLegacyDrawer = false;
+  viewer.scene.traverse(node => { hasLegacyDrawer ||= /^bay\d+_drawer\d+/.test(node.name); });
+  legacyDrawerPose = drawerPartNodes.length === 0 &&
+    typeof viewer.setDrawerState === 'function' && hasLegacyDrawer;
+  ui.drawerPose.hidden = drawerPartNodes.length === 0 && !legacyDrawerPose;
   if (drawerPartNodes.length) setDrawerPose(false);
 }
 
@@ -728,6 +765,14 @@ function drawerPoseDistance(part) {
 
 function setDrawerPose(open) {
   drawersOpen = open;
+  if (legacyDrawerPose) {
+    viewer.setDrawerState(open ? 2 : 0);
+    ui.drawerPose.title = 'Legacy native drawer animation. Illustrative pose only; actual runner stroke and full-extension travel are unverified.';
+    ui.drawerPose.textContent = open ? 'Close drawers' : 'Open drawers';
+    ui.drawerPose.setAttribute('aria-label', ui.drawerPose.title);
+    ui.drawerPose.setAttribute('aria-pressed', String(open));
+    return;
+  }
   const distances = drawerPartNodes.map(({part}) => drawerPoseDistance(part));
   const descriptions = [...new Set(distances.map(({distance, basis}) =>
     `${number(distance)} mm ${basis}`))];
@@ -739,23 +784,31 @@ function setDrawerPose(open) {
   const distancesText = descriptions.join(', ');
   const caveat = 'Illustrative pose only; actual runner stroke and full-extension travel are unverified.';
   ui.drawerPose.title = `Open pose uses ${distancesText}. ${caveat}`;
+  ui.drawerPose.textContent = open ? 'Close drawers' : 'Open drawers';
   ui.drawerPose.setAttribute('aria-label', `${ui.drawerPose.textContent}. ${ui.drawerPose.title}`);
   ui.drawerPose.setAttribute('aria-pressed', String(open));
 }
 
 function collectDoorPartNodes() {
   doorPartNodes = result.parts
-    .filter(part => part.component === 'door' && part.hinge_side === 'right')
-    .map(part => ({part, node: viewer.scene.getObjectByName(part.role)}))
+    .filter(part => part.component === 'door' && ['right', 'left'].includes(part.hinge_side))
+    .map(part => ({part, node: partNode(part)}))
     .filter(item => item.node)
-    .map(({part, node}) => ({
-      part,
-      node,
-      closedPosition: node.position.clone(),
-      closedRotationZ: node.rotation.z,
-      width: Number(part.size_mm?.x),
-    }))
-    .filter(item => Number.isFinite(item.width) && item.width > 0);
+    .map(({part, node}) => {
+      node.updateWorldMatrix(true, false);
+      const bounds = new viewer.THREE.Box3().setFromObject(node);
+      const pivot = new viewer.THREE.Vector3(
+        part.hinge_side === 'right' ? bounds.max.x : bounds.min.x,
+        (bounds.min.y + bounds.max.y) / 2,
+        bounds.max.z,
+      );
+      part.preview_pivot_mm = pivot.toArray();
+      const pivotNode = new viewer.THREE.Object3D();
+      viewer.scene.add(pivotNode);
+      pivotNode.position.copy(pivot);
+      pivotNode.attach(node);
+      return {part, node, pivotNode, sign: part.hinge_side === 'right' ? 1 : -1};
+    });
   ui.doorPose.hidden = doorPartNodes.length === 0;
   if (doorPartNodes.length) setDoorPose(false);
 }
@@ -763,20 +816,13 @@ function collectDoorPartNodes() {
 function setDoorPose(open) {
   doorsOpen = open;
   const angle = open ? Math.PI * 75 / 180 : 0;
-  const cosine = Math.cos(angle);
-  const sine = Math.sin(angle);
-  for (const {node, closedPosition, closedRotationZ, width} of doorPartNodes) {
-    // Rotate each preview root about its right edge in the native X/Z profile
-    // plane. The positive native Z swing moves the free edge toward -Y.
-    node.rotation.z = closedRotationZ + angle;
-    node.position.set(
-      closedPosition.x + width * (1 - cosine),
-      closedPosition.y - width * sine,
-      closedPosition.z,
-    );
+  for (const {pivotNode, sign} of doorPartNodes) {
+    pivotNode.rotation.y = sign * angle;
   }
-  const caveat = 'Illustrative 75° preview pose about each right edge; hinge hardware, clearances, and actual travel are unverified.';
+  const assumed = doorPartNodes.some(({part}) => part.hinge_side_status === 'assumed_for_preview');
+  const caveat = `${assumed ? 'Right edge is a preview assumption; hinge side is unverified. ' : ''}Illustrative 75° swing. Hardware, clearances, and actual travel are unverified.`;
   ui.doorPose.title = caveat;
+  ui.doorPose.textContent = open ? 'Close doors' : 'Open doors';
   ui.doorPose.setAttribute('aria-label', `${ui.doorPose.textContent}. ${caveat}`);
   ui.doorPose.setAttribute('aria-pressed', String(open));
 }
@@ -803,14 +849,28 @@ function setStandardView(name) {
 
 async function loadData() {
   try {
-    const response = await fetch('./result.json', {cache: 'no-store'});
-    if (!response.ok) throw new Error(`result.json returned ${response.status}`);
-    result = await response.json();
-    if (!Array.isArray(result.parts) || !Array.isArray(result.cutting_groups)) {
-      throw new Error('The calculation does not include the expected part table.');
+    if (window.cabinetViewerData?.parts) result = window.cabinetViewerData;
+    else {
+      const response = await fetch('./result.json', {cache: 'no-store'});
+      if (!response.ok) throw new Error(`result.json returned ${response.status}`);
+      result = await response.json();
     }
+    result.parts = (result.parts ?? []).map(part => ({
+      ...part,
+      role: part.role ?? part.viewer_role ?? part.id,
+      cabinet_id: part.cabinet_id ?? part.owner ?? 'cabinet',
+      label: part.label ?? part.component ?? part.id,
+      finished_mm: part.finished_mm ?? part.stock_mm ?? {length: 0, width: 0, thickness: 0},
+    }));
+    result.cutting_groups ??= result.parts.map(part => ({
+      id: `part:${part.id}`, label: part.label, quantity: part.quantity ?? 1,
+      material: part.material ?? 'material unknown', members: [part.id],
+      blank_mm: part.blank_mm ?? part.finished_mm,
+    }));
+    result.cabinets ??= [...new Set(result.parts.map(part => part.cabinet_id))]
+      .map(id => ({id, name: id}));
     const dims = result.overall_dimensions_mm ?? result.dimensions_mm;
-    ui.title.textContent = humanizeProjectName(result.name);
+    ui.title.textContent = result.title ?? humanizeProjectName(result.name ?? 'Cabinet');
     ui.dimensions.textContent = dims
       ? `${number(dims.width)} W × ${number(dims.height)} H × ${number(dims.depth)} D mm overall`
       : 'Cabinet dimensions unavailable';
@@ -818,6 +878,11 @@ async function loadData() {
     const panelCount = result.cutting_groups.reduce((sum, group) => sum + group.quantity, 0);
     document.getElementById('group-count').textContent =
       `${result.cutting_groups.length} groups · ${panelCount} panels`;
+    const links = result.viewer_links ?? {};
+    for (const [id, href] of [['report-link', links.report], ['cutlist-link', links.cutlist]]) {
+      const link = document.getElementById(id);
+      if (href) { link.href = href; link.hidden = false; }
+    }
   } catch (error) {
     setMessage(`Could not load the part list: ${error.message}`, true);
     return false;
@@ -829,7 +894,11 @@ async function waitForViewer() {
   const started = Date.now();
   while (Date.now() - started < 10000) {
     const candidate = window.cabineteerViewer;
-    if (candidate?.renderer?.domElement && candidate.scene.getObjectByName('base_cabinet')) {
+    const hasNamedModel = candidate?.scene.getObjectByName('base_cabinet');
+    const hasMetadataModel = result?.parts?.some(part =>
+      candidate?.scene.getObjectByName(part.role ?? part.viewer_role ?? part.id));
+    const loaded = document.getElementById('loading')?.style.display === 'none';
+    if (candidate?.renderer?.domElement && (hasNamedModel || hasMetadataModel || loaded)) {
       viewer = candidate;
       return true;
     }
@@ -840,6 +909,11 @@ async function waitForViewer() {
 
 async function refreshStatus() {
   try {
+    if (result?.draft_status) {
+      ui.status.textContent = result.draft_status;
+      ui.status.dataset.state = result.draft_state ?? 'draft';
+      return;
+    }
     const response = await fetch('./status.json', {cache: 'no-store'});
     if (!response.ok) throw new Error('status unavailable');
     const {status} = await response.json();
@@ -914,11 +988,52 @@ async function start() {
 for (const button of document.querySelectorAll('[data-view]')) {
   button.addEventListener('click', () => viewer && setStandardView(button.dataset.view));
 }
-ui.grain.addEventListener('click', () => {
-  grainVisible = !grainVisible;
-  ui.grain.setAttribute('aria-pressed', String(grainVisible));
-  ui.grain.textContent = grainVisible ? 'Grain on' : 'Grain off';
+function selectSheetTab(tab) {
+  const panes = { 'tree-tab': 'tree-view', 'parts-tab': 'parts-view', 'settings-tab': 'settings-view' };
+  for (const [buttonId, paneId] of Object.entries(panes)) {
+    document.getElementById(buttonId).setAttribute('aria-selected', String(buttonId === tab));
+    document.getElementById(paneId).hidden = buttonId !== tab;
+  }
+  document.getElementById('sheet-title').textContent = { 'tree-tab': 'Model', 'parts-tab': 'Parts', 'settings-tab': 'Settings' }[tab];
+  document.body.classList.add('sheet-open');
+  document.getElementById('sheet-toggle').setAttribute('aria-expanded', 'true');
+}
+for (const tab of ['tree-tab', 'parts-tab', 'settings-tab']) {
+  document.getElementById(tab)?.addEventListener('click', () => selectSheetTab(tab));
+}
+document.getElementById('sheet-toggle')?.addEventListener('click', event => {
+  const open = document.body.classList.toggle('sheet-open');
+  event.currentTarget.setAttribute('aria-expanded', String(open));
+});
+document.getElementById('show-all')?.addEventListener('click', () => {
+  for (const key of visibilityControls.keys()) visibilityControls.set(key, true);
+  document.querySelectorAll('#visibility-options input').forEach(input => { input.checked = true; });
+  for (const group of result.cutting_groups) cuttingGroupVisibility.set(group.id, true);
+  document.querySelectorAll('.group-visibility-toggle').forEach((button, index) => {
+    updateGroupVisibilityButton(result.cutting_groups[index], button);
+  });
   applyPartVisibility();
+});
+document.getElementById('isolate-selection')?.addEventListener('click', () => {
+  const group = currentGroup();
+  if (!group) return;
+  for (const key of visibilityControls.keys()) visibilityControls.set(key, true);
+  document.querySelectorAll('#visibility-options input').forEach(input => { input.checked = true; });
+  for (const part of result.parts) visibilityControls.set(`part:${part.id}`, group.members.includes(part.id));
+  document.querySelectorAll('#visibility-options input').forEach(input => {
+    if (input.dataset.visibilityGroup?.startsWith('part:')) {
+      input.checked = visibilityControls.get(input.dataset.visibilityGroup) !== false;
+    }
+  });
+  for (const item of result.cutting_groups) cuttingGroupVisibility.set(item.id, item.id === group.id);
+  document.querySelectorAll('.group-visibility-toggle').forEach((button, index) => {
+    updateGroupVisibilityButton(result.cutting_groups[index], button);
+  });
+  applyPartVisibility();
+});
+document.getElementById('reset-selection')?.addEventListener('click', () => {
+  document.getElementById('show-all')?.click();
+  selectGroup(null);
 });
 ui.drawerPose?.addEventListener('click', () => {
   if (viewer && drawerPartNodes.length) setDrawerPose(!drawersOpen);
@@ -929,12 +1044,5 @@ ui.doorPose?.addEventListener('click', () => {
 ui.panelOpacity?.addEventListener('input', () => {
   setPanelOpacity(Number(ui.panelOpacity.value) / 100);
 });
-
-window.addEventListener('keydown', event => {
-  const key = event.key.toLowerCase();
-  if (!['x', 'v', 'o', 'm', 'c'].includes(key)) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-}, true);
 
 start();

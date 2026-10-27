@@ -65,7 +65,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-cabineteer = ["data/*.json"]
+cabineteer = ["data/*.json", "assets/*.js", "assets/*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

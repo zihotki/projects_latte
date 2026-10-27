@@ -6780,6 +6780,49 @@ async def _tool_visualize_project(args: dict) -> list[types.TextContent]:
     if project.layout is not None or project.profile_assembly is not None:
         from .profiles import assembly_records
         native = project.resolved_assembly()
+        assembly_data = assembly_records(native)
+        viewer_parts = []
+        for part in assembly_data["parts"]:
+            viewer_part = assembly_data["viewer"]["parts"][part["id"]]
+            viewer_parts.append({
+                key: viewer_part[key]
+                for key in (
+                    "id", "owner", "cabinet_id", "viewer_role", "component",
+                    "material", "quantity", "stock_mm", "instance_id",
+                    "hinge_side", "hinge_side_status", "hinge_pivot_mm",
+                    "display_open_distance_mm", "preview_pose",
+                )
+                if key in viewer_part
+            } | {
+                "id": part["id"],
+                "label": part["component"].replace("_", " ").title(),
+                "size_mm": {"x": part["stock_mm"]["length"]},
+                "role": viewer_part["role"],
+                "owner": part["owner"],
+                "component": part["component"],
+                "material": part["material"],
+                "quantity": part["quantity"],
+                "stock_mm": part["stock_mm"],
+            })
+        viewer_data = {
+            "name": project.name,
+            "title": project.name.replace("-", " ").title(),
+            "parts": viewer_parts,
+            "cutting_groups": assembly_data["viewer"]["cutting_groups"],
+            "drawers": assembly_data["viewer"]["drawers"],
+            "cabinets": [
+                {"id": owner, "name": owner}
+                for owner in sorted({part["owner"] for part in assembly_data["parts"]})
+            ],
+            "draft_status": "DRAFT · NOT FOR MANUFACTURING",
+            "draft_state": "draft",
+        }
+        bounds = native.layout.occupied_world_bounds_mm
+        viewer_data["dimensions_mm"] = {
+            "width": bounds.max_x - bounds.min_x,
+            "depth": bounds.max_y - bounds.min_y,
+            "height": bounds.max_z - bounds.min_z,
+        }
         run_assy = cq.Assembly(name=project.name)
         for part in native.parts:
             run_assy.add(part.solid(), name=part.id)
@@ -6788,10 +6831,11 @@ async def _tool_visualize_project(args: dict) -> list[types.TextContent]:
             output_dir=str(args.get("output_dir", "~/.cabineteer/visualizations")),
             name=project.name, open_browser=bool(args.get("open_browser", True)),
             tolerance=float(args.get("tolerance", 0.1)),
-            info={"status": "Draft — not for manufacturing"},
+            info={"status": "Draft — not for manufacturing", **viewer_data["dimensions_mm"]},
+            viewer_data=viewer_data,
         )
         return _ok({"project": project.name, **result,
-                    "assembly": assembly_records(native)})
+                    "assembly": assembly_data})
     # Inline project payloads skip save_project's validation, so re-check the
     # name before it becomes an output GLB/HTML file stem.
     _safe_stem(project.name, kind="project name")

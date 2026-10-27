@@ -729,9 +729,25 @@ def render_documents(
 def render_geometry(root: Path, directory: Path, calculation):
     from cabineteer.visualize import visualize_assembly
 
-    from .viewer import viewer_extension
-
     assembly, geometry = make_geometry(calculation)
+    viewer_data = {
+        **calculation.result,
+        "title": calculation.result.get("name", "Cabinet preview"),
+        "viewer_links": {"report": "report.html", "cutlist": "parts.csv"},
+    }
+    assembly_viewer = calculation.result.get("assembly", {}).get("viewer")
+    if assembly_viewer:
+        metadata = assembly_viewer.get("parts", {})
+        viewer_data["parts"] = [
+            {
+                **part,
+                **metadata.get(part["id"], {}),
+                "finished_mm": part.get("finished_mm", part.get("stock_mm", {})),
+            }
+            for part in calculation.result.get("parts", [])
+        ]
+        viewer_data["cutting_groups"] = assembly_viewer.get("cutting_groups", [])
+        viewer_data["drawers"] = assembly_viewer.get("drawers", [])
     generated = visualize_assembly(
         assembly,
         geometry,
@@ -742,6 +758,7 @@ def render_geometry(root: Path, directory: Path, calculation):
             "status": "DRAFT — NOT FOR MANUFACTURING",
             **calculation.result["dimensions_mm"],
         },
+        viewer_data=viewer_data,
     )
     original = Path(generated["html"])
     viewer = original.read_text(encoding="utf-8")
@@ -759,15 +776,7 @@ def render_geometry(root: Path, directory: Path, calculation):
         target = directory / "assets/three" / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(root / ".local/viewer/three" / relative, target)
-    # Extend the upstream viewer without changing the pinned engine source.
-    for name in ("preview.js", "preview.css"):
-        shutil.copy2(
-            Path(__file__).parent / "assets" / name, directory / "assets" / name
-        )
-    extension = viewer_extension()
-    (directory / "preview.html").write_text(
-        viewer.replace("</body>", extension + "</body>"), encoding="utf-8"
-    )
+    (directory / "preview.html").write_text(viewer, encoding="utf-8")
     original.unlink()
     return assembly
 

@@ -798,6 +798,7 @@ def generate_viewer_html(
     drawer_box_finish: Optional[str] = None,
     grain_direction: str = "vertical",
     cutlist_prompt: Optional[str] = None,
+    viewer_data: Optional[dict] = None,
 ) -> Path:
     """Generate a self-contained Three.js HTML viewer with the GLB embedded.
 
@@ -835,6 +836,7 @@ def generate_viewer_html(
         title, glb_b64, cabinet_info or {},
         finish=finish, drawer_box_finish=drawer_box_finish,
         grain_direction=grain_direction, cutlist_prompt=cutlist_prompt,
+        viewer_data=viewer_data,
     )
     output_html.write_text(html, encoding="utf-8")
     return output_html
@@ -853,6 +855,7 @@ def visualize_assembly(
     drawer_box_finish: Optional[str] = None,
     grain_direction: str = "vertical",
     cutlist_prompt: Optional[str] = None,
+    viewer_data: Optional[dict] = None,
 ) -> dict:
     """Export a pre-built CadQuery Assembly to GLB and generate an HTML viewer.
 
@@ -904,6 +907,16 @@ def visualize_assembly(
     if finish_params and grain_direction != "vertical":
         panel_info.setdefault("grain", grain_direction)
 
+    viewer_data = viewer_data or _viewer_data_from_parts(parts)
+    viewer_data.setdefault("name", name.replace("_", " "))
+    viewer_data.setdefault(
+        "dimensions_mm",
+        {
+            key: panel_info[key]
+            for key in ("width", "height", "depth")
+            if key in panel_info
+        },
+    )
     generate_viewer_html(
         glb_path,
         html_path,
@@ -913,6 +926,7 @@ def visualize_assembly(
         drawer_box_finish=drawer_box_finish,
         grain_direction=grain_direction,
         cutlist_prompt=cutlist_prompt,
+        viewer_data=viewer_data,
     )
 
     if open_browser:
@@ -923,6 +937,85 @@ def visualize_assembly(
         "html":        str(html_path),
         "parts":       len(parts),
         "glb_size_kb": round(glb_path.stat().st_size / 1024, 1),
+    }
+
+
+def _viewer_data_from_parts(parts: list) -> dict:
+    """Build a small generic panel contract from native assembly parts."""
+    import re
+
+    records = []
+    for part in parts:
+        ident = str(getattr(part, "id", None) or getattr(part, "name", "panel"))
+        shape = getattr(part, "shape", None)
+        bounds = None
+        if shape is not None:
+            try:
+                solid = shape.val() if callable(getattr(shape, "val", None)) else shape
+                bounds = solid.BoundingBox()
+            except (AttributeError, TypeError, ValueError):
+                bounds = None
+        dims = {
+            "length": float(getattr(bounds, "xlen", 0) or 0),
+            "width": float(getattr(bounds, "zlen", 0) or 0),
+            "thickness": float(getattr(bounds, "ylen", 0) or 0),
+        }
+        owner = str(getattr(part, "owner", None) or "cabinet")
+        component = str(getattr(part, "component", None) or ident)
+        legacy_door = re.match(r"^bay\d+_door\d+(?:_\d+)?$", ident)
+        legacy_drawer_box = re.match(r"^bay\d+_drawer\d+$", ident)
+        legacy_drawer_face = re.match(r"^bay\d+_face\d+$", ident)
+        if legacy_door:
+            component = "door"
+        elif legacy_drawer_box:
+            component = "drawer_box"
+        elif legacy_drawer_face:
+            component = "drawer_front"
+        stock = getattr(part, "stock_mm", None) or getattr(part, "finished_mm", None)
+        if isinstance(stock, tuple | list):
+            stock = dict(zip(("length", "width", "thickness"), stock, strict=True))
+        record = {
+            "id": ident,
+            "role": ident,
+            "viewer_role": ident,
+            "label": component.replace("_", " ").title(),
+            "owner": owner,
+            "cabinet_id": owner,
+            "component": component,
+            "material": str(getattr(part, "material", None) or "material unknown"),
+            "quantity": int(getattr(part, "quantity", 1) or 1),
+            "finished_mm": stock if isinstance(stock, dict) else dims,
+        }
+        if legacy_door:
+            record.update({
+                "hinge_side": "right",
+                "hinge_side_status": "assumed_for_preview",
+                "preview_pose": "illustrative_only",
+            })
+        records.append(record)
+
+    groups_by_signature = {}
+    for record in records:
+        dims = record["finished_mm"]
+        signature = (record["material"], tuple(dims.get(k, 0) for k in ("length", "width", "thickness")))
+        groups_by_signature.setdefault(signature, []).append(record)
+    groups = []
+    for index, (signature, members) in enumerate(sorted(groups_by_signature.items()), 1):
+        material, dims = signature
+        groups.append({
+            "id": f"native-group-{index}",
+            "label": members[0]["label"],
+            "quantity": sum(item["quantity"] for item in members),
+            "material": material,
+            "members": [item["id"] for item in members],
+            "blank_mm": dict(zip(("length", "width", "thickness"), dims, strict=True)),
+        })
+    cabinets = sorted({(part["cabinet_id"], part["cabinet_id"]) for part in records})
+    return {
+        "parts": records,
+        "cutting_groups": groups,
+        "cabinets": [{"id": ident, "name": label} for ident, label in cabinets],
+        "drawers": [],
     }
 
 
@@ -1030,6 +1123,7 @@ def _build_html(
     drawer_box_finish: Optional[str] = None,
     grain_direction: str = "vertical",
     cutlist_prompt: Optional[str] = None,
+    viewer_data: Optional[dict] = None,
 ) -> str:
     """Construct the self-contained HTML viewer string.
 
@@ -1070,6 +1164,12 @@ def _build_html(
     )
     finish_js = _FINISH_JS
     manga_js = _MANGA_JS
+    controls_js = (Path(__file__).parent / "assets" / "viewer_controls.js").read_text(
+        encoding="utf-8"
+    )
+    controls_css = (Path(__file__).parent / "assets" / "viewer_controls.css").read_text(
+        encoding="utf-8"
+    )
 
     # Build info panel rows.  Title and info values are interpolated straight
     # into the HTML, so escape them to prevent markup injection / breakage.
@@ -1095,6 +1195,12 @@ def _build_html(
                 f'<div class="row">{label} <span>{html_escape(str(v))}</span></div>'
             )
     info_html = "\n    ".join(info_rows)
+    viewer_payload = dict(viewer_data or {"parts": []})
+    viewer_payload.setdefault(
+        "dimensions_mm",
+        {key: info[key] for key in ("width", "height", "depth") if key in info},
+    )
+    viewer_data_json = _js_str(viewer_payload)
     caveat_html = ""
     if caveats:
         items = "\n      ".join(
@@ -1111,6 +1217,7 @@ def _build_html(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{safe_title}</title>
   <style>
+{controls_css}
     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
     body {{ background: #f3f5f8; overflow: hidden; font-family: system-ui, -apple-system, sans-serif; }}
     canvas {{ display: block; }}
@@ -1227,16 +1334,21 @@ def _build_html(
 <body>
   <div id="loading">Loading model…</div>
 
-  <div id="panel">
-    <h2>{safe_title}</h2>
-    {info_html}
-    {caveat_html}
-    <div id="finish-ui">
-      <select id="finish-sel" title="Exterior finish (drawer boxes stay Baltic birch)"></select>
-      <button id="grain-btn" title="Toggle show-surface grain orientation">Grain: vertical</button>
-      <button id="cutlist-btn" title="Copy a cutlist request for your assistant">Generate cutlist &rarr;</button>
+  <header id="viewer-toolbar" aria-label="Cabinet viewer controls">
+    <div class="toolbar-heading"><strong id="project-title">{safe_title}</strong><small id="project-dimensions">3D cabinet</small><span id="draft-badge" data-state="draft">DRAFT · NOT FOR MANUFACTURING</span><a id="report-link" href="report.html" hidden>Report</a><a id="cutlist-link" href="parts.csv" hidden>Cut list</a></div>
+    <div class="toolbar" aria-label="Views">
+      <button type="button" data-view="iso">Iso</button><button type="button" data-view="front">Front</button><button type="button" data-view="side">Side</button><button type="button" data-view="top">Top</button>
+      <button id="tree-tab" type="button" role="tab" aria-selected="false">Model</button><button id="parts-tab" type="button" role="tab" aria-selected="false">Parts</button><button id="settings-tab" type="button" role="tab" aria-selected="false">Settings</button>
     </div>
-  </div>
+    <div class="toolbar lower-toolbar"><div class="toolbar visibility-actions"><button id="show-all" type="button">Show all</button><button id="isolate-selection" type="button">Isolate</button><button id="reset-selection" type="button">Reset</button></div><div class="toolbar pose-actions"><button id="drawer-pose-toggle" type="button" aria-pressed="false" hidden>Open drawers</button><button id="door-pose-toggle" type="button" aria-pressed="false" hidden>Open doors</button></div></div>
+  </header>
+  <aside id="viewer-sheet" aria-label="Cabinet details">
+    <div class="sheet-heading"><button id="sheet-toggle" type="button" aria-expanded="false"><span id="sheet-title">Model</span><span aria-hidden="true">⌃</span></button></div>
+    <section id="tree-view" role="tabpanel"><div class="section-heading">Visibility <span id="group-count"></span></div><fieldset id="visibility-controls" aria-label="Model visibility"><legend>Cabinet parts</legend><div id="visibility-options"></div></fieldset></section>
+    <section id="parts-view" role="tabpanel" hidden><div class="section-heading">Cut list <span id="table-hint"></span></div><div id="table-scroll"><table aria-label="Cabinet parts"><thead><tr><th>Part</th><th>Qty</th><th>Blank mm</th></tr></thead><tbody id="parts-body"></tbody></table></div><div id="selection-caption">Select a part or row.</div></section>
+    <section id="settings-view" hidden><div class="section-heading">Settings</div><div id="finish-ui"><select id="finish-sel" title="Exterior finish"></select><button id="grain-btn" title="Toggle grain orientation">Grain: vertical</button><button id="cutlist-btn" type="button">Generate cutlist request</button><label class="opacity-control">Opacity <input type="range" id="panel-opacity" min="0" max="100" value="100" step="5"><output id="panel-opacity-value">100%</output></label></div></section>
+    <div id="viewer-message" role="status" hidden></div>
+  </aside>
 
   <div id="cutlist-modal">
     <div id="cutlist-card">
@@ -1276,6 +1388,7 @@ def _build_html(
     <div id="clip-pos" style="color:#f0c060;font-size:11px;font-variant-numeric:tabular-nums;letter-spacing:0.04em;">— mm</div>
   </div>
 
+  <script>window.cabinetViewerData = {viewer_data_json};</script>
   <script type="importmap">
   {{
     "imports": {{
@@ -1801,6 +1914,9 @@ window.addEventListener('resize', () => {{
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 }});
+  </script>
+  <script type="module">
+{controls_js}
   </script>
 </body>
 </html>"""

@@ -93,7 +93,6 @@ def test_drawer_reports_keep_actual_parts_and_unverified_work_visible(root, tmp_
     report = (directory / "report.html").read_text()
     assembly = (directory / "assembly.html").read_text()
     viewer = (directory / "preview.html").read_text()
-    viewer_script = (directory / "assets/preview.js").read_text()
 
     assert outcome["status"] == "draft"
     assert len(result["drawers"]) == 4
@@ -115,10 +114,13 @@ def test_drawer_reports_keep_actual_parts_and_unverified_work_visible(root, tmp_
     assert "Stock thickness:" in assembly
     assert "Physical part IDs:" not in assembly
     assert 'id="drawer-pose-toggle"' in viewer
-    assert 'id="drawer-pose-toggle" aria-pressed="false"' in viewer
-    assert "ui.drawerPose.setAttribute('aria-pressed', String(open))" in viewer_script
-    assert "result.overall_dimensions_mm ?? result.dimensions_mm" in viewer_script
-    assert "mm overall" in viewer_script
+    assert 'id="drawer-pose-toggle" type="button" aria-pressed="false" hidden' in viewer
+    assert 'id="viewer-sidebar"' in viewer
+    assert 'id="parts-tab"' in viewer
+    assert 'id="isolate-selection"' in viewer
+    assert "ui.drawerPose.setAttribute('aria-pressed', String(open))" in viewer
+    assert "result.overall_dimensions_mm ?? result.dimensions_mm" in viewer
+    assert "mm overall" in viewer
     native_config = read_json(directory / "inputs/native-config.json")[
         "drawer_configs"
     ]["cabinet/column-0/opening-0"]
@@ -339,7 +341,7 @@ def test_preview_reload_uses_latest_build_and_keeps_old_resources(root, project)
                 second_page = response.read()
             second_prefix = f"/revisions/{second['revision']}/"
             assert f'<base href="{second_prefix}">'.encode() in second_page
-            for resource in ("result.json", "cabinet.glb", "assets/preview.js"):
+            for resource in ("result.json", "cabinet.glb", "preview.html"):
                 with urllib.request.urlopen(base + first_prefix + resource) as response:
                     original = project / "build" / first["revision"] / resource
                     assert response.read() == original.read_bytes()

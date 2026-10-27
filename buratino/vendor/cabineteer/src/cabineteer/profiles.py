@@ -940,6 +940,7 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
     from dataclasses import asdict
 
     parts = []
+    viewer_parts = {}
     for part in assembly.parts:
         geometry = None
         if isinstance(part, NativeCarcassPart):
@@ -953,8 +954,7 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
                 "vertices_mm": [v.toTuple() for v in vertices],
                 "triangles": triangles,
             }
-        parts.append(
-            {
+        record = {
                 "id": part.id,
                 "owner": part.owner,
                 "component": part.component,
@@ -970,10 +970,70 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
                 "operations": [asdict(operation) for operation in part.operations],
                 "mounting": getattr(part, "mounting", ""),
             }
+        viewer = {"role": part.id, "cabinet_id": part.owner}
+        if part.component in ("door", "drawer_front"):
+            viewer["hinge_side"] = "right" if part.component == "door" else None
+            viewer["hinge_side_status"] = (
+                "assumed_for_preview" if part.component == "door" else "not_applicable"
+            )
+            viewer["preview_pose"] = "illustrative_only"
+            if part.component == "door":
+                origin = part.local_frame.origin_mm
+                axis = part.local_frame.length_axis
+                thickness_axis = part.local_frame.thickness_axis
+                viewer["hinge_pivot_mm"] = tuple(
+                    origin[i]
+                    + axis[i] * part.stock_mm[0]
+                    + thickness_axis[i] * part.stock_mm[2] / 2
+                    for i in range(3)
+                )
+        if ".drawer." in part.id or part.component == "drawer_front":
+            instance_id = f"{part.owner}.drawer"
+            viewer["instance_id"] = instance_id
+            viewer["display_open_distance_mm"] = (
+                part.stock_mm[0] if part.component.startswith("side_") else 0
+            )
+        viewer_parts[part.id] = viewer
+        parts.append(record)
+    groups_by_signature = {}
+    for part in parts:
+        signature = (
+            part["material"],
+            tuple(part["stock_mm"][key] for key in ("length", "width", "thickness")),
         )
+        groups_by_signature.setdefault(signature, []).append(part)
+    cutting_groups = []
+    for index, (signature, members) in enumerate(sorted(groups_by_signature.items()), 1):
+        material, dimensions = signature
+        label = members[0]["component"].replace("_", " ").title()
+        cutting_groups.append({
+            "id": f"profile-group-{index}",
+            "label": label,
+            "quantity": sum(member["quantity"] for member in members),
+            "material": material,
+            "members": [member["id"] for member in members],
+            "blank_mm": dict(zip(("length", "width", "thickness"), dimensions, strict=True)),
+        })
+    drawers = {}
+    for part in parts:
+        viewer = viewer_parts[part["id"]]
+        if viewer.get("instance_id"):
+            drawer = drawers.setdefault(viewer["instance_id"], {
+                "instance_id": viewer["instance_id"],
+                "drawer_index": 1,
+                "cabinet_id": part["owner"],
+                "box_mm": {"depth": viewer.get("display_open_distance_mm", 0)},
+            })
+            if viewer.get("display_open_distance_mm"):
+                drawer["box_mm"]["depth"] = viewer["display_open_distance_mm"]
     return {
         "layout": asdict(assembly.layout),
         "parts": parts,
+        "viewer": {
+            "parts": viewer_parts,
+            "cutting_groups": cutting_groups,
+            "drawers": list(drawers.values()),
+        },
         "hardware_status": assembly.hardware_status,
         "hardware": assembly.hardware,
         "status": "draft",

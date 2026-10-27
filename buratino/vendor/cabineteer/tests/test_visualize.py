@@ -82,6 +82,20 @@ class TestBuildHtml:
         html = _build_html("Test", "ZmFrZQ==", {})
         assert "OrbitControls" in html
 
+    def test_embeds_compact_native_controls_and_optional_metadata(self):
+        data = {
+            "parts": [{"id": "cabinet.side", "role": "cabinet.side"}],
+            "cutting_groups": [{"id": "g1", "members": ["cabinet.side"]}],
+        }
+        html = _build_html("Test", "ZmFrZQ==", {}, viewer_data=data)
+        assert 'id="viewer-toolbar"' in html and 'id="viewer-sheet"' in html
+        assert 'id="tree-tab"' in html and 'id="parts-tab"' in html
+        assert 'id="show-all"' in html and 'id="isolate-selection"' in html
+        assert "window.cabinetViewerData" in html
+        assert '"cabinet.side"' in html
+        assert "PropertyBinding?.sanitizeNodeName" in html
+        assert "EdgesGeometry" in html
+
 
 class TestDrawerOpenCycle:
     """O cycles closed → partial (gradient) → fully open → closed."""
