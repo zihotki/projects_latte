@@ -9,7 +9,7 @@ import pytest
 
 
 @pytest.mark.parametrize(
-    "name,count", [("profile-row-sloped", 27), ("profile-row-transition", 28)]
+    "name,count", [("profile-row-sloped", 26), ("profile-row-transition", 27)]
 )
 def test_native_project_consumers(monkeypatch, tmp_path, name, count):
     from cabineteer import server
@@ -36,6 +36,12 @@ def test_native_project_consumers(monkeypatch, tmp_path, name, count):
         )
         expected = designed["assembly"]
         assert len(expected["parts"]) == count
+        assert "upper.back" in expected["viewer"]["parts"]
+        assert expected["viewer"]["parts"]["upper.back"]["cabinet_id"] == "upper"
+        assert not any(
+            p["id"] in ("upper.left.back", "upper.right.back")
+            for p in expected["parts"]
+        )
         assert (
             expected["hardware"][0]["slide_key"]
             == "buratino_hettich_quadro_v6_eb20_480"
@@ -55,7 +61,16 @@ def test_native_project_consumers(monkeypatch, tmp_path, name, count):
             assert actual == expected
         assert loaded["project"]["layout"] == payload["layout"]
         assert loaded["project"]["profile_assembly"] == payload["profile_assembly"]
-        assert Path(cutlist["files"]["csv"]).is_file()
+        import csv
+
+        with Path(cutlist["files"]["csv"]).open(newline="") as stream:
+            rows = {row["id"]: row for row in csv.DictReader(stream)}
+        for part_id in ("lower.carcass.back", "upper.back"):
+            assert json.loads(rows[part_id]["stock_mm"]) == {
+                "length": 720,
+                "width": 720 if part_id.startswith("lower") else 600,
+                "thickness": 6,
+            }
         assert Path(viewer["glb"]).is_file()
         assert evaluated["issues"] == []
         assert_rendered_profiles(Path(viewer["glb"]), project.resolved_assembly())
@@ -294,3 +309,51 @@ def test_shared_transition_without_faces_exports_flat_divider():
     assert record["operations"] == []
     assert record["stock_mm"]["thickness"] == 18
     assert evaluate_assembly(assembly) == []
+
+
+@pytest.mark.parametrize("name", ["profile-row-sloped", "profile-row-transition"])
+def test_plain_applied_backs_match_carcass_geometry(name):
+    from cabineteer.profiles import assembly_records
+
+    root = Path(__file__).resolve().parents[3]
+    project = runpy.run_path(str(root / "projects" / name / "project.py"))["project"]
+    cfg = dict(project.resolved())["lower"]
+    assert cfg.back_capture == "overlay"
+    assert cfg.interior_depth == 544
+    assembly = project.resolved_assembly()
+    parts = {p.id: p for p in assembly.parts}
+    lower_back = parts["lower.carcass.back"]
+    upper_back = parts["upper.back"]
+    assert lower_back.stock_mm == (720, 720, 6)
+    assert upper_back.stock_mm == (720, 600, 6)
+    assert upper_back.y_mm == 414 and upper_back.extrusion_mm == 6
+    assert lower_back.solid().val().BoundingBox().ymin == pytest.approx(544)
+    assert lower_back.solid().val().BoundingBox().ymax == pytest.approx(550)
+    assert [
+        p.id for p in assembly.parts if p.owner == "upper" and p.component == "back"
+    ] == ["upper.back"]
+    for part in assembly.parts:
+        if (
+            part.owner == "upper"
+            and part.component in ("side_left", "side_right", "divider", "bottom")
+            or part.component == "cap"
+        ):
+            assert part.solid().val().distance(upper_back.solid().val()) < 0.01
+            assert part.solid().intersect(upper_back.solid()).val().Volume() < 0.01
+            assert part.solid().val().BoundingBox().ylen == pytest.approx(414)
+        if part.id.startswith("lower.carcass.") and part.component in (
+            "side_left",
+            "side_right",
+            "top",
+            "bottom",
+            "floor",
+        ):
+            assert part.solid().val().distance(lower_back.solid().val()) < 0.01
+            assert part.solid().intersect(lower_back.solid()).val().Volume() < 0.01
+            assert part.solid().val().BoundingBox().ylen == pytest.approx(544)
+    records = assembly_records(assembly)
+    assert next(p for p in records["parts"] if p["id"] == "upper.back")["stock_mm"] == {
+        "length": 720,
+        "width": 600,
+        "thickness": 6,
+    }

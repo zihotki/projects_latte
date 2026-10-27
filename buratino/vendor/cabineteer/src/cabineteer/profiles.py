@@ -513,7 +513,15 @@ def resolve_profile_assembly(
                     stock_mm=(x1 - x0, depth, box.bottom_mm),
                 )
             )
-            shared_parts.append(panels[box.name][3])
+        back = box_parts(
+            replace(
+                left,
+                name=shared_owner,
+                width_mm=right.x_mm + right.width_mm - left.x_mm,
+            ),
+            roof,
+        )[3]
+        shared_parts.append(back)
         parts.extend(
             replace(
                 part,

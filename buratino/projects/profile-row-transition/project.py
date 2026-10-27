@@ -34,6 +34,7 @@ lower = CabinetConfig(
     height=720,
     depth=550,
     back_thickness=6,
+    back_capture="overlay",
     door_gap_mm=2,
     drawer_front_gap_mm=2,
     openings=[OpeningConfig(240, "drawer"), OpeningConfig(444, "door")],
