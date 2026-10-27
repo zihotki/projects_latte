@@ -205,6 +205,7 @@ class CabinetConfig:
     width: float = 600.0
     height: float = 720.0
     depth: float = 550.0
+    roof_angle_deg: float = 0.0  # signed left-to-right slope; height is the maximum
 
     # Materials
     side_thickness: float = 18.0  # 3/4" Baltic birch
@@ -1458,6 +1459,8 @@ def carcass_panel_dims(
     the whole case; per-column ones are emitted per column at that column's
     width. A single-stack cabinet has no dividers and no column shelves.
     """
+    if cfg.roof_angle_deg and columns:
+        raise ValueError("Inclined cabinets do not support columns.")
     geo = back_capture_geometry(cfg)
     miter = getattr(cfg, "carcass_corner_style", "butt") == "miter"
     side_t = float(cfg.side_thickness)
@@ -1488,6 +1491,16 @@ def carcass_panel_dims(
             banded_edges=() if cfg.face_top_style in ("cap", "flush") else front,
             bevel_ends=miter),
     ]
+
+    if cfg.roof_angle_deg:
+        from .inclined import blank_sizes
+        left, right, top, back = blank_sizes(cfg)
+        panels[0] = CarcassPanel(kind="side", name="left_side", quantity=1,
+                                 length=left, width=panels[0].width, thickness=side_t)
+        panels.insert(1, CarcassPanel(kind="side", name="right_side", quantity=1,
+                                      length=right, width=panels[0].width, thickness=side_t))
+        panels[3] = CarcassPanel(kind="top", name="top", quantity=1,
+                                 length=top, width=float(geo.top_depth), thickness=float(cfg.top_thickness))
 
     for i, z in enumerate(cfg.fixed_shelf_positions, start=1):
         panels.append(CarcassPanel(
@@ -1536,7 +1549,7 @@ def carcass_panel_dims(
     # for one member of the case.
     panels.append(CarcassPanel(
         kind="back", name="back", quantity=1,
-        length=float(geo.height), width=float(geo.width),
+        length=float(back if cfg.roof_angle_deg else geo.height), width=float(geo.width),
         thickness=float(cfg.back_thickness)))
     return panels
 
@@ -2078,12 +2091,27 @@ def build_cabinet(
     _require_cq()
     if cfg is None:
         cfg = CabinetConfig()
+    if cfg.roof_angle_deg:
+        from .inclined import resolve
+        resolve(cfg)
 
     parts: list[PartInfo] = []
 
     # ── Side panels ──────────────────────────────────────────────────────
     left_side  = make_side_panel(cfg, mirror=False) if not suppress_left_side  else None
     right_side = make_side_panel(cfg, mirror=True)  if not suppress_right_side else None
+    if cfg.roof_angle_deg:
+        from .inclined import height_at, prism, resolve
+        _, _, drop = resolve(cfg)
+        t, w = cfg.side_thickness, cfg.width
+        depth = back_capture_geometry(cfg).bottom_depth if cfg.back_capture == "overlay" else cfg.depth
+        def side(x):
+            return prism([(0, 0), (t, 0), (t, height_at(cfg, x + t) - drop),
+                          (0, height_at(cfg, x) - drop)], depth)
+        if left_side is not None:
+            left_side = side(0)
+        if right_side is not None:
+            right_side = side(w - t)
 
     if left_side is not None:
         parts.append(PartInfo(
@@ -2115,6 +2143,13 @@ def build_cabinet(
 
     # ── Top panel ────────────────────────────────────────────────────────
     top = make_top_panel(cfg) if not suppress_top else None
+    if cfg.roof_angle_deg and top is not None:
+        x0, x1 = 0, cfg.width
+        z0 = cfg.height - cfg.top_thickness
+        top = prism([(0, height_at(cfg, x0) - drop - z0),
+                     (x1 - x0, height_at(cfg, x1) - drop - z0),
+                     (x1 - x0, height_at(cfg, x1) - z0),
+                     (0, height_at(cfg, x0) - z0)], back_capture_geometry(cfg).top_depth).translate((-cfg.side_thickness, 0, 0))
     if top is not None:
         parts.append(PartInfo(
             name="top",
@@ -2139,6 +2174,13 @@ def build_cabinet(
 
     # ── Back panel ───────────────────────────────────────────────────────
     back = make_back_panel(cfg) if not suppress_back else None
+    if cfg.roof_angle_deg and back is not None:
+        x0 = 0 if cfg.back_capture == "overlay" else cfg.side_thickness
+        x1 = cfg.width if cfg.back_capture == "overlay" else cfg.width - cfg.side_thickness
+        back_drop = 0 if cfg.back_capture == "overlay" else drop
+        back = prism([(0, 0), (x1 - x0, 0),
+                      (x1 - x0, height_at(cfg, x1) - back_drop),
+                      (0, height_at(cfg, x0) - back_drop)], cfg.back_thickness)
     if back is not None:
         parts.append(PartInfo(
             name="back",
@@ -2204,6 +2246,27 @@ def build_cabinet(
                  color=cq.Color(0.75, 0.60, 0.40, 0.8))
 
     return assy, parts
+
+
+def dispatch_cabinet_geometry(
+    cfg: CabinetConfig,
+    *,
+    bay_configs: list[CabinetConfig] | None = None,
+    multi_bay_options: dict | None = None,
+) -> tuple["cq.Assembly", list[PartInfo]]:
+    """Select the existing single-cabinet or multi-bay geometry builder.
+
+    Inclined geometry is implemented by ``build_cabinet``.  This function
+    keeps native callers on that path and rejects unsupported multi-bay
+    incline layouts before they can fall through to flat geometry.
+    """
+    if cfg.roof_angle_deg:
+        if bay_configs is not None:
+            raise ValueError("Inclined cabinets do not support multi-bay layouts.")
+        return build_cabinet(cfg)
+    if bay_configs is None:
+        return build_cabinet(cfg)
+    return build_multi_bay_cabinet(bay_configs, **(multi_bay_options or {}))
 
 
 def _make_pull_shape(pull_spec, vertical: bool = False) -> "Optional[cq.Workplane]":

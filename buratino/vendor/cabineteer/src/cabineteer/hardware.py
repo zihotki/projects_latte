@@ -216,9 +216,15 @@ class DrawerSlideSpec:
     #: line so the paperwork states it — added after the 563H swap left
     #: Charlie unable to verify extension from the BOM (2026-07-23).
     extension: str = "full"
+    minimum_cavity_depth: float = 0
+    maximum_side_thickness: float = 0
+    bottom_recess_range: tuple[float, float] | None = None
+    sources: tuple[str, ...] = ()
 
     def slide_length_for_depth(self, cabinet_depth: float) -> int:
         """Return the longest slide that fits the given cabinet interior depth."""
+        if cabinet_depth < self.minimum_cavity_depth:
+            raise ValueError(f"{self.name} needs at least {self.minimum_cavity_depth:g} mm cavity depth")
         usable = cabinet_depth - self.rear_bracket_inset - self.front_bracket_inset
         candidates = [l for l in self.available_lengths if l <= usable]
         if not candidates:
@@ -1065,6 +1071,24 @@ SLIDES: dict[str, DrawerSlideSpec] = {
     "salice_progressa_plus":          SALICE_PROGRESSA_PLUS,
     "salice_progressa_plus_smove":    SALICE_PROGRESSA_PLUS_SMOVE,
 }
+
+# Keep source records and native registrations in one place.
+from .hettich_eb20 import EB20_SLIDE_KEYS, HETTICH_PROFILES
+
+for _length, _source in HETTICH_PROFILES.items():
+    SLIDES[EB20_SLIDE_KEYS[_length]] = DrawerSlideSpec(
+        name=f"Hettich Quadro V6 EB20 {_length} mm", manufacturer="Hettich",
+        slide_type=SlideType.UNDERMOUNT, mount_location=SlideMountLocation.BOTTOM,
+        min_side_clearance=20, max_side_clearance=20, nominal_side_clearance=20,
+        min_top_clearance=0, min_bottom_clearance=0, available_lengths=(_length,),
+        max_load_kg=_source["native_max_load_kg"], min_drawer_height=0,
+        max_drawer_width=0, rear_bracket_inset=0, front_bracket_inset=0,
+        part_numbers={_length: [_source["left_runner_sku"], _source["right_runner_sku"]]},
+        clearance_reference=ClearanceReference.INSIDE,
+        minimum_cavity_depth=_source["minimum_body_depth_mm"],
+        maximum_side_thickness=16, bottom_recess_range=(12, 13),
+        sources=tuple(_source["sources"]),
+    )
 
 HINGES: dict[str, HingeSpec] = {
     # Blum Clip Top 110° — three overlay types, standard and BLUMOTION

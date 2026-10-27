@@ -50,6 +50,7 @@ Usage::
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
 import math
 import re
@@ -59,12 +60,17 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
+import jsonschema
 import mcp.server.stdio
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
-from .cabinet import CabinetConfig, ColumnConfig, build_multi_bay_cabinet as _build_multi_bay_cabinet
+from .cabinet import (
+    CabinetConfig,
+    ColumnConfig,
+    dispatch_cabinet_geometry as _dispatch_cabinet_geometry,
+)
 from .auto_fix import auto_fix_cabinet as _auto_fix, AutoFixResult, fixable_checks
 from .paths import data_dir
 from .proportions import (
@@ -264,11 +270,6 @@ def _hardware_line_to_dict(line) -> dict:
     }
 
 
-# ─── Server ───────────────────────────────────────────────────────────────────
-
-server = Server("cabineteer")
-
-
 def _manga_schema() -> dict:
     """Input schema for the manga scale-reference toggle (visualize tools)."""
     return {
@@ -374,7 +375,6 @@ def _worktop_schema() -> dict:
 # Tool: list_hardware
 # ──────────────────────────────────────────────────────────────────────────────
 
-@server.list_tools()
 async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
@@ -3542,7 +3542,6 @@ async def list_tools() -> list[types.Tool]:
 # Tool handlers
 # ──────────────────────────────────────────────────────────────────────────────
 
-@server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     handler = TOOL_DISPATCH.get(name)
     if handler is None:
@@ -3551,6 +3550,58 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return await handler(arguments)
     except Exception as exc:
         return _err(f"{type(exc).__name__}: {exc}")
+
+
+async def _mcp_list_tools(_context, _params):
+    return types.ListToolsResult(tools=await list_tools())
+
+
+async def _mcp_call_tool(_context, params):
+    arguments = params.arguments or {}
+    tool = next((item for item in await list_tools() if item.name == params.name), None)
+    if tool is not None:
+        schema = getattr(tool, "input_schema", None) or getattr(
+            tool, "inputSchema", None
+        )
+        try:
+            jsonschema.validate(arguments, schema)
+        except jsonschema.ValidationError as exc:
+            path = ".".join(str(part) for part in exc.absolute_path) or "arguments"
+            return types.CallToolResult(
+                content=[
+                    types.TextContent(
+                        type="text",
+                        text=(
+                            f"Invalid arguments for {params.name} at {path}: "
+                            f"{exc.message}"
+                        ),
+                    )
+                ],
+                isError=True,
+            )
+    content = await call_tool(params.name, arguments)
+    return types.CallToolResult(content=content)
+
+
+def _create_server():
+    """Register handlers with the installed MCP SDK API."""
+    parameters = inspect.signature(Server).parameters
+    if "on_list_tools" in parameters:
+        return Server(
+            "cabineteer",
+            on_list_tools=_mcp_list_tools,
+            on_call_tool=_mcp_call_tool,
+        )
+
+    # MCP 1.x used decorators on Server instances. Keep that supported while
+    # MCP 2.x uses callbacks passed to the constructor.
+    instance = Server("cabineteer")
+    instance.list_tools()(list_tools)
+    instance.call_tool()(call_tool)
+    return instance
+
+
+server = _create_server()
 
 
 # ── list_pull_presets ─────────────────────────────────────────────────────────
@@ -3590,6 +3641,11 @@ async def _tool_list_hardware(args: dict) -> list[types.TextContent]:
                 "min_bottom_clearance_mm": s.min_bottom_clearance,
                 "max_load_kg": s.max_load_kg,
                 "min_drawer_height_mm": s.min_drawer_height,
+                "part_numbers": s.part_numbers,
+                "minimum_cavity_depth_mm": s.minimum_cavity_depth or None,
+                "maximum_side_thickness_mm": s.maximum_side_thickness or None,
+                "bottom_recess_range_mm": s.bottom_recess_range,
+                "sources": s.sources,
             }
             for key, s in SLIDES.items()
         }
@@ -4280,6 +4336,8 @@ def _raw_panels_for_cabinet(
         built here, and every number in them is read off the panel that is
         being described rather than recomputed from the config.
         """
+        if cfg.roof_angle_deg and p.kind in ("side", "top"):
+            return "rectangular blank; trim to inclined profile"
         if p.kind == "side":
             return _notes(side_bevel, _capture_note("side"),
                           _core_note(p.length, p.width, "front edge"))
@@ -4324,7 +4382,9 @@ def _raw_panels_for_cabinet(
 
     _stock_note = ("1/4 in plywood" if cfg.back_thickness <= 6.0
                    else f"{cfg.back_thickness:g} mm plywood")
-    if geo.capture == "pocket":
+    if cfg.roof_angle_deg:
+        _back_note = _notes(_stock_note, "rectangular blank; trim to inclined profile")
+    elif geo.capture == "pocket":
         _back_note = _notes(_stock_note,
                             "stops under the full-depth top" if under_top
                             else "")
@@ -5376,15 +5436,22 @@ def _cabinet_assembly(
     # face_top_overhang is no longer computed here — cabinet.face_layout owns
     # the door-transition rule (doors above drawers extend the face stack to
     # the carcass exterior top) so the cutlist applies the identical geometry.
-    assy, parts = _build_multi_bay_cabinet(
-        bay_configs,
-        feet_at_dividers=(columns_raw is None),
-        furniture_top=furniture_top,
-        face_top_style=face_top_style,
-        face_bottom_style=face_bottom_style,
-        divider_top_z=divider_top_z,
-        include_manga=include_manga,
-        include_feet=include_feet,
+    multi_bay_options = {
+        "feet_at_dividers": columns_raw is None,
+        "furniture_top": furniture_top,
+        "face_top_style": face_top_style,
+        "face_bottom_style": face_bottom_style,
+        "divider_top_z": divider_top_z,
+        "include_manga": include_manga,
+        "include_feet": include_feet,
+    }
+    assy, parts = _dispatch_cabinet_geometry(
+        cfg,
+        bay_configs=(
+            None if cfg.roof_angle_deg and not columns_raw and num_bays == 1
+            else bay_configs
+        ),
+        multi_bay_options=multi_bay_options,
     )
     return assy, parts, info
 

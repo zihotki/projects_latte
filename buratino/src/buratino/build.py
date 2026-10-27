@@ -400,6 +400,8 @@ def render_documents(
             else False
         )
         for cfg, cabinet in zip(configs, result["cabinets"], strict=True):
+            if cfg.roof_angle_deg:
+                continue
             maps = draft_mortise_panel_maps(cfg, centered_face_rows=centered)
             for component, canonical in (
                 ("left_side", "side"),

@@ -293,6 +293,9 @@ def build_assembly_plan(
     """
     from .cabinet import CarcassJoinery
 
+    if getattr(cab_cfg, "roof_angle_deg", 0):
+        raise ValueError("Assembly plans for inclined cabinets are not supported.")
+
     joinery = getattr(cab_cfg, "carcass_joinery", CarcassJoinery.FLOATING_TENON)
     if joinery != CarcassJoinery.FLOATING_TENON:
         raise ValueError(
@@ -2163,6 +2166,9 @@ def draft_mortise_panel_maps(cab_cfg, *, centered_face_rows: bool = False) -> di
     """
     from dataclasses import replace
     from .cabinet import CarcassJoinery
+
+    if getattr(cab_cfg, "roof_angle_deg", 0):
+        raise ValueError("Mortise maps for inclined cabinets are not supported.")
 
     if (getattr(cab_cfg, "carcass_joinery", CarcassJoinery.FLOATING_TENON) != CarcassJoinery.FLOATING_TENON
             or getattr(cab_cfg, "carcass_corner_style", "butt") != "butt"):

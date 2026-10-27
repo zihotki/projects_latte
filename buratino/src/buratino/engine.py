@@ -70,18 +70,18 @@ def _build_native_carcass(config):
     """Build carcass solids through Cabineteer's matching native constructor."""
     from cabineteer.cabinet import (
         bays_from_config,
-        build_cabinet,
-        build_multi_bay_cabinet,
+        dispatch_cabinet_geometry,
     )
 
-    if config.columns:
-        return build_multi_bay_cabinet(
-            bays_from_config(config),
-            include_drawers=False,
-            include_faces=False,
-            include_feet=False,
-        )
-    return build_cabinet(config)
+    return dispatch_cabinet_geometry(
+        config,
+        bay_configs=bays_from_config(config) if config.columns else None,
+        multi_bay_options={
+            "include_drawers": False,
+            "include_faces": False,
+            "include_feet": False,
+        },
+    )
 
 
 def _local_columns(config):
@@ -97,7 +97,14 @@ def _part_dimensions(part, config):
     name = part.name.lower()
     panels = carcass_panel_dims(config)
     if "side" in name and "divider" not in name:
-        panel = next((p for p in panels if p.kind == "side"), None)
+        panel = next(
+            (
+                p
+                for p in panels
+                if p.kind == "side" and (p.name == name or p.name == "side")
+            ),
+            None,
+        )
     elif "divider" in name:
         panel = next((p for p in panels if p.kind == "divider"), None)
     elif "bottom" in name:
@@ -744,7 +751,7 @@ def calculate(project: ProjectInputs) -> Calculation:
                     }
                 )
         # Carcass joinery is fixed at 6x40; positions and depths remain unverified.
-        for panel in ("bottom", "top"):
+        for panel in () if config.roof_angle_deg else ("bottom", "top"):
             for side in ("left", "right"):
                 joints.append(
                     {

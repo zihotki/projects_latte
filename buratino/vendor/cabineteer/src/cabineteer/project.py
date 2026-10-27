@@ -889,6 +889,7 @@ def _config_to_dict(cfg: CabinetConfig) -> dict:
         "leg_inset": cfg.leg_inset,
         "carcass_joinery": cfg.carcass_joinery.value,
         "carcass_corner_style": cfg.carcass_corner_style,
+        "roof_angle_deg": cfg.roof_angle_deg,
         # Back treatment. back_style was missing here until back_capture
         # landed, so a per-cabinet override of it was dropped on save —
         # Charlie's projects only ever set it as a shared token, which is

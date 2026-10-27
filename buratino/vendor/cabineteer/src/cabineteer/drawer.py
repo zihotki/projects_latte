@@ -275,6 +275,11 @@ class DrawerConfig:
     @property
     def box_depth(self) -> float:
         """Drawer box depth (front to back, exterior)."""
+        if self.slide.maximum_side_thickness and self.side_thickness > self.slide.maximum_side_thickness:
+            raise ValueError(f"{self.slide.name} drawer sides must be at most {self.slide.maximum_side_thickness:g} mm")
+        recess = self.slide.bottom_recess_range
+        if recess and not recess[0] <= self.bottom_dado_inset <= recess[1]:
+            raise ValueError(f"{self.slide.name} bottom recess must be {recess[0]:g} to {recess[1]:g} mm")
         slide_length = self.slide.slide_length_for_depth(self.opening_depth)
         return min(
             self.opening_depth - self.front_gap,

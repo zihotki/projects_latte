@@ -2082,7 +2082,7 @@ def check_drawer_carcass_clearances(cab_cfg: CabinetConfig) -> list[Issue]:
         # Eagerly resolve box_depth — slide_length_for_depth raises ValueError
         # if the cabinet is too shallow for any available slide.
         try:
-            box_depth = dcfg.box_depth
+            slide.slide_length_for_depth(dcfg.opening_depth)
         except ValueError as exc:
             issues.append(Issue(
                 check="drawer_carcass_clearance",
@@ -2093,6 +2093,14 @@ def check_drawer_carcass_clearances(cab_cfg: CabinetConfig) -> list[Issue]:
                 ),
                 part_a=label,
                 value=cab_cfg.interior_depth,
+            ))
+            continue
+        try:
+            box_depth = dcfg.box_depth
+        except ValueError as exc:
+            issues.append(Issue(
+                check="drawer_carcass_clearance", severity=Severity.ERROR,
+                message=f"{label}: {exc}", part_a=label,
             ))
             continue
 
