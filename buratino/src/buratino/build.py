@@ -216,6 +216,8 @@ def _hardware_table(
         details = []
         if item.get("model"):
             details.append(str(item["model"]))
+        elif item.get("slide_key"):
+            details.append(str(item["slide_key"]))
         if item.get("size"):
             details.append(str(item["size"]) + " mm")
         if item.get("length_mm") is not None:
@@ -548,6 +550,7 @@ def render_documents(
             "quantity",
             "stock_mm",
             "local_frame",
+            "geometry",
             "profile_mm",
             "extrusion_mm",
             "operations",
@@ -628,7 +631,9 @@ def render_documents(
             + _table(cut_groups, part_codes)
             + "<h2>Profile operations</h2><ul>"
             + "".join(operations)
-            + "</ul><p>Hardware, support, joinery and installation "
+            + "</ul><h2>Selected hardware</h2>"
+            + _hardware_table(result, part_codes, diagnostics=False)
+            + "<p>Hardware, support, joinery and installation "
             "remain unverified.</p>"
         )
     (directory / "report.html").write_text(

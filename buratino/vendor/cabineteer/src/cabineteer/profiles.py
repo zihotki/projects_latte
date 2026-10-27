@@ -325,6 +325,7 @@ class ProfileAssembly:
     layout: ResolvedLayout
     parts: tuple[ProfilePart | NativeCarcassPart, ...]
     hardware_status: str = "unverified"
+    hardware: tuple[dict, ...] = ()
 
 
 def _layout_with_profile_heights(
@@ -940,6 +941,18 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
 
     parts = []
     for part in assembly.parts:
+        geometry = None
+        if isinstance(part, NativeCarcassPart):
+            vertices, triangles = part.solid().val().tessellate(0.01)
+            geometry = {
+                "kind": "world_mesh",
+                "chord_tolerance_mm": 0.01,
+                "units": "mm",
+                "frame": "world",
+                "status": "approximation_not_machining_instruction",
+                "vertices_mm": [v.toTuple() for v in vertices],
+                "triangles": triangles,
+            }
         parts.append(
             {
                 "id": part.id,
@@ -951,6 +964,7 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
                     zip(("length", "width", "thickness"), part.stock_mm, strict=True)
                 ),
                 "local_frame": asdict(part.local_frame),
+                "geometry": geometry,
                 "profile_mm": part.local_profile_mm,
                 "extrusion_mm": part.local_extrusion_mm,
                 "operations": [asdict(operation) for operation in part.operations],
@@ -961,6 +975,7 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
         "layout": asdict(assembly.layout),
         "parts": parts,
         "hardware_status": assembly.hardware_status,
+        "hardware": assembly.hardware,
         "status": "draft",
         "manufacturing_ready": False,
     }

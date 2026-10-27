@@ -279,7 +279,14 @@ class CabinetProject:
         parts = lower + result.parts + faces
         if spec.faces is not None:
             parts = tuple(with_profile_operations(p) if isinstance(p, ProfilePart) else p for p in parts)
-        return ProfileAssembly(result.layout, parts)
+        hardware = ()
+        if spec.faces is not None:
+            hardware = ({
+                "type": "drawer_runner", "slide_key": spec.faces.drawer["slide_key"],
+                "quantity": 2, "status": "unverified",
+                "box_bottom_clearance_mm": spec.faces.drawer_box_bottom_clearance_mm,
+            },)
+        return ProfileAssembly(result.layout, parts, hardware=hardware)
 
 
 def _merge(

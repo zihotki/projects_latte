@@ -297,10 +297,11 @@ def _domino_machining(variables: dict, resolved: list) -> dict | None:
 
 
 def _calculate_native_assembly(project: ProjectInputs) -> Calculation:
-    from cabineteer.profiles import assembly_records
+    from cabineteer.profiles import assembly_records, evaluate_assembly
 
     native = project.native_project.resolved_assembly()
     data = assembly_records(native)
+    geometry_issues = evaluate_assembly(native)
     bounds = native.layout.occupied_world_bounds_mm
     dimensions = {
         "width": bounds.width_mm,
@@ -336,15 +337,19 @@ def _calculate_native_assembly(project: ProjectInputs) -> Calculation:
         "parts": parts,
         "drawers": [],
         "joints": [],
-        "hardware": [],
+        "hardware": data["hardware"],
         "checks": [
+            *[
+                {**issue, "message": "Native cap contact or overlap check failed."}
+                for issue in geometry_issues
+            ],
             {
                 "severity": "unknown",
                 "code": "assembly.unverified",
                 "message": (
                     "Hardware, joinery, support and installation remain unverified."
                 ),
-            }
+            },
         ],
         "explanations": {"assembly": "Native resolved assembly and part profiles."},
         "assembly": data,

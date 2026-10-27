@@ -6377,7 +6377,7 @@ async def _tool_generate_project_cutlist(args: dict) -> list[types.TextContent]:
         csv_path = out_dir / "parts.csv"
         json_path.write_text(json.dumps(assembly, indent=2), encoding="utf-8")
         with csv_path.open("w", newline="", encoding="utf-8") as stream:
-            writer = csv.DictWriter(stream, fieldnames=["id", "owner", "component", "material", "quantity", "stock_mm", "local_frame", "profile_mm", "extrusion_mm", "operations", "mounting"])
+            writer = csv.DictWriter(stream, fieldnames=["id", "owner", "component", "material", "quantity", "stock_mm", "local_frame", "geometry", "profile_mm", "extrusion_mm", "operations", "mounting"])
             writer.writeheader()
             for part in assembly["parts"]:
                 writer.writerow({key: json.dumps(value) if isinstance(value, (dict, list, tuple)) else value for key, value in part.items()})
