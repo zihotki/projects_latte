@@ -716,7 +716,7 @@ def profile_spec_from_dict(data: dict) -> ProfileAssemblySpec:
     )
 
 
-def profile_face(
+def _profile_face(
     roof: RoofProfile,
     *,
     name: str,
@@ -729,6 +729,7 @@ def profile_face(
     outer_reveal: float,
     depth_offset: float,
     material: str = "",
+    top_line: tuple[float, float] | None = None,
 ) -> ProfilePart:
     """Build a front from the lower envelope of normal-offset roof lines.
 
@@ -743,6 +744,8 @@ def profile_face(
         x0 >= x1 or thickness <= 0 or outer_reveal < 0 or depth_offset < 0
     ):
         raise ValueError("invalid face dimensions")
+    if top_line is not None and any(not math.isfinite(v) for v in top_line):
+        raise ValueError("face top line must be finite")
     if x0 < roof.points[0][0] or x1 > roof.points[-1][0]:
         raise ValueError("face must fit the roof")
     segments = list(roof.segments())
@@ -761,9 +764,13 @@ def profile_face(
     def top(x):
         return min(m * x + c for m, c in lines)
 
-    top_points = [(x0, top(x0))]
-    top_points.extend((x, top(x)) for x in breaks if x0 < x < x1)
-    top_points.append((x1, top(x1)))
+    if top_line is None:
+        top_points = [(x0, top(x0))]
+        top_points.extend((x, top(x)) for x in breaks if x0 < x < x1)
+        top_points.append((x1, top(x1)))
+    else:
+        slope, intercept = top_line
+        top_points = [(x0, slope * x0 + intercept), (x1, slope * x1 + intercept)]
     if min(z for _, z in top_points) <= bottom:
         raise ValueError("roof leaves no face height")
     points = ((x0, bottom), (x1, bottom), *reversed(top_points))
@@ -782,6 +789,36 @@ def profile_face(
             "drawer_front": "drawer-mounted",
             "applied_faceboard": "fixed",
         }[face_type],
+    )
+
+
+def profile_face(
+    roof: RoofProfile,
+    *,
+    name: str,
+    owner: str,
+    face_type: str,
+    x0: float,
+    x1: float,
+    bottom: float,
+    thickness: float,
+    outer_reveal: float,
+    depth_offset: float,
+    material: str = "",
+) -> ProfilePart:
+    """Build a front from the roof's normal-offset envelope."""
+    return _profile_face(
+        roof,
+        name=name,
+        owner=owner,
+        face_type=face_type,
+        x0=x0,
+        x1=x1,
+        bottom=bottom,
+        thickness=thickness,
+        outer_reveal=outer_reveal,
+        depth_offset=depth_offset,
+        material=material,
     )
 
 
@@ -903,6 +940,17 @@ def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
             )
         )
     door_gap = cfg.face_gap_mm if cfg.door_gap_mm is None else cfg.door_gap_mm
+    level_transition = (
+        spec.roof_joint == "level_over_divider"
+        and len(spec.roof.points) == 3
+        and len(spec.boxes) == 2
+    )
+    roof_lines = [
+        (slope, a[1] - slope * a[0] - face.roof_reveal_mm * math.hypot(1, slope))
+        for a, _, slope, _ in spec.roof.segments()
+    ]
+
+    previous_top = None
     for i, box in enumerate(spec.boxes):
         x0 = box.x_mm + (face.outer_reveal_mm if i == 0 else door_gap / 2)
         x1 = (
@@ -910,21 +958,34 @@ def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
             + box.width_mm
             - (face.outer_reveal_mm if i == len(spec.boxes) - 1 else door_gap / 2)
         )
-        parts.append(
-            profile_face(
-                spec.roof,
-                name=f"{box.name}.door",
-                owner=spec.shared_owner or box.name,
-                face_type="door",
-                x0=x0,
-                x1=x1,
-                bottom=face.outer_reveal_mm,
-                thickness=face.thickness_mm,
-                outer_reveal=face.roof_reveal_mm,
-                depth_offset=face.depth_offset_mm,
-                material=face.material,
-            ).placed(row_origin)
+        top_line = None
+        if level_transition:
+            # Extend the left section slope across its door, then level the
+            # right door to the same top height.
+            if i == 0:
+                top_line = roof_lines[0]
+            else:
+                top_line = (0, previous_top)
+        face_args = dict(
+            name=f"{box.name}.door",
+            owner=spec.shared_owner or box.name,
+            face_type="door",
+            x0=x0,
+            x1=x1,
+            bottom=face.outer_reveal_mm,
+            thickness=face.thickness_mm,
+            outer_reveal=face.roof_reveal_mm,
+            depth_offset=face.depth_offset_mm,
+            material=face.material,
         )
+        if top_line is None:
+            part = profile_face(spec.roof, **face_args)
+        else:
+            part = _profile_face(spec.roof, **face_args, top_line=top_line)
+        part = part.placed(row_origin)
+        parts.append(part)
+        if level_transition:
+            previous_top = top_line[0] * x1 + top_line[1]
     return tuple(parts)
 
 

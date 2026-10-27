@@ -277,15 +277,34 @@ def test_shared_upper_geometry_and_roundtrip(name):
         )
         assert slope.solid().val().distance(level.solid().val()) < 0.01
         assert slope.solid().intersect(level.solid()).val().Volume() < 0.01
-        # The offset lines meet inside the left door, beyond the cap joint.
-        assert len(doors[0].profile_xz_mm) == 5
-        kink = doors[0].profile_xz_mm[3]
+        left, right = doors
+        assert len(left.profile_xz_mm) == 4
+        assert len(right.profile_xz_mm) == 4
         slope_value = 300 / 351
-        expected_x = 351 + 2 * (slope_value / (1 + slope_value**2) ** 0.5) / (
-            1 + (1 + slope_value**2) ** -0.5
+        reveal_drop = 2 * (1 + slope_value**2) ** 0.5
+        meeting_height = 600 + 8 * slope_value - reveal_drop
+        expected_left = (
+            (2, 2),
+            (359, 2),
+            (359, meeting_height),
+            (2, 300 + 2 * slope_value - reveal_drop),
         )
-        assert kink[0] == pytest.approx(expected_x)
-        assert kink[1] == pytest.approx(598)
+        expected_right = (
+            (361, 2),
+            (718, 2),
+            (718, meeting_height),
+            (361, meeting_height),
+        )
+        for actual, expected in zip(left.profile_xz_mm, expected_left, strict=True):
+            assert actual == pytest.approx(expected)
+        for actual, expected in zip(right.profile_xz_mm, expected_right, strict=True):
+            assert actual == pytest.approx(expected)
+        assert left.profile_xz_mm[2][1] == right.profile_xz_mm[3][1]
+        assert right.profile_xz_mm[0][0] - left.profile_xz_mm[1][0] == 2
+        assert left.stock_mm == pytest.approx((357, meeting_height - 2, 18))
+        assert right.stock_mm == pytest.approx((357, meeting_height - 2, 18))
+        assert [operation.kind for operation in left.operations] == ["profile_trim"]
+        assert right.operations == ()
 
 
 def test_shared_transition_without_faces_exports_flat_divider():
