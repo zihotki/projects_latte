@@ -37,6 +37,7 @@ from .joinery import (
     BiscuitSpec,
     DowelSpec,
 )
+from .layout import LayoutNode, layout_from_dict, layout_to_dict
 
 
 # Fields on SharedDesign that map 1:1 to a CabinetConfig attribute.
@@ -238,6 +239,8 @@ class CabinetProject:
     # Optional desk/counter surface spanning part of the run. Stored as a
     # top-level snapshot key, so older readers ignore it safely.
     worktop: Optional[WorktopSpec] = None
+    # Optional native layout used by composite projects.
+    layout: Optional[LayoutNode] = None
 
     def resolved(self) -> tuple[tuple[str, CabinetConfig], ...]:
         """Return ``((name, merged_config), ...)`` with shared tokens applied."""
@@ -1036,6 +1039,8 @@ def project_to_dict(project: CabinetProject) -> dict:
             out["forked_at"] = project.forked_at
     if project.worktop is not None:
         out["worktop"] = _worktop_to_dict(project.worktop)
+    if project.layout is not None:
+        out["layout"] = layout_to_dict(project.layout)
     return out
 
 
@@ -1061,6 +1066,7 @@ def project_from_dict(d: dict) -> CabinetProject:
         forked_from=str(fork_raw) if fork_raw is not None else None,
         forked_at=str(at_raw) if at_raw is not None else None,
         worktop=worktop_from_dict(d.get("worktop")),
+        layout=layout_from_dict(d["layout"]) if d.get("layout") is not None else None,
     )
 
 
@@ -1156,6 +1162,7 @@ def build_project(payload: dict) -> CabinetProject:
         forked_from=str(fork_raw) if fork_raw is not None else None,
         forked_at=str(at_raw) if at_raw is not None else None,
         worktop=worktop_from_dict(payload.get("worktop")),
+        layout=layout_from_dict(payload["layout"]) if payload.get("layout") is not None else None,
     )
 
 
