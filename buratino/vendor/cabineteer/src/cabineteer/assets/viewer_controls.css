@@ -45,6 +45,15 @@ tbody tr.selected { background:#d9ebe5;box-shadow:inset 3px 0 var(--accent); }
 .group-visibility-cell { width:34px;text-align:right; }
 .group-visibility-toggle { min-height:20px;padding:1px 4px;border:1px solid var(--line);border-radius:3px;background:#fff;color:#536367;font:inherit;font-size:9px;cursor:pointer; }
 #selection-caption { padding:4px 10px;color:var(--muted);font-size:9px; }
+#viewer-sheet #viewer-info { margin:4px 10px 8px;padding:5px 0;border-top:1px solid var(--line);color:var(--muted);font-size:10px; }
+#viewer-sheet #viewer-info summary { cursor:pointer;font-weight:600;color:var(--ink); }
+#viewer-sheet #project-info { display:flex;flex-wrap:wrap;gap:4px 12px;padding:5px 0; }
+#viewer-sheet #project-info .row { display:flex;gap:4px;color:var(--muted);font-size:10px; }
+#viewer-sheet #project-info .row span { color:var(--ink); }
+#viewer-sheet #caveats { max-width:none;margin:4px 0 8px;padding:7px 9px;border-left-color:#bb7134;background:#fff5e8;color:#63401f;font-size:10px; }
+#viewer-sheet #caveats b { color:#653b18; }
+#viewer-sheet #caveats ul { margin:0;padding-left:16px; }
+#viewer-sheet #caveats li { margin:2px 0; }
 #table-hint { display:none; }
 #group-count { color:var(--muted);font-size:9px;font-weight:400;text-transform:none;letter-spacing:0; }
 #finish-ui { display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:5px 10px; }

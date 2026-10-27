@@ -1100,6 +1100,7 @@ def build_and_visualize(
         drawer_box_finish=drawer_box_finish,
         grain_direction=grain_direction,
         cutlist_prompt=f"Generate the cutlist for cabinet '{name}'.",
+        viewer_data=_viewer_data_from_parts(parts),
     )
 
     if open_browser:
@@ -1344,7 +1345,7 @@ def _build_html(
   </header>
   <aside id="viewer-sheet" aria-label="Cabinet details">
     <div class="sheet-heading"><button id="sheet-toggle" type="button" aria-expanded="false"><span id="sheet-title">Model</span><span aria-hidden="true">⌃</span></button></div>
-    <section id="tree-view" role="tabpanel"><div class="section-heading">Visibility <span id="group-count"></span></div><fieldset id="visibility-controls" aria-label="Model visibility"><legend>Cabinet parts</legend><div id="visibility-options"></div></fieldset></section>
+    <section id="tree-view" role="tabpanel"><div class="section-heading">Visibility <span id="group-count"></span></div><fieldset id="visibility-controls" aria-label="Model visibility"><legend>Cabinet parts</legend><div id="visibility-options"></div></fieldset><details id="viewer-info"><summary>Dimensions and render notes</summary><div id="project-info">{info_html}</div>{caveat_html}</details></section>
     <section id="parts-view" role="tabpanel" hidden><div class="section-heading">Cut list <span id="table-hint"></span></div><div id="table-scroll"><table aria-label="Cabinet parts"><thead><tr><th>Part</th><th>Qty</th><th>Blank mm</th></tr></thead><tbody id="parts-body"></tbody></table></div><div id="selection-caption">Select a part or row.</div></section>
     <section id="settings-view" hidden><div class="section-heading">Settings</div><div id="finish-ui"><select id="finish-sel" title="Exterior finish"></select><button id="grain-btn" title="Toggle grain orientation">Grain: vertical</button><button id="cutlist-btn" type="button">Generate cutlist request</button><label class="opacity-control">Opacity <input type="range" id="panel-opacity" min="0" max="100" value="100" step="5"><output id="panel-opacity-value">100%</output></label></div></section>
     <div id="viewer-message" role="status" hidden></div>
@@ -1639,6 +1640,7 @@ new GLTFLoader().parse(b64ToBuffer(GLB_B64), '', (gltf) => {{
   // INITIAL_FINISH directly, so a finish picked while the model was still
   // parsing is honoured instead of reverted.
   if (currentFinishKey) setShowFinish(currentFinishKey);
+  window.cabineteerViewer.model = model;
   scene.add(model);
 
   // Sit model on grid and centre camera

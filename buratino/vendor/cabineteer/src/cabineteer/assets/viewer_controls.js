@@ -828,7 +828,7 @@ function setDoorPose(open) {
 }
 
 function setStandardView(name) {
-  const model = viewer.scene.getObjectByName('base_cabinet');
+  const model = viewer.model ?? viewer.scene.getObjectByName('base_cabinet');
   const box = new viewer.THREE.Box3().setFromObject(model ?? viewer.scene);
   const center = box.getCenter(new viewer.THREE.Vector3());
   const size = box.getSize(new viewer.THREE.Vector3());
@@ -1036,7 +1036,7 @@ document.getElementById('reset-selection')?.addEventListener('click', () => {
   selectGroup(null);
 });
 ui.drawerPose?.addEventListener('click', () => {
-  if (viewer && drawerPartNodes.length) setDrawerPose(!drawersOpen);
+  if (viewer && (drawerPartNodes.length || legacyDrawerPose)) setDrawerPose(!drawersOpen);
 });
 ui.doorPose?.addEventListener('click', () => {
   if (viewer && doorPartNodes.length) setDoorPose(!doorsOpen);
