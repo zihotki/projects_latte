@@ -88,7 +88,9 @@ def assert_rendered_profiles(glb_path, assembly):
         assert set(mesh_node) == {"name", "mesh"}
         mesh = document["meshes"][mesh_node["mesh"]]
         actual = set()
+        actual_triangles = set()
         for primitive in mesh["primitives"]:
+            assert primitive.get("mode", 4) == 4, part.id
             accessor = document["accessors"][primitive["attributes"]["POSITION"]]
             view = document["bufferViews"][accessor["bufferView"]]
             offset = (
@@ -97,12 +99,28 @@ def assert_rendered_profiles(glb_path, assembly):
                 + accessor.get("byteOffset", 0)
             )
             stride = view.get("byteStride", 12)
-            for i in range(accessor["count"]):
-                actual.add(
-                    tuple(
-                        round(x, 2)
-                        for x in struct.unpack_from("<fff", data, offset + i * stride)
-                    )
+            vertices = [
+                tuple(
+                    round(x, 2)
+                    for x in struct.unpack_from("<fff", data, offset + i * stride)
+                )
+                for i in range(accessor["count"])
+            ]
+            actual.update(vertices)
+            indices = document["accessors"][primitive["indices"]]
+            index_view = document["bufferViews"][indices["bufferView"]]
+            index_offset = (
+                binary_offset
+                + index_view.get("byteOffset", 0)
+                + indices.get("byteOffset", 0)
+            )
+            code = {5121: "B", 5123: "H", 5125: "I"}[indices["componentType"]]
+            values = struct.unpack_from(
+                f"<{indices['count']}{code}", data, index_offset
+            )
+            for i in range(0, len(values), 3):
+                actual_triangles.add(
+                    tuple(sorted(vertices[index] for index in values[i : i + 3]))
                 )
         if isinstance(part, ProfilePart):
             x0, y0, z0 = part.world_offset_mm
@@ -116,6 +134,17 @@ def assert_rendered_profiles(glb_path, assembly):
                 tuple(round(v, 2) for v in vertex.Center().toTuple())
                 for vertex in part.solid().val().Vertices()
             }
+        vertices, triangles = part.solid().val().tessellate(0.1, 0.1)
+        expected_triangles = {
+            tuple(
+                sorted(
+                    tuple(round(v, 2) for v in vertices[index].toTuple())
+                    for index in triangle
+                )
+            )
+            for triangle in triangles
+        }
+        assert actual_triangles == expected_triangles, part.id
         assert expected <= actual, part.id
         for axis in range(3):
             assert min(p[axis] for p in actual) == pytest.approx(
