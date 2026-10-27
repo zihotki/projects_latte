@@ -300,11 +300,16 @@ def _resolve_stack(
             "stack Y position",
         )
         resolved = _resolve_with_width(child, (x, y, cursor), width, active)
-        children.append(resolved)
-        occupied_height = _finite(
-            resolved.occupied_world_bounds_mm.height_mm, "occupied height"
+        shift = _finite(
+            cursor - resolved.occupied_world_bounds_mm.min_z,
+            "stack occupied-bottom alignment",
         )
-        cursor = _finite(cursor + occupied_height + gap, "stack Z position")
+        if shift:
+            resolved = _shift_layout_z(resolved, shift)
+        children.append(resolved)
+        cursor = _finite(
+            resolved.occupied_world_bounds_mm.max_z + gap, "stack Z position"
+        )
     return _combine(children)
 
 
@@ -328,8 +333,36 @@ def _resolve_with_width(
         )
     if isinstance(node, Frame) and width != node.width_mm:
         raise ValueError("frame width cannot use row fill")
-    return _resolve(
-        node, origin, active, available_width=width if isinstance(node, Row) else None
+    return _resolve(node, origin, active, available_width=width)
+
+
+def _shift_layout_z(layout: ResolvedLayout, shift: float) -> ResolvedLayout:
+    def shift_bounds(bounds: Bounds3D) -> Bounds3D:
+        return Bounds3D(
+            bounds.min_x,
+            bounds.min_y,
+            _finite(bounds.min_z + shift, "shifted minimum Z"),
+            bounds.max_x,
+            bounds.max_y,
+            _finite(bounds.max_z + shift, "shifted maximum Z"),
+        )
+
+    return ResolvedLayout(
+        tuple(
+            ResolvedPlacement(
+                placement.name,
+                (
+                    placement.origin_mm[0],
+                    placement.origin_mm[1],
+                    _finite(placement.origin_mm[2] + shift, "shifted placement Z"),
+                ),
+                shift_bounds(placement.carcass_bounds_mm),
+                shift_bounds(placement.occupied_world_bounds_mm),
+            )
+            for placement in layout.placements
+        ),
+        shift_bounds(layout.carcass_bounds_mm),
+        shift_bounds(layout.occupied_world_bounds_mm),
     )
 
 
