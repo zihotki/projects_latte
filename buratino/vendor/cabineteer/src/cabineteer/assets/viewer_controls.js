@@ -36,7 +36,6 @@ let doorPartNodes = [];
 let doorsOpen = false;
 let partRoots = new Map();
 let visibilityControls = new Map();
-let cuttingGroupVisibility = new Map();
 let groupByPartId = new Map();
 let panelOpacity = 1;
 
@@ -125,7 +124,6 @@ function renderTable() {
   ui.tableHint.textContent = result.cutting_groups.some(hasAssumedGrain)
     ? 'Equal blanks are grouped. * Grain direction is assumed.'
     : 'Equal blanks are grouped.';
-  cuttingGroupVisibility = new Map(result.cutting_groups.map(group => [group.id, true]));
   groupByPartId = new Map(result.cutting_groups.flatMap(group =>
     group.members.map(partId => [partId, group])));
   result.cutting_groups.forEach(group => {
@@ -150,8 +148,10 @@ function renderTable() {
     toggle.className = 'group-visibility-toggle';
     toggle.addEventListener('click', event => {
       event.stopPropagation();
-      const visible = cuttingGroupVisibility.get(group.id) === false;
-      cuttingGroupVisibility.set(group.id, visible);
+      const visible = !partsForGroup(group).every(isPartVisible);
+      for (const part of partsForGroup(group)) {
+        visibilityControls.set(`part:${part.id}`, visible);
+      }
       updateGroupVisibilityButton(group, toggle);
       syncVisibilityControls();
       applyPartVisibility();
@@ -163,7 +163,7 @@ function renderTable() {
     addCell(row, `${number(dims.length)} × ${number(dims.width)} × ${number(dims.thickness)}`);
     row.addEventListener('click', () => selectGroup(group));
     row.addEventListener('keydown', event => {
-      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (event.target !== row || (event.key !== 'Enter' && event.key !== ' ')) return;
       event.preventDefault();
       selectGroup(group);
     });
@@ -173,8 +173,11 @@ function renderTable() {
 }
 
 function updateGroupVisibilityButton(group, button) {
-  const visible = cuttingGroupVisibility.get(group.id) !== false;
-  updateEyeButton(button, visible, false, `${group.label}, ${group.quantity} ${group.quantity === 1 ? 'part' : 'parts'}`);
+  const members = partsForGroup(group);
+  const visibleCount = members.filter(isPartVisible).length;
+  const visible = visibleCount === members.length;
+  const mixed = visibleCount > 0 && !visible;
+  updateEyeButton(button, visible, mixed, `${group.quantity} ${group.quantity === 1 ? 'part' : 'parts'} in ${group.label}`);
 }
 
 function humanizeProjectName(name) {
@@ -315,12 +318,6 @@ function renderVisibilityControls() {
       const allVisible = ownerParts.every(isPartVisible);
       const nextVisible = !allVisible;
       for (const part of ownerParts) visibilityControls.set(`part:${part.id}`, nextVisible);
-      if (nextVisible) {
-        for (const part of ownerParts) {
-          const group = groupByPartId.get(part.id);
-          if (group) cuttingGroupVisibility.set(group.id, true);
-        }
-      }
       syncGroupVisibilityButtons();
       syncVisibilityControls();
       applyPartVisibility();
@@ -361,8 +358,6 @@ function renderVisibilityControls() {
         const key = `part:${part.id}`;
         const nextVisible = !isPartVisible(part);
         visibilityControls.set(key, nextVisible);
-        const group = groupByPartId.get(part.id);
-        if (nextVisible && group) cuttingGroupVisibility.set(group.id, true);
         syncGroupVisibilityButtons();
         syncVisibilityControls();
         applyPartVisibility();
@@ -427,9 +422,13 @@ function syncVisibilityControls() {
 }
 
 function isPartVisible(part) {
-  const group = groupByPartId.get(part.id);
-  return visibilityControls.get(`part:${part.id}`) !== false &&
-    (!group || cuttingGroupVisibility.get(group.id) !== false);
+  return visibilityControls.get(`part:${part.id}`) !== false;
+}
+
+function partsForGroup(group) {
+  return group.members
+    .map(id => result.parts.find(part => part.id === id))
+    .filter(Boolean);
 }
 
 function syncGroupVisibilityButtons() {
@@ -441,10 +440,8 @@ function syncGroupVisibilityButtons() {
 function applyPartVisibility() {
   for (const part of result.parts) {
     const root = partRoots.get(part.role);
-    const group = groupByPartId.get(part.id);
-    const groupVisible = !group || cuttingGroupVisibility.get(group.id) !== false;
     const partVisible = visibilityControls.get(`part:${part.id}`) !== false;
-    const visible = partVisible && groupVisible;
+    const visible = partVisible;
     if (root) root.visible = visible && partVisible;
     for (const line of outlines.get(part.role) ?? []) line.visible = visible && partVisible;
     const mark = grainMarks.get(part.role);
@@ -1140,7 +1137,6 @@ document.getElementById('sheet-toggle')?.addEventListener('click', event => {
 });
 document.getElementById('show-all')?.addEventListener('click', () => {
   for (const key of visibilityControls.keys()) visibilityControls.set(key, true);
-  for (const group of result.cutting_groups) cuttingGroupVisibility.set(group.id, true);
   syncGroupVisibilityButtons();
   syncVisibilityControls();
   applyPartVisibility();
@@ -1148,9 +1144,6 @@ document.getElementById('show-all')?.addEventListener('click', () => {
 document.getElementById('isolate-selection')?.addEventListener('click', () => {
   if (!selectedPartIds.size) return;
   for (const part of result.parts) visibilityControls.set(`part:${part.id}`, selectedPartIds.has(part.id));
-  for (const item of result.cutting_groups) {
-    cuttingGroupVisibility.set(item.id, item.members.some(id => selectedPartIds.has(id)));
-  }
   syncGroupVisibilityButtons();
   syncVisibilityControls();
   applyPartVisibility();
@@ -1161,6 +1154,16 @@ document.getElementById('reset-selection')?.addEventListener('click', () => {
 ui.drawerPose?.addEventListener('click', () => {
   if (viewer && (drawerPartNodes.length || legacyDrawerPose)) setDrawerPose(!drawersOpen);
 });
+window.addEventListener('keydown', event => {
+  if (event.key.toLowerCase() !== 'o' || event.ctrlKey || event.metaKey || event.altKey ||
+      ui.drawerPose.hidden) return;
+  const editing = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+  if ((event.target instanceof Element && event.target.closest(editing)) ||
+      (document.activeElement instanceof Element && document.activeElement.closest(editing))) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  ui.drawerPose.click();
+}, true);
 ui.doorPose?.addEventListener('click', () => {
   if (viewer && doorPartNodes.length) setDoorPose(!doorsOpen);
 });

@@ -104,6 +104,12 @@ class TestBuildHtml:
         assert "function makeEyeButton" in html
         assert "function isPartVisible" in html
         assert "function friendlyPartLabel" in html
+        assert "function partsForGroup" in html
+        assert "cuttingGroupVisibility" not in html
+        assert "!partsForGroup(group).every(isPartVisible)" in html
+        assert "event.target !== row" in html
+        assert "event.stopImmediatePropagation()" in html
+        assert "ui.drawerPose.click()" in html
         assert "const select = document.createElement('span')" in html
         assert "select.type = 'button'" not in html
         assert "input.type = 'checkbox'" not in html
