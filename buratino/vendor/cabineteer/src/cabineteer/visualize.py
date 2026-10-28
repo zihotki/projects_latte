@@ -30,18 +30,19 @@ from html import escape as html_escape
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
-try:
-    import cadquery as cq
-except ImportError:
-    cq = None  # CadQuery is an optional dependency
+cq = None
 
 
 def _require_cq() -> None:
+    global cq
     if cq is None:
-        raise ImportError(
-            "cadquery is required for 3D export. "
-            "Install with: pip install cadquery"
-        )
+        try:
+            import cadquery as cq
+        except ImportError as exc:
+            raise ImportError(
+                "cadquery is required for 3D export. "
+                "Install with: pip install cadquery"
+            ) from exc
 
 
 # Output ``name`` becomes a filename stem (``<name>.glb`` / ``<name>_viewer.html``)

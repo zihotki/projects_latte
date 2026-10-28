@@ -245,10 +245,17 @@ class TestGenerateViewerHtml:
 # ── export_glb (requires CadQuery) ───────────────────────────────────────────
 
 class TestExportGlb:
-    def test_raises_without_cadquery(self, tmp_path):
+    def test_raises_without_cadquery(self, tmp_path, monkeypatch):
         """ImportError when cadquery is not installed."""
         import cabineteer.visualize as viz
 
+        import builtins
+        original_import = builtins.__import__
+        def missing_cad(name, *args, **kwargs):
+            if name == "cadquery":
+                raise ImportError("cadquery unavailable")
+            return original_import(name, *args, **kwargs)
+        monkeypatch.setattr(builtins, "__import__", missing_cad)
         original = viz.cq
         viz.cq = None
         try:
@@ -283,9 +290,16 @@ class TestExportGlb:
 # ── build_and_visualize (requires CadQuery) ───────────────────────────────────
 
 class TestBuildAndVisualize:
-    def test_raises_without_cadquery(self, tmp_path):
+    def test_raises_without_cadquery(self, tmp_path, monkeypatch):
         import cabineteer.visualize as viz
 
+        import builtins
+        original_import = builtins.__import__
+        def missing_cad(name, *args, **kwargs):
+            if name == "cadquery":
+                raise ImportError("cadquery unavailable")
+            return original_import(name, *args, **kwargs)
+        monkeypatch.setattr(builtins, "__import__", missing_cad)
         original = viz.cq
         viz.cq = None
         try:

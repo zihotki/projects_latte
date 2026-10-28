@@ -38,6 +38,8 @@ from .joinery import (
     DowelSpec,
 )
 from .layout import LayoutNode, layout_from_dict, layout_to_dict
+from .spaces import (Carcass, Space, Split, Divider, Fixed, Fr, DrawerBox, Door,
+                     AppliedDrawerFront, ResolvedModel, resolve_model, _input)
 from .profiles import (
     ProfileAssembly,
     ProfileAssemblySpec,
@@ -241,10 +243,34 @@ class ProjectCabinet:
 
 
 @dataclass(frozen=True)
+class SpaceModelSpec:
+    """Inputs for one rectangular carcass and its clear-space tree."""
+    carcass: Carcass
+    root: Space
+    fronts: tuple[Door | AppliedDrawerFront, ...] = ()
+
+
+def space_model_from_dict(data: dict) -> SpaceModelSpec:
+    """Read the tagged input tree stored in project snapshots."""
+    types = {c.__name__: c for c in (Carcass, Space, Split, Divider, Fixed, Fr,
+                                     DrawerBox, Door, AppliedDrawerFront)}
+    def read(value):
+        if isinstance(value, list):
+            return tuple(read(item) for item in value)
+        if isinstance(value, dict):
+            tag = value.get("type")
+            if tag not in types:
+                raise ValueError(f"unknown space model type {tag!r}")
+            return types[tag](**{k: read(v) for k, v in value.items() if k != "type"})
+        return value
+    return SpaceModelSpec(read(data["carcass"]), read(data["root"]), read(data.get("fronts", [])))
+
+
+@dataclass(frozen=True)
 class CabinetProject:
     """A set of cabinets designed to live together."""
     name: str
-    cabinets: tuple[ProjectCabinet, ...]
+    cabinets: tuple[ProjectCabinet, ...] = ()
     shared:   SharedDesign = field(default_factory=SharedDesign)
     notes:    str = ""
     # Available wall run in mm. When set, consistency checks flag a total
@@ -261,6 +287,18 @@ class CabinetProject:
     # Optional native layout used by composite projects.
     layout: Optional[LayoutNode] = None
     profile_assembly: Optional[ProfileAssemblySpec] = None
+    space_model: Optional[SpaceModelSpec] = None
+
+    def __post_init__(self) -> None:
+        if self.space_model is not None and (self.cabinets or self.layout is not None
+                or self.profile_assembly is not None or self.worktop is not None
+                or self.shared != SharedDesign()):
+            raise ValueError("space_model cannot be combined with legacy cabinets, shared design, worktop, layout or profile assembly")
+
+    def resolved_space_model(self) -> ResolvedModel:
+        if self.space_model is None:
+            raise ValueError("space_model is required")
+        return resolve_model(self.space_model.carcass, self.space_model.root, self.space_model.fronts)
 
     def resolved(self) -> tuple[tuple[str, CabinetConfig], ...]:
         """Return ``((name, merged_config), ...)`` with shared tokens applied."""
@@ -496,14 +534,15 @@ def list_saved_projects(
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             cabinets = data.get("cabinets", [])
+            space = data.get("space_model")
             entries.append({
                 "name": data.get("name", path.stem),
-                "cabinet_count": len(cabinets),
-                "cabinet_names": [c.get("name", "") for c in cabinets],
+                "cabinet_count": 1 if space else len(cabinets),
+                "cabinet_names": ["cabinet"] if space else [c.get("name", "") for c in cabinets],
                 "total_run_width_mm": round(sum(
                     float(c.get("config", {}).get("width", 0) or 0)
                     for c in cabinets
-                ), 1),
+                ) + (float(space["carcass"]["width"]) if space else 0), 1),
                 "wall_width_mm": data.get("wall_width_mm"),
                 "notes": data.get("notes", ""),
                 "modified": modified,
@@ -1131,6 +1170,8 @@ def project_to_dict(project: CabinetProject) -> dict:
             for pc in project.cabinets
         ],
     }
+    if project.space_model is not None:
+        out["space_model"] = {"carcass": _input(project.space_model.carcass), "root": _input(project.space_model.root), "fronts": _input(project.space_model.fronts)}
     if project.wall_width_mm is not None:
         out["wall_width_mm"] = project.wall_width_mm
     if project.forked_from is not None:
@@ -1154,7 +1195,7 @@ def project_from_dict(d: dict) -> CabinetProject:
             config=config_from_dict(c["config"]),
             overrides=frozenset(c.get("overrides", [])),
         )
-        for c in d["cabinets"]
+        for c in d.get("cabinets", [])
     )
     wall_raw = d.get("wall_width_mm")
     fork_raw = d.get("forked_from")
@@ -1171,6 +1212,7 @@ def project_from_dict(d: dict) -> CabinetProject:
         layout=layout_from_dict(d["layout"]) if d.get("layout") is not None else None,
         profile_assembly=(profile_spec_from_dict(d["profile_assembly"])
                           if d.get("profile_assembly") is not None else None),
+        space_model=space_model_from_dict(d["space_model"]) if d.get("space_model") is not None else None,
     )
 
 
@@ -1269,6 +1311,7 @@ def build_project(payload: dict) -> CabinetProject:
         layout=layout_from_dict(payload["layout"]) if payload.get("layout") is not None else None,
         profile_assembly=(profile_spec_from_dict(payload["profile_assembly"])
                           if payload.get("profile_assembly") is not None else None),
+        space_model=space_model_from_dict(payload["space_model"]) if payload.get("space_model") is not None else None,
     )
 
 
@@ -1319,14 +1362,13 @@ def check_project_consistency(project: CabinetProject) -> list[dict]:
     """
     issues: list[dict] = []
     resolved = project.resolved()
-    if not resolved:
+    if not resolved and project.space_model is None:
         return issues
-
-    base_name, base_cfg = resolved[0]
 
     # ── Wall fit ───────────────────────────────────────────────────────────
     if project.wall_width_mm:
-        total = sum(cfg.width for _, cfg in resolved)
+        total = (project.space_model.carcass.width if project.space_model is not None
+                 else sum(cfg.width for _, cfg in resolved))
         gap = project.wall_width_mm - total
         if gap < 0:
             issues.append({
@@ -1351,6 +1393,10 @@ def check_project_consistency(project: CabinetProject) -> list[dict]:
                 "value": total,
                 "limit": project.wall_width_mm,
             })
+
+    if not resolved:
+        return issues
+    base_name, base_cfg = resolved[0]
 
     # ── Material / joinery / hardware match ────────────────────────────────
     for field_name, severity, unit in _CONSISTENCY_FIELDS:

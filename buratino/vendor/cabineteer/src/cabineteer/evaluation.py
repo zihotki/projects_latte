@@ -16,10 +16,17 @@ from enum import Enum
 from itertools import combinations
 from typing import Optional
 
-try:
-    import cadquery as cq
-except ImportError:
-    cq = None
+cq = None
+
+
+def _load_cq() -> bool:
+    global cq
+    if cq is None:
+        try:
+            import cadquery as cq
+        except ImportError:
+            return False
+    return True
 
 from .cabinet import CabinetConfig
 from .drawer import (
@@ -1798,7 +1805,7 @@ def check_interference(assembly: "cq.Assembly", tolerance: float = 0.1) -> list[
     Runs pairwise Boolean intersection on all solid bodies.
     This is computationally expensive for large assemblies.
     """
-    if cq is None:
+    if not _load_cq():
         return [Issue(
             check="interference",
             severity=Severity.WARNING,
@@ -1871,7 +1878,7 @@ def check_drawer_in_opening(
     to the drawer's INSIDE face, so the box walls have to be stepped over
     before comparing against the slide's window.
     """
-    if cq is None:
+    if not _load_cq():
         return [Issue(
             check="drawer_fit",
             severity=Severity.WARNING,
