@@ -91,7 +91,7 @@ def test_native_real_assembly_build_reports_resolved_contents(root, tmp_path):
     assert len(result["frames"]) == 2
     assert len(result["upper_cabinets"]) == 1
     assert len(result["drawers"]) == 9
-    assert len(result["parts"]) == 94
+    assert len(result["parts"]) == 91
     assert (directory / "report.html").is_file()
     assert (directory / "cabinet.glb").read_bytes()[:4] == b"glTF"
 

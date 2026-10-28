@@ -28,7 +28,7 @@ def test_real_native_report_has_cabinet_and_drawer_summaries(root):
     ]
     assert len(result["upper_cabinets"]) == 1
     assert result["upper_cabinets"][0]["id"] == "upper"
-    assert len(result["parts"]) == 94
+    assert len(result["parts"]) == 91
     assert len(result["drawers"]) == len(result["hardware"]) == 9
     assert {item["slide_key"] for item in result["drawers"]} == {
         "buratino_hettich_quadro_v6_eb20_480",
@@ -45,6 +45,7 @@ def test_real_native_report_has_cabinet_and_drawer_summaries(root):
         "buratino_hettich_quadro_v6_eb20_380",
     }
     assert snapshot["project"]["profile_assembly"]["lower_drawers"]
+    assert snapshot["project"]["profile_assembly"]["continuous_bottom"] is True
 
 
 def test_mixed_opening_runner_selection_is_reported_without_false_single_key(root):

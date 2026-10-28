@@ -112,7 +112,7 @@ def test_real_native_project_consumers(monkeypatch, tmp_path):
             "project_name": name, "open_browser": False, "output_dir": str(tmp_path),
         })
         expected = designed["assembly"]
-        assert len(expected["parts"]) == 94
+        assert len(expected["parts"]) == 91
         assert len(expected["drawers"]) == len(expected["hardware"]) == 9
         assert len(expected["viewer"]["drawers"]) == 9
         for actual in (loaded["assembly"], evaluated["assembly"],

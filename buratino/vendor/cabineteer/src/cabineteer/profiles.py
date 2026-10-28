@@ -387,6 +387,7 @@ def resolve_profile_assembly(
     cap_material: str = "",
     shared_owner: str | None = None,
     frames: tuple[Frame, ...] | None = None,
+    continuous_bottom: bool = False,
 ) -> ProfileAssembly:
     """Place row-owned caps, their boxes and a support frame on a native layout."""
     if not boxes or len({box.name for box in boxes}) != len(boxes):
@@ -408,6 +409,8 @@ def resolve_profile_assembly(
         )
         if any(stock(box) != stock(boxes[0]) for box in boxes[1:]):
             raise ValueError("shared sections must use the same stock")
+    elif continuous_bottom:
+        raise ValueError("continuous bottom requires a shared carcass")
     frames = (frame,) if frames is None else frames
     if not frames or len({item.name for item in frames}) != len(frames):
         raise ValueError("assembly requires distinct frames")
@@ -481,7 +484,19 @@ def resolve_profile_assembly(
     else:
         first, last = boxes[0], boxes[-1]
         depth = first.depth_mm - first.back_mm
-        shared_parts = [panels[first.name][0]]
+        bottom_z = first.bottom_mm if continuous_bottom else 0
+
+        def raise_wall_base(part: ProfilePart) -> ProfilePart:
+            profile = tuple(
+                (x, bottom_z if z == 0 else z) for x, z in part.profile_xz_mm
+            )
+            return replace(
+                part,
+                profile_xz_mm=profile,
+                stock_mm=(part.stock_mm[0] - bottom_z, *part.stock_mm[1:]),
+            )
+
+        shared_parts = [raise_wall_base(panels[first.name][0])]
         for index, box in enumerate(boxes[1:], 1):
             seam = box.x_mm
             half = box.side_mm / 2
@@ -502,36 +517,64 @@ def resolve_profile_assembly(
                     shared_owner,
                     "divider",
                     first.material,
-                    ((seam - half, 0), (seam + half, 0), *reversed(top)),
+                    (
+                        (seam - half, bottom_z),
+                        (seam + half, bottom_z),
+                        *reversed(top),
+                    ),
                     0,
                     depth,
-                    (max(z for _, z in top), depth, box.side_mm),
+                    (max(z for _, z in top) - bottom_z, depth, box.side_mm),
                     orientation="side",
                 )
             )
-        shared_parts.append(panels[last.name][1])
-        for i, box in enumerate(boxes):
-            x0 = box.x_mm + (box.side_mm if i == 0 else box.side_mm / 2)
-            x1 = (
-                box.x_mm
-                + box.width_mm
-                - (box.side_mm / 2 if i < len(boxes) - 1 else box.side_mm)
-            )
-            if x1 <= x0:
-                raise ValueError("shared section has no usable width")
-            bottom = panels[box.name][2]
+        shared_parts.append(raise_wall_base(panels[last.name][1]))
+        if continuous_bottom:
             shared_parts.append(
-                replace(
-                    bottom,
-                    profile_xz_mm=(
-                        (x0, 0),
-                        (x1, 0),
-                        (x1, box.bottom_mm),
-                        (x0, box.bottom_mm),
+                ProfilePart(
+                    f"{shared_owner}.bottom",
+                    shared_owner,
+                    "bottom",
+                    first.material,
+                    (
+                        (first.x_mm, 0),
+                        (last.x_mm + last.width_mm, 0),
+                        (last.x_mm + last.width_mm, first.bottom_mm),
+                        (first.x_mm, first.bottom_mm),
                     ),
-                    stock_mm=(x1 - x0, depth, box.bottom_mm),
+                    0,
+                    depth,
+                    (
+                        last.x_mm + last.width_mm - first.x_mm,
+                        depth,
+                        first.bottom_mm,
+                    ),
+                    orientation="bottom",
                 )
             )
+        else:
+            for i, box in enumerate(boxes):
+                x0 = box.x_mm + (box.side_mm if i == 0 else box.side_mm / 2)
+                x1 = (
+                    box.x_mm
+                    + box.width_mm
+                    - (box.side_mm / 2 if i < len(boxes) - 1 else box.side_mm)
+                )
+                if x1 <= x0:
+                    raise ValueError("shared section has no usable width")
+                bottom = panels[box.name][2]
+                shared_parts.append(
+                    replace(
+                        bottom,
+                        profile_xz_mm=(
+                            (x0, 0),
+                            (x1, 0),
+                            (x1, box.bottom_mm),
+                            (x0, box.bottom_mm),
+                        ),
+                        stock_mm=(x1 - x0, depth, box.bottom_mm),
+                    )
+                )
         back = box_parts(
             replace(
                 first,
@@ -800,6 +843,7 @@ class ProfileAssemblySpec:
     frames: tuple[Frame, ...] = ()
     lower_drawers: tuple[ProfileLowerDrawerSpec, ...] = ()
     lower_back_material: str = ""
+    continuous_bottom: bool = False
 
 
 def resolved_profile_spec(spec: ProfileAssemblySpec) -> ProfileAssemblySpec:
@@ -860,6 +904,7 @@ def profile_spec_from_dict(data: dict) -> ProfileAssemblySpec:
             ProfileLowerDrawerSpec(**recipe) for recipe in data.get("lower_drawers", ())
         ),
         lower_back_material=data.get("lower_back_material", ""),
+        continuous_bottom=data.get("continuous_bottom", False),
     )
 
 

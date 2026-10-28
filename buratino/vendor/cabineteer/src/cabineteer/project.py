@@ -289,6 +289,7 @@ class CabinetProject:
             spec.cap_material,
             spec.shared_owner,
             spec.frames or None,
+            spec.continuous_bottom,
         )
         placements = {p.name: p for p in result.layout.placements}
         lowers = tuple(

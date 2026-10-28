@@ -118,6 +118,7 @@ profile = ProfileAssemblySpec(
     frames=(bottom_frame, support_frame),
     cap_material="Melamine-faced board",
     shared_owner="upper",
+    continuous_bottom=True,
     roof_joint="level_over_divider",
     faces=ProfileFaceSpec(
         outer_reveal_mm=2,
