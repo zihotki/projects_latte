@@ -14,10 +14,7 @@ All dimensions in millimeters. Drawer orientation:
 from dataclasses import dataclass, field
 from typing import Optional
 
-try:
-    import cadquery as cq
-except ImportError:
-    cq = None
+cq = None  # Loaded only when geometry is requested.
 
 from .hardware import DrawerSlideSpec, get_slide, get_pull
 from .cabinet import CabinetConfig, PartInfo
@@ -352,8 +349,12 @@ class DrawerConfig:
 
 
 def _require_cq():
+    global cq
     if cq is None:
-        raise ImportError("cadquery is required. Install with: pip install cadquery")
+        try:
+            import cadquery as cq
+        except ImportError as exc:
+            raise ImportError("cadquery is required. Install with: pip install cadquery") from exc
 
 
 def make_drawer_side(cfg: DrawerConfig, side: str = "left") -> "cq.Workplane":
@@ -507,6 +508,8 @@ def add_manga_stack(assy: "cq.Assembly", cfg: DrawerConfig) -> None:
             f"+ {MANGA_CLEARANCE_MM:g} mm wall clearance, "
             f"{need_h:g} mm tall). Render without the manga scale item."
         )
+
+    _require_cq()
 
     # Flat pastel accents for the no-finish render; the viewer replaces these
     # with drawn tankōbon covers at load time.

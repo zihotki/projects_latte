@@ -20,10 +20,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional
 
-try:
-    import cadquery as cq
-except ImportError:
-    cq = None  # allow import for type checking / planning without cadquery installed
+cq = None  # Loaded only when geometry is requested.
 
 from .hardware import DrawerSlideSpec, get_slide, LegSpec, get_leg, get_pull, MountStyle
 from .pulls import HingeSide, door_pull_x_center
@@ -791,10 +788,12 @@ def build_cabinet_config(args: dict) -> CabinetConfig:
 
 
 def _require_cq():
+    global cq
     if cq is None:
-        raise ImportError(
-            "cadquery is required for 3D modeling. Install with: pip install cadquery"
-        )
+        try:
+            import cadquery as cq
+        except ImportError as exc:
+            raise ImportError("cadquery is required for 3D geometry. pip install cadquery") from exc
 
 
 def _cut_back_capture(

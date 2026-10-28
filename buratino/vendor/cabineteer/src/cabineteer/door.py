@@ -21,10 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-try:
-    import cadquery as cq
-except ImportError:
-    cq = None
+cq = None  # Loaded only when geometry is requested.
 
 from .hardware import HingeSpec, OverlayType, get_hinge, get_pull
 from .cabinet import CabinetConfig, PartInfo
@@ -196,8 +193,12 @@ class DoorConfig:
 
 
 def _require_cq() -> None:
+    global cq
     if cq is None:
-        raise ImportError("cadquery is required for 3D modeling. Install with: pip install cadquery")
+        try:
+            import cadquery as cq
+        except ImportError as exc:
+            raise ImportError("cadquery is required for 3D modeling. Install with: pip install cadquery") from exc
 
 
 def make_door_panel(cfg: DoorConfig) -> "cq.Workplane":

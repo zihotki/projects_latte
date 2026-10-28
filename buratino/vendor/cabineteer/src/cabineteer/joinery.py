@@ -70,10 +70,7 @@ import math
 from dataclasses import dataclass
 from enum import Enum
 
-try:
-    import cadquery as cq
-except ImportError:
-    cq = None
+cq = None  # Loaded only when geometry is requested.
 
 
 # ─── Enumerations ─────────────────────────────────────────────────────────────
@@ -885,8 +882,12 @@ DEFAULT_DOWEL = DowelSpec(diameter=8.0, max_spacing=96.0)
 
 
 def _require_cq() -> None:
+    global cq
     if cq is None:
-        raise ImportError("cadquery is required for 3D geometry. pip install cadquery")
+        try:
+            import cadquery as cq
+        except ImportError as exc:
+            raise ImportError("cadquery is required for 3D geometry. pip install cadquery") from exc
 
 
 def apply_drawer_joinery_to_side(
