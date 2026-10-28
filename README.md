@@ -8,7 +8,7 @@ A repository for small, focused software projects.
 | --- | --- |
 | [Cut on Eight](cut_on_eight/README.md) | Local browser-based dance-video segmentation and cataloguing. |
 | [LiteLLM gateway](litellm/README.md) | Local AI model gateway with per-app keys and PostgreSQL backups. |
-| [Buratino](buratino/README.md) | Local furniture design project with a pinned Cabineteer foundation. |
+| [Buratino](buratino/README.md) | Furniture design harness with declarative cabinets, assemblies, and fronts. |
 
 ## Working with a project
 
@@ -32,12 +32,13 @@ suggested action after each successful step:
 ./scripts/litellm.sh stop
 ```
 
-Set up and run the first Buratino cabinet draft:
+Set up and run a Buratino assembly example. See the
+[design guide](buratino/docs/designing.md) to create furniture:
 
 ```bash
 ./buratino/bin/buratino setup
-./buratino/bin/buratino build projects/simple-cabinet
-./buratino/bin/buratino preview projects/simple-cabinet
+./buratino/bin/buratino build projects/space-assembly-fronts
+./buratino/bin/buratino preview projects/space-assembly-fronts
 ```
 
 ## Repository checks

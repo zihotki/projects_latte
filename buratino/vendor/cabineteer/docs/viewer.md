@@ -1,5 +1,10 @@
 # The 3D viewer
 
+This page covers the standalone Cabineteer `visualize_cabinet` and
+`visualize_project` tools. Buratino's native Space build and preview flow has
+its own captured draft outputs; use the [Buratino guide](../../../README.md)
+and [design guide](../../../docs/designing.md) for that workflow.
+
 `visualize_cabinet` and `visualize_project` produce a **single self-contained HTML file** (written to `~/.cabineteer/visualizations/`) with the 3D model embedded. Open it in any browser — nothing to install. The only requirement is an internet connection on first load (the Three.js graphics library loads from a CDN).
 
 Send the file to a client, open it on the shop laptop, or keep it next to the cutlist — it keeps working.

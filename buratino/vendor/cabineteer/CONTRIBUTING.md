@@ -1,72 +1,40 @@
-# Contributing to cabineteer
+# Contributing to Cabineteer in Buratino
 
-Thanks for looking under the hood. cabineteer is a deterministic casework
-engine with an MCP server, a CLI, and an eval harness in front of it; this
-guide is the short path to making a change that lands cleanly.
+Cabineteer is tracked source inside the Buratino workspace. Edit
+`buratino/vendor/cabineteer/src/cabineteer` in place. The root
+`buratino/pyproject.toml` points to this source as an editable dependency.
 
-## Dev setup
-
-```bash
-git clone https://github.com/chemrich/cabineteer.git
-cd cabineteer
-uv sync                      # full install (CadQuery + nesting + PDF) plus dev tools
-```
-
-`uv sync` is the supported path — the repo pins a few dependency overrides in
-`pyproject.toml` (`[tool.uv]`) that a plain `pip install` won't apply. If
-CadQuery won't build on your machine, work in **lite** mode
-(`uv pip install -e .`); the pure-Python core — design, evaluation, cutlist
-BOM, CLI, MCP server, and both test suites — needs nothing native.
-
-## The two things that must stay green
+From the repository root, set up the locked runtime with:
 
 ```bash
-uv run pytest tests/ -v      # unit + integration (1,500+ tests)
-uv run python -m evals       # 300+ scenarios of natural-language prompts + typed assertions
+./buratino/bin/buratino setup
 ```
 
-The eval harness calls the same tool handlers the MCP server and CLI expose
-(no transport), so it runs in about a second. **Run both after any non-trivial
-change** — a green pytest and a 100%-pass eval run are the bar for a PR. Neither
-requires CadQuery.
+Use the command that matches the changed area:
 
-Useful eval filters: `--tag kitchen`, `--difficulty advanced`, `--name <scenario>`,
-`--list`, `--json`.
+```bash
+./buratino/bin/buratino check
+./buratino/bin/buratino test-native tests/test_project.py
+./buratino/bin/buratino test-native tests/test_space_assembly.py
+./buratino/bin/buratino test-native tests/test_profile_consumers.py
+```
 
-## Common changes and their conventions
+Add focused test paths after `test-native`. Run it without a path when a full
+Cabineteer suite is needed. `./buratino/bin/buratino test` runs Buratino's
+tests. The Cabineteer eval harness is in `evals/`. Run it from the repository
+root with Buratino's locked runtime when a change affects tool behavior covered
+by prompt scenarios:
 
-- **Add a preset** (`src/cabineteer/presets.py`): register a `CabinetPreset`.
-  The opening/column heights must sum to the interior, and a guard test
-  requires every preset to `evaluate_cabinet` with **zero errors** — a preset
-  is a *known-good* starting point, so make it one.
-- **Add an eval scenario** (`evals/scenarios.py`): a `Scenario` is a
-  natural-language `prompt` plus `ToolCall`s carrying typed `Assertion`s
-  (`EQ`, `APPROX`, `GT`, `CONTAINS`, `NO_ERRORS`, `HAS_WARNING`, …). Cover new
-  behaviour *and* pin any bug you fix with a regression scenario.
-- **Add or edit a hardware spec** (`src/cabineteer/hardware.py`): dimensions,
-  placement rules, and part numbers come from **manufacturer datasheets** —
-  cite the source in the docstring and mirror it in
-  [ATTRIBUTIONS.md](ATTRIBUTIONS.md). Don't invent a part number; leave it
-  blank if unconfirmed.
-- **Change a catalogue count** the README quotes (pulls, presets, slides,
-  tools, eval totals): run `uv run python scripts/readme_stats.py` to update
-  the `<!--stat:-->` markers. CI runs `--check` and fails on drift.
+```bash
+PYTHONPATH=buratino/vendor/cabineteer buratino/.local/venv/bin/python -m evals --list
+PYTHONPATH=buratino/vendor/cabineteer buratino/.local/venv/bin/python -m evals --name <scenario>
+```
 
-New tools register in one place — `server.TOOL_DISPATCH` — and a test asserts
-`list_tools()` and the dispatch stay in sync, so the MCP server, the CLI, and
-the eval harness all see the same set automatically.
+The schema and dispatch for MCP tools live in `src/cabineteer/server.py`.
+CabinetProject serialization and patch behavior live in
+`src/cabineteer/project.py`. Native Space and profile inputs are defined in
+`spaces.py`, `space_assembly.py`, `profiles.py`, and `layout.py`.
 
-## Architecture
-
-[docs/architecture.md](docs/architecture.md) maps the modules; `CLAUDE.md` has
-the design patterns and the current known-issues list. The data flow is
-`hardware/joinery → cabinet/drawer/door → project → evaluation → cutlist →
-server`, and CadQuery is optional at every layer (pure-Python paths are what
-the tests exercise).
-
-## Reporting bugs
-
-Open a [GitHub Issue](https://github.com/chemrich/cabineteer/issues) with the
-prompt or tool call you ran and what you expected. A failing eval scenario or a
-short `cabineteer-cli run <tool> --json '…'` reproduction is the fastest way to
-get it fixed — and often becomes the regression test.
+Keep source attribution with the fork. `NOTICE`, `LICENSE`, and
+`ATTRIBUTIONS.md` record the upstream license and references for hardware and
+joinery data.
