@@ -93,6 +93,8 @@ def snap_to_standard_box_height(raw_mm: float) -> float:
 DEFAULT_BOTTOM_DADO_INSET = 13.0
 
 DEFAULT_BOTTOM_THICKNESS: float = 6.0     # 1/4" plywood
+DEFAULT_VERTICAL_GAP: float = 12.0
+
 HEAVY_BOTTOM_THICKNESS: float = 12.0      # 1/2" plywood
 HEAVY_BOTTOM_MIN_BOX_HEIGHT: float = 127.0  # > 5" deep (box height)
 HEAVY_BOTTOM_MIN_BOX_WIDTH: float = 406.4   # ≥ 16" wide (box width)
@@ -134,7 +136,7 @@ class DrawerConfig:
 
     # Gaps / reveals
     front_gap: float = 2.0  # gap between drawer box front and cabinet face
-    vertical_gap: float = 12.0  # clearance above drawer box
+    vertical_gap: float = DEFAULT_VERTICAL_GAP  # clearance above drawer box
 
     # Hardware
     slide_key: str = "blum_tandem_550h"

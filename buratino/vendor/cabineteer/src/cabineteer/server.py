@@ -6141,6 +6141,10 @@ async def _tool_design_project(args: dict) -> list[types.TextContent]:
     project = build_project(args)
     if project.space_model is not None:
         project.resolved_space_model()
+    elif project.layout is not None or project.profile_assembly is not None:
+        project.resolved_assembly()
+    elif not project.cabinets:
+        raise ValueError("design_project requires cabinets or a valid space model or profile assembly")
     path = save_project(project)
     return _ok(_project_summary(project, path))
 

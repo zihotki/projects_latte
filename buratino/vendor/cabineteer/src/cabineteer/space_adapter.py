@@ -23,6 +23,8 @@ def space_model_records(model: ResolvedModel, cabinet_id: str = "cabinet") -> di
         planar = [v for i, v in enumerate(dims) if i != axis]
         stock = {"length": max(planar), "width": min(planar), "thickness": thickness}
         motion = item.get("motion_group")
+        if item["kind"] == "divider":
+            item["divider_role"] = item["role"]
         item.update(cabinet_id=cabinet_id, component=item["kind"], quantity=1,
                     stock_mm=stock, role=item["id"], viewer_role=item["id"],
                     label=item["kind"].replace("_", " ").title())

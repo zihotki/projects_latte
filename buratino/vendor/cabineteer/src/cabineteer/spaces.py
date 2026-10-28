@@ -9,7 +9,7 @@ import math
 from typing import Any
 
 from .cabinet import CabinetConfig, back_capture_geometry, carcass_panel
-from .drawer import DrawerConfig, drawer_part_offsets
+from .drawer import DEFAULT_VERTICAL_GAP, DrawerConfig, drawer_part_offsets
 from .door import DoorConfig
 from .hardware import OverlayType, get_slide
 from .joinery import DrawerJoineryStyle
@@ -213,7 +213,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
             _name(box.name, path)
             cid = path + "/" + box.name
             bottom_clear = _number(box.bottom_clearance, cid + " bottom clearance", zero=True)
-            top_clear = _number(box.top_clearance, cid + " top clearance", zero=True) if box.top_clearance is not None else (12 if box.height == "fit" else 0)
+            top_clear = _number(box.top_clearance, cid + " top clearance", zero=True) if box.top_clearance is not None else (DEFAULT_VERTICAL_GAP if box.height == "fit" else 0)
             height = size[2] - bottom_clear - top_clear if box.height == "fit" else _number(box.height, cid + " height")
             if height <= 0 or height + bottom_clear + top_clear > size[2]:
                 raise ValueError(f"{cid}: drawer box does not fit its allocated space")

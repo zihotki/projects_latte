@@ -189,3 +189,29 @@ def test_validation_reuses_complete_shapes(monkeypatch):
     shapes.pop("/carcass/top")
     with pytest.raises(ValueError, match="shape IDs"):
         validate_model(model, shapes=shapes)
+
+
+def test_records_preserve_divider_roles():
+    p = CabinetProject("roles", space_model=SpaceModelSpec(Carcass(600, 936, 500),
+        Space("root", split=Split("height", [Space("a", Fr()), Divider("structural"),
+            Space("b", Fr()), Divider("shelf", role="adjustable"), Space("c", Fr())]))))
+    records = space_model_records(p.resolved_space_model())
+    parts = {part["id"]: part for part in records["parts"]}
+    assert parts["/root/structural"]["divider_role"] == "structural"
+    assert parts["/root/shelf"]["divider_role"] == "adjustable"
+    assert parts["/root/shelf"]["role"] == "/root/shelf"
+
+
+def test_fit_default_uses_drawer_vertical_gap():
+    from cabineteer.drawer import DEFAULT_VERTICAL_GAP, DrawerConfig
+    model = project().resolved_space_model()
+    assert model.contents[0]["top_clearance"] == DEFAULT_VERTICAL_GAP == DrawerConfig(opening_width=500, opening_height=400, opening_depth=500).vertical_gap
+
+
+def test_design_rejects_empty_new_project(tmp_path, monkeypatch):
+    from cabineteer import project as project_module, server
+    monkeypatch.setattr(project_module, "project_dir", lambda: tmp_path)
+    with pytest.raises(ValueError, match="requires cabinets"):
+        asyncio.get_event_loop().run_until_complete(server._tool_design_project({"name": "empty"}))
+    assert not (tmp_path / "empty.json").exists()
+    assert project_from_dict({"name": "old-empty", "cabinets": []}).cabinets == ()
