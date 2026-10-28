@@ -285,6 +285,12 @@ class CabinetProject:
                 "quantity": 2, "status": "unverified",
                 "box_bottom_clearance_mm": spec.faces.drawer_box_bottom_clearance_mm,
             },)
+        hardware += tuple({
+            "type": "drawer_runner", "slide_key": item.slide_key,
+            "instance_id": f"{item.section}.drawer", "quantity": 2,
+            "status": "unverified",
+            "box_bottom_clearance_mm": item.bottom_clearance_mm,
+        } for item in spec.upper_drawers)
         return ProfileAssembly(result.layout, parts, hardware=hardware)
 
 

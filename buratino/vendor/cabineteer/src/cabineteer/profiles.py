@@ -653,6 +653,46 @@ class ProfileFaceSpec:
 
 
 @dataclass(frozen=True)
+class ProfileDrawerSpec:
+    """One rectangular drawer in a named profiled upper section."""
+
+    section: str
+    slide_key: str
+    box_height_mm: float
+    bottom_clearance_mm: float
+    side_mm: float = 16
+    front_back_mm: float = 18
+    bottom_mm: float = 12
+    bottom_dado_depth_mm: float = 6
+    bottom_dado_inset_mm: float | None = None
+    front_gap_mm: float = 0
+    joinery_style: str = "butt"
+    material: str = ""
+    bottom_material: str = ""
+
+    def __post_init__(self):
+        if not self.section or not self.slide_key:
+            raise ValueError("drawer section and slide key are required")
+        positive = (
+            self.box_height_mm,
+            self.side_mm,
+            self.front_back_mm,
+            self.bottom_mm,
+            self.bottom_dado_depth_mm,
+        )
+        optional = (self.bottom_clearance_mm, self.front_gap_mm)
+        if any(not math.isfinite(v) or v <= 0 for v in positive):
+            raise ValueError("drawer stock and height must be positive and finite")
+        if any(not math.isfinite(v) or v < 0 for v in optional):
+            raise ValueError("drawer clearances must be finite and nonnegative")
+        if self.bottom_dado_inset_mm is not None and (
+            not math.isfinite(self.bottom_dado_inset_mm)
+            or self.bottom_dado_inset_mm < 0
+        ):
+            raise ValueError("drawer bottom dado inset must be finite and nonnegative")
+
+
+@dataclass(frozen=True)
 class ProfileAssemblySpec:
     roof: RoofProfile
     boxes: tuple[ProfiledBox, ...]
@@ -664,6 +704,7 @@ class ProfileAssemblySpec:
     faces: ProfileFaceSpec | None = None
     shared_owner: str | None = None
     roof_joint: str | None = None
+    upper_drawers: tuple[ProfileDrawerSpec, ...] = ()
 
 
 def resolved_profile_spec(spec: ProfileAssemblySpec) -> ProfileAssemblySpec:
@@ -713,6 +754,9 @@ def profile_spec_from_dict(data: dict) -> ProfileAssemblySpec:
         faces=ProfileFaceSpec(**data["faces"]) if data.get("faces") else None,
         shared_owner=data.get("shared_owner"),
         roof_joint=data.get("roof_joint"),
+        upper_drawers=tuple(
+            ProfileDrawerSpec(**drawer) for drawer in data.get("upper_drawers", ())
+        ),
     )
 
 
@@ -822,14 +866,119 @@ def profile_face(
     )
 
 
+def _placed_drawer_parts(drawer, origin, section, owner, material, bottom_material=""):
+    """Place the native drawer box in a profile assembly."""
+    from .drawer import build_drawer, drawer_part_offsets
+
+    _, drawer_parts = build_drawer(drawer)
+    offsets = drawer_part_offsets(drawer)
+    names = {
+        "drawer_side_L": ("side_left", "side_L"),
+        "drawer_side_R": ("side_right", "side_R"),
+        "drawer_sub_front": ("inner_front", "sub_front"),
+        "drawer_back": ("inner_back", "back"),
+        "drawer_bottom": ("bottom", "bottom"),
+    }
+    parts = []
+    for part in drawer_parts:
+        component, key = names[part.name]
+        pos = tuple(a + b for a, b in zip(origin, offsets[key], strict=True))
+        shape = part.shape.translate(pos)
+        bounds = shape.val().BoundingBox()
+        if component.startswith("side"):
+            axes = ((0, 1, 0), (0, 0, 1), (1, 0, 0))
+            local_origin = (bounds.xmin, bounds.ymin, bounds.zmin)
+            stock = (bounds.ylen, bounds.zlen, bounds.xlen)
+        elif component == "bottom":
+            axes = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+            local_origin = (bounds.xmin, bounds.ymin, bounds.zmin)
+            stock = (bounds.xlen, bounds.ylen, bounds.zlen)
+        else:
+            axes = ((1, 0, 0), (0, 0, 1), (0, -1, 0))
+            local_origin = (bounds.xmin, bounds.ymax, bounds.zmin)
+            stock = (bounds.xlen, bounds.zlen, bounds.ylen)
+        parts.append(
+            NativeCarcassPart(
+                f"{section}.drawer.{component}",
+                owner,
+                component,
+                bottom_material
+                if component == "bottom" and bottom_material
+                else material,
+                shape,
+                LocalFrame(local_origin, *axes),
+                stock,
+            )
+        )
+    return tuple(parts)
+
+
+def upper_drawer_configs(spec: ProfileAssemblySpec):
+    """Derive each upper opening from the carcass and its lowest roof underside."""
+    from .drawer import DrawerConfig
+    from .hardware import get_slide
+    from .joinery import DrawerJoineryStyle
+
+    names = {box.name for box in spec.boxes}
+    if len({item.section for item in spec.upper_drawers}) != len(spec.upper_drawers):
+        raise ValueError("upper drawer sections must be distinct")
+    result = {}
+    for item in spec.upper_drawers:
+        if item.section not in names:
+            raise ValueError(f"unknown upper drawer section: {item.section}")
+        i, box = next(
+            (i, box) for i, box in enumerate(spec.boxes) if box.name == item.section
+        )
+        half = box.side_mm / 2 if spec.shared_owner is not None else box.side_mm
+        x0 = box.x_mm + (half if i else box.side_mm)
+        x1 = (
+            box.x_mm + box.width_mm - (half if i < len(spec.boxes) - 1 else box.side_mm)
+        )
+        # A rectangular box must clear the roof at every X in its footprint.
+        underside = _clip(spec.roof, x0, x1, underside=True)
+        opening_height = min(z for _, z in underside) - box.bottom_mm
+        opening_depth = box.depth_mm - box.back_mm
+        slide = get_slide(item.slide_key)
+        if item.bottom_clearance_mm < slide.min_bottom_clearance:
+            raise ValueError(
+                f"upper drawer {item.section} lacks runner bottom clearance"
+            )
+        if item.box_height_mm + item.bottom_clearance_mm > opening_height:
+            raise ValueError(f"upper drawer {item.section} exceeds roof underside")
+        drawer = DrawerConfig(
+            opening_width=x1 - x0,
+            opening_height=opening_height,
+            opening_depth=opening_depth,
+            slide_key=item.slide_key,
+            side_thickness=item.side_mm,
+            front_back_thickness=item.front_back_mm,
+            bottom_thickness=item.bottom_mm,
+            bottom_dado_depth=item.bottom_dado_depth_mm,
+            bottom_dado_inset=item.bottom_dado_inset_mm,
+            front_gap=item.front_gap_mm,
+            vertical_gap=opening_height
+            - slide.min_bottom_clearance
+            - item.box_height_mm,
+            use_standard_height=False,
+            applied_face=False,
+            joinery_style=DrawerJoineryStyle(item.joinery_style),
+        )
+        if drawer.box_height != item.box_height_mm or drawer.box_depth > opening_depth:
+            raise ValueError(f"upper drawer {item.section} does not fit opening")
+        result[item.section] = (item, drawer, x0, box.bottom_mm)
+    return result
+
+
 def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
-    """Resolve upper fronts and lower drawer using existing native builders."""
+    """Resolve upper fronts and all drawer boxes with native builders."""
     from .cabinet import face_layout
-    from .drawer import DrawerConfig, build_drawer, drawer_part_offsets
+    from .drawer import DrawerConfig
     from .joinery import DrawerJoineryStyle
 
     face = spec.faces
     if face is None:
+        if spec.upper_drawers:
+            raise ValueError("upper drawers require a profile face specification")
         return ()
     if len(cfg.openings) != 2 or [o.opening_type for o in cfg.openings] != [
         "drawer",
@@ -855,15 +1004,6 @@ def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
     ):
         raise ValueError("drawer box does not fit its opening")
     _ = drawer.box_depth  # Apply native slide depth and stock constraints.
-    _, drawer_parts = build_drawer(drawer)
-    offsets = drawer_part_offsets(drawer)
-    names = {
-        "drawer_side_L": ("side_left", "side_L"),
-        "drawer_side_R": ("side_right", "side_R"),
-        "drawer_sub_front": ("inner_front", "sub_front"),
-        "drawer_back": ("inner_back", "back"),
-        "drawer_bottom": ("bottom", "bottom"),
-    }
     origin = (
         placement.origin_mm[0] + cfg.side_thickness + drawer.side_gap,
         placement.origin_mm[1] + drawer.front_gap,
@@ -871,33 +1011,30 @@ def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
         + cfg.bottom_thickness
         + face.drawer_box_bottom_clearance_mm,
     )
-    parts = []
-    for part in drawer_parts:
-        component, key = names[part.name]
-        pos = tuple(a + b for a, b in zip(origin, offsets[key], strict=True))
-        shape = part.shape.translate(pos)
-        bounds = shape.val().BoundingBox()
-        if component.startswith("side"):
-            axes = ((0, 1, 0), (0, 0, 1), (1, 0, 0))
-            local_origin = (bounds.xmin, bounds.ymin, bounds.zmin)
-            stock = (bounds.ylen, bounds.zlen, bounds.xlen)
-        elif component == "bottom":
-            axes = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
-            local_origin = (bounds.xmin, bounds.ymin, bounds.zmin)
-            stock = (bounds.xlen, bounds.ylen, bounds.zlen)
-        else:
-            axes = ((1, 0, 0), (0, 0, 1), (0, -1, 0))
-            local_origin = (bounds.xmin, bounds.ymax, bounds.zmin)
-            stock = (bounds.xlen, bounds.zlen, bounds.ylen)
-        parts.append(
-            NativeCarcassPart(
-                f"{spec.lower}.drawer.{component}",
-                spec.lower,
-                component,
-                cfg.carcass_material,
-                shape,
-                LocalFrame(local_origin, *axes),
-                stock,
+    parts = list(
+        _placed_drawer_parts(
+            drawer, origin, spec.lower, spec.lower, cfg.carcass_material
+        )
+    )
+    upper_drawers = upper_drawer_configs(spec)
+    for box in spec.boxes:
+        selected = upper_drawers.get(box.name)
+        if selected is None:
+            continue
+        item, upper, x0, bottom = selected
+        upper_origin = (
+            row_origin[0] + x0 + upper.side_gap,
+            row_origin[1] + upper.front_gap,
+            row_origin[2] + bottom + item.bottom_clearance_mm,
+        )
+        parts.extend(
+            _placed_drawer_parts(
+                upper,
+                upper_origin,
+                box.name,
+                spec.shared_owner or box.name,
+                item.material or box.material,
+                item.bottom_material,
             )
         )
     panels = face_layout(
@@ -907,9 +1044,7 @@ def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
         (panel for panel in panels if panel.kind == "door"), key=lambda panel: panel.x
     )
     door_left = door_panels[0].x if door_panels else None
-    door_right = (
-        door_panels[-1].x + door_panels[-1].width if door_panels else None
-    )
+    door_right = door_panels[-1].x + door_panels[-1].width if door_panels else None
     drawer_bottom = cfg.bottom_thickness - drawer.face_overlay_bottom
     drawer_top = cfg.bottom_thickness + drawer.opening_height + drawer.face_overlay_top
     door_gap = cfg.face_gap_mm if cfg.door_gap_mm is None else cfg.door_gap_mm
@@ -975,11 +1110,39 @@ def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
 
     previous_top = None
     for i, box in enumerate(spec.boxes):
-        x0 = box.x_mm + (face.outer_reveal_mm if i == 0 else door_gap / 2)
+        kind = "drawer_front" if box.name in upper_drawers else "door"
+        previous_kind = (
+            ("drawer_front" if spec.boxes[i - 1].name in upper_drawers else "door")
+            if i
+            else None
+        )
+        next_kind = (
+            ("drawer_front" if spec.boxes[i + 1].name in upper_drawers else "door")
+            if i + 1 < len(spec.boxes)
+            else None
+        )
+        left_gap = (
+            face_boundary_gap(
+                previous_kind,
+                kind,
+                door_gap_mm=door_gap,
+                drawer_front_gap_mm=drawer_gap,
+            )
+            if previous_kind
+            else 0
+        )
+        right_gap = (
+            face_boundary_gap(
+                kind, next_kind, door_gap_mm=door_gap, drawer_front_gap_mm=drawer_gap
+            )
+            if next_kind
+            else 0
+        )
+        x0 = box.x_mm + (face.outer_reveal_mm if i == 0 else left_gap / 2)
         x1 = (
             box.x_mm
             + box.width_mm
-            - (face.outer_reveal_mm if i == len(spec.boxes) - 1 else door_gap / 2)
+            - (face.outer_reveal_mm if i == len(spec.boxes) - 1 else right_gap / 2)
         )
         top_line = None
         if level_transition:
@@ -990,9 +1153,9 @@ def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
             else:
                 top_line = (0, previous_top)
         face_args = dict(
-            name=f"{box.name}.door",
+            name=f"{box.name}.{kind}",
             owner=spec.shared_owner or box.name,
-            face_type="door",
+            face_type=kind,
             x0=x0,
             x1=x1,
             bottom=face.outer_reveal_mm,
@@ -1088,10 +1251,17 @@ def layout_with_face_occupancy(layout: LayoutNode, spec: ProfileAssemblySpec, cf
     for part in generated:
         if not isinstance(part, ProfilePart):
             continue
-        shift = box_x.get(part.owner, 0)
+        owner = (
+            spec.shared_owner
+            if spec.shared_owner is not None
+            and part.owner in box_x
+            and part.owner != spec.shared_owner
+            else part.owner
+        )
+        shift = box_x.get(owner, 0)
         xs = [x - shift for x, _ in part.profile_xz_mm]
         zs = [z for _, z in part.profile_xz_mm]
-        envelopes[part.owner] = (
+        envelopes[owner] = (
             Bounds3D(
                 min(xs),
                 part.y_mm,
@@ -1100,9 +1270,9 @@ def layout_with_face_occupancy(layout: LayoutNode, spec: ProfileAssemblySpec, cf
                 part.y_mm + part.extrusion_mm,
                 max(zs),
             )
-            if part.owner not in envelopes
+            if owner not in envelopes
             else _bounds_union(
-                envelopes[part.owner],
+                envelopes[owner],
                 Bounds3D(
                     min(xs),
                     part.y_mm,
@@ -1204,7 +1374,12 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
                     for i in range(3)
                 )
         if ".drawer." in part.id or part.component == "drawer_front":
-            instance_id = f"{part.owner}.drawer"
+            section = (
+                part.id.rpartition(".drawer.")[0]
+                if ".drawer." in part.id
+                else part.id.removesuffix(".drawer_front")
+            )
+            instance_id = f"{section}.drawer"
             viewer["instance_id"] = instance_id
             viewer["display_open_distance_mm"] = (
                 part.stock_mm[0] if part.component.startswith("side_") else 0

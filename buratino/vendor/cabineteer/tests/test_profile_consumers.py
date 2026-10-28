@@ -9,7 +9,12 @@ import pytest
 
 
 @pytest.mark.parametrize(
-    "name,count", [("profile-row-sloped", 26), ("profile-row-transition", 27)]
+    "name,count",
+    [
+        ("profile-row-sloped", 26),
+        ("profile-row-transition", 27),
+        ("profile-row-drawers", 32),
+    ],
 )
 def test_native_project_consumers(monkeypatch, tmp_path, name, count):
     from cabineteer import server

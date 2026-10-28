@@ -1,6 +1,8 @@
 """Native profile geometry and contact checks."""
 
 import math
+import runpy
+from pathlib import Path
 
 import pytest
 from cabineteer.layout import Frame
@@ -575,11 +577,7 @@ def test_full_native_profile_assembly(level, overlay_top):
                 part for part in adjusted_parts if part.id == "lower.drawer.face"
             )
             adjusted_doors = sorted(
-                (
-                    part
-                    for part in adjusted_parts
-                    if part.id == "lower.face.door"
-                ),
+                (part for part in adjusted_parts if part.id == "lower.face.door"),
                 key=lambda part: part.profile_xz_mm[0][0],
             )
             assert len(adjusted_doors) == num_doors
@@ -787,3 +785,156 @@ def test_legacy_paired_door_gap_survives_snapshot():
     restored.door_gap_mm = 4
     doors = [p for p in face_layout([restored]) if p.kind == "door"]
     assert doors[1].x - (doors[0].x + doors[0].width) == pytest.approx(4)
+
+
+def test_upper_drawer_uses_native_opening_and_replaces_one_door():
+    from dataclasses import replace
+
+    from cabineteer.profiles import (
+        assembly_records,
+        profile_spec_from_dict,
+        profile_spec_to_dict,
+        resolved_profile_spec,
+        upper_drawer_configs,
+    )
+    from cabineteer.project import project_from_dict, project_to_dict
+
+    root = Path(__file__).resolve().parents[3]
+    project = runpy.run_path(str(root / "projects/profile-row-drawers/project.py"))[
+        "project"
+    ]
+    spec = resolved_profile_spec(project.profile_assembly)
+    assert profile_spec_from_dict(profile_spec_to_dict(spec)) == spec
+    restored = project_from_dict(project_to_dict(project))
+    item, drawer, x0, floor = upper_drawer_configs(spec)["upper.left"]
+    assert (x0, floor, drawer.opening_width, drawer.opening_depth) == (18, 18, 333, 414)
+    assert drawer.opening_height == pytest.approx(273.705798046485)
+    assert (drawer.box_width, drawer.box_height, drawer.box_depth) == (325, 140, 380)
+    assert drawer.side_gap == 4
+
+    assembly = restored.resolved_assembly()
+    parts = {part.id: part for part in assembly.parts}
+    assert "upper.left.door" not in parts
+    assert "upper.right.door" in parts
+    front = parts["upper.left.drawer_front"]
+    assert front.component == "drawer_front"
+    assert front.mounting == "drawer-mounted"
+    assert front.operations[0].kind == "profile_trim"
+    assert parts["upper.left.drawer.side_left"].stock_mm == (380, 140, 16)
+    assert parts["upper.left.drawer.bottom"].stock_mm[2] == 12
+    assert front.profile_xz_mm[1][0] == 359
+    assert parts["upper.right.door"].profile_xz_mm[0][0] == 361
+    records = assembly_records(assembly)
+    drawers = {d["instance_id"]: d for d in records["viewer"]["drawers"]}
+    assert drawers["lower.drawer"]["box_mm"]["depth"] == 480
+    assert drawers["upper.left.drawer"]["box_mm"]["depth"] == 380
+    assert records["viewer"]["parts"][front.id]["instance_id"] == "upper.left.drawer"
+    assert records["viewer"]["parts"][front.id]["cabinet_id"] == "upper"
+    assert (
+        records["viewer"]["parts"]["upper.left.drawer.side_left"]["cabinet_id"]
+        == "upper"
+    )
+    assert [h["quantity"] for h in assembly.hardware] == [2, 2]
+    assert assembly.hardware[1]["slide_key"] == item.slide_key
+    upper_bounds = next(
+        p.occupied_world_bounds_mm
+        for p in assembly.layout.placements
+        if p.name == "upper"
+    )
+    assert upper_bounds.min_y <= front.y_mm + front.world_offset_mm[1]
+
+    cfg = restored.cabinets[0].config
+    wider_gap = replace(cfg, door_gap_mm=3, drawer_front_gap_mm=5)
+    changed = replace(
+        restored, cabinets=(replace(restored.cabinets[0], config=wider_gap),)
+    )
+    changed_parts = {part.id: part for part in changed.resolved_assembly().parts}
+    assert changed_parts["upper.left.drawer_front"].profile_xz_mm[1][0] == 357.5
+    assert changed_parts["upper.right.door"].profile_xz_mm[0][0] == 362.5
+
+
+def test_upper_drawer_rejects_bad_section_and_roof_fit():
+    from dataclasses import replace
+
+    from cabineteer.profiles import (
+        ProfileDrawerSpec,
+        resolved_profile_spec,
+        upper_drawer_configs,
+    )
+
+    root = Path(__file__).resolve().parents[3]
+    project = runpy.run_path(str(root / "projects/profile-row-drawers/project.py"))[
+        "project"
+    ]
+    spec = resolved_profile_spec(project.profile_assembly)
+    drawer = spec.upper_drawers[0]
+    with pytest.raises(ValueError, match="distinct"):
+        upper_drawer_configs(replace(spec, upper_drawers=(drawer, drawer)))
+    with pytest.raises(ValueError, match="unknown"):
+        upper_drawer_configs(
+            replace(spec, upper_drawers=(replace(drawer, section="missing"),))
+        )
+    with pytest.raises(ValueError, match="roof underside"):
+        upper_drawer_configs(
+            replace(spec, upper_drawers=(replace(drawer, box_height_mm=260),))
+        )
+    with pytest.raises(ValueError, match="positive and finite"):
+        ProfileDrawerSpec("upper.left", drawer.slide_key, float("nan"), 20)
+    with pytest.raises(ValueError):
+        upper_drawer_configs(
+            replace(
+                spec,
+                upper_drawers=(
+                    replace(drawer, slide_key="buratino_hettich_quadro_v6_eb20_480"),
+                ),
+            )
+        )
+
+
+def test_two_upper_sections_keep_distinct_drawer_instances():
+    from dataclasses import replace
+
+    from cabineteer.profiles import assembly_records, upper_drawer_configs
+
+    root = Path(__file__).resolve().parents[3]
+    project = runpy.run_path(str(root / "projects/profile-row-drawers/project.py"))[
+        "project"
+    ]
+    spec = project.profile_assembly
+    right = replace(spec.upper_drawers[0], section="upper.right")
+    changed = replace(
+        project,
+        profile_assembly=replace(spec, upper_drawers=(spec.upper_drawers[0], right)),
+    )
+    openings = upper_drawer_configs(changed.profile_assembly)
+    assert openings["upper.right"][1].opening_width == 333
+    assert openings["upper.right"][1].opening_height == pytest.approx(564)
+    assembly = changed.resolved_assembly()
+    assert len({part.id for part in assembly.parts}) == len(assembly.parts)
+    records = assembly_records(assembly)
+    drawers = {item["instance_id"]: item for item in records["viewer"]["drawers"]}
+    assert drawers.keys() == {"lower.drawer", "upper.left.drawer", "upper.right.drawer"}
+    assert drawers["upper.right.drawer"]["box_mm"]["depth"] == 380
+    assert len(assembly.hardware) == 3
+    assert all(part.id != "upper.right.door" for part in assembly.parts)
+
+
+def test_unshared_upper_drawer_keeps_section_as_cabinet_owner():
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from cabineteer.profiles import assembly_faces, assembly_records, ProfileAssembly
+
+    root = Path(__file__).resolve().parents[3]
+    project = runpy.run_path(str(root / "projects/profile-row-drawers/project.py"))[
+        "project"
+    ]
+    spec = replace(project.profile_assembly, shared_owner=None, roof_joint=None)
+    cfg = project.cabinets[0].config
+    parts = assembly_faces(spec, cfg, SimpleNamespace(origin_mm=(0, 0, 0)), (0, 0, 0))
+    records = assembly_records(
+        ProfileAssembly(project.resolved_assembly().layout, parts)
+    )
+    viewer = records["viewer"]["parts"]["upper.left.drawer.side_left"]
+    assert viewer["cabinet_id"] == "upper.left"
+    assert viewer["instance_id"] == "upper.left.drawer"
