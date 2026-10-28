@@ -26,7 +26,10 @@ def test_project_roundtrip_and_records():
     records = space_model_records(model)
     assert [x["id"] for x in records["parts"]] == [x["id"] for x in model.part_plan.parts]
     assert {x["cabinet_id"] for x in records["parts"]} == {"cabinet"}
-    assert next(x for x in records["parts"] if x["kind"] == "door").get("instance_id") is None
+    door = next(x for x in records["parts"] if x["kind"] == "door")
+    assert door.get("instance_id") is None
+    assert (door["component"], door["hinge_side"], door["hinge_side_status"], door["preview_pose"]) == (
+        "door", "right", "assumed_for_preview", "illustrative_only")
     assert all(x.get("instance_id") == "/root/low/box" for x in records["parts"] if x["kind"].startswith("drawer_"))
     with pytest.raises(ValueError, match="cannot be combined"):
         CabinetProject(name="mixed", cabinets=(object(),), space_model=p.space_model)

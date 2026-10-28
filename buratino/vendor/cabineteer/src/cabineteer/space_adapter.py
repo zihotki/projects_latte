@@ -26,6 +26,9 @@ def space_model_records(model: ResolvedModel, cabinet_id: str = "cabinet") -> di
         item.update(cabinet_id=cabinet_id, component=item["kind"], quantity=1,
                     stock_mm=stock, role=item["id"], viewer_role=item["id"],
                     label=item["kind"].replace("_", " ").title())
+        if item["kind"] == "door":
+            item.update(hinge_side="right", hinge_side_status="assumed_for_preview",
+                        preview_pose="illustrative_only")
         if motion in drawer_ids:
             item["instance_id"] = motion
         parts.append(item)
