@@ -25,12 +25,13 @@ def test_project_roundtrip_and_records():
     assert project_from_dict(json.loads(json.dumps(payload))).resolved_space_model().to_dict() == model.to_dict()
     records = space_model_records(model)
     assert [x["id"] for x in records["parts"]] == [x["id"] for x in model.part_plan.parts]
-    assert {x["cabinet_id"] for x in records["parts"]} == {"cabinet"}
+    assert {x["cabinet_id"] for x in records["parts"]} == {"/cabinet"}
     door = next(x for x in records["parts"] if x["kind"] == "door")
     assert door.get("instance_id") is None
-    assert (door["component"], door["hinge_side"], door["hinge_side_status"], door["preview_pose"]) == (
-        "door", "right", "assumed_for_preview", "illustrative_only")
-    assert all(x.get("instance_id") == "/root/low/box" for x in records["parts"] if x["kind"].startswith("drawer_"))
+    assert (door["component"], door["hinge_side"], door["preview_pose"]) == (
+        "door", "right", "illustrative_only")
+    assert "hinge_side_status" not in door
+    assert all(x.get("instance_id") == "/cabinet/root/low/box" for x in records["parts"] if x["kind"].startswith("drawer_"))
     with pytest.raises(ValueError, match="cannot be combined"):
         CabinetProject(name="mixed", cabinets=(object(),), space_model=p.space_model)
 
@@ -81,15 +82,15 @@ def test_missing_cad_reports_unavailable(monkeypatch):
 def test_static_validation_detects_overlap_and_missing_contact():
     pytest.importorskip("cadquery")
     model = project().resolved_space_model()
-    part = next(p for p in model.part_plan.parts if p["id"] == "/carcass/top")
+    part = next(p for p in model.part_plan.parts if p["id"] == "/cabinet/carcass/top")
     part["transform"]["translation"][0] += 1000
     before = model.to_dict()
     diagnostics = validate_model(model)["diagnostics"]
-    assert any(d["code"] == "missing_contact" and "/carcass/top" in d["part_ids"] for d in diagnostics)
+    assert any(d["code"] == "missing_contact" and "/cabinet/carcass/top" in d["part_ids"] for d in diagnostics)
     assert model.to_dict() == before
     part["transform"]["translation"] = [18, 0, 0]
     diagnostics = validate_model(model)["diagnostics"]
-    assert any(d["code"] == "overlap" and "/carcass/top" in d["part_ids"] for d in diagnostics)
+    assert any(d["code"] == "overlap" and "/cabinet/carcass/top" in d["part_ids"] for d in diagnostics)
 
 
 def test_visualize_space_model(tmp_path):
@@ -179,14 +180,14 @@ def test_validation_reuses_complete_shapes(monkeypatch):
     from cabineteer import space_adapter
     model = project().resolved_space_model()
     shapes = materialize_model(model)
-    shapes["/carcass/top"] = shapes["/carcass/top"].translate((1000, 0, 0))
+    shapes["/cabinet/carcass/top"] = shapes["/cabinet/carcass/top"].translate((1000, 0, 0))
     def unexpected(_model):
         raise AssertionError("materialization repeated")
     monkeypatch.setattr(space_adapter, "materialize_model", unexpected)
     result = validate_model(model, shapes=shapes)
     assert result["status"] == "failed"
-    assert any(d["code"] == "missing_contact" and "/carcass/top" in d["part_ids"] for d in result["diagnostics"])
-    shapes.pop("/carcass/top")
+    assert any(d["code"] == "missing_contact" and "/cabinet/carcass/top" in d["part_ids"] for d in result["diagnostics"])
+    shapes.pop("/cabinet/carcass/top")
     with pytest.raises(ValueError, match="shape IDs"):
         validate_model(model, shapes=shapes)
 
@@ -197,9 +198,9 @@ def test_records_preserve_divider_roles():
             Space("b", Fr()), Divider("shelf", role="adjustable"), Space("c", Fr())]))))
     records = space_model_records(p.resolved_space_model())
     parts = {part["id"]: part for part in records["parts"]}
-    assert parts["/root/structural"]["divider_role"] == "structural"
-    assert parts["/root/shelf"]["divider_role"] == "adjustable"
-    assert parts["/root/shelf"]["role"] == "/root/shelf"
+    assert parts["/cabinet/root/structural"]["divider_role"] == "structural"
+    assert parts["/cabinet/root/shelf"]["divider_role"] == "adjustable"
+    assert parts["/cabinet/root/shelf"]["role"] == "/cabinet/root/shelf"
 
 
 def test_fit_default_uses_drawer_vertical_gap():
@@ -214,4 +215,5 @@ def test_design_rejects_empty_new_project(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="requires cabinets"):
         asyncio.get_event_loop().run_until_complete(server._tool_design_project({"name": "empty"}))
     assert not (tmp_path / "empty.json").exists()
-    assert project_from_dict({"name": "old-empty", "cabinets": []}).cabinets == ()
+    with pytest.raises(ValueError, match="input_schema_version"):
+        project_from_dict({"name": "old-empty", "cabinets": []})

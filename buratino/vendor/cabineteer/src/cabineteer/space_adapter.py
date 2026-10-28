@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from itertools import combinations
+import hashlib
+import json
 
 from .spaces import ResolvedModel
 
@@ -11,39 +13,46 @@ def space_model_records(model: ResolvedModel, cabinet_id: str = "cabinet") -> di
     """Convert canonical plan data into stock and viewer records without CAD."""
     parts = []
     groups = {}
-    drawer_ids = {c["id"] for c in model.contents}
+    drawer_ids = {c["id"] for c in model.contents if "slide_key" in c}
+    instances = [p for p in model.placements if p.get("kind") == "cabinet"]
+    hierarchy = [p for p in model.placements if p.get("kind") in ("cabinet", "assembly_ref", "frame")]
+    def ancestors(ident):
+        return sorted((p["id"] for p in hierarchy if ident.startswith(p["id"] + "/")), key=len)
     for source in model.part_plan.parts:
         item = deepcopy(source)
+        owners = [p["id"] for p in instances if item["id"].startswith(p["id"] + "/")]
+        owner = max(owners, key=len) if owners else cabinet_id
         dims = list(item["stock"]["dimensions"])
         thickness = item["stock"]["thickness"]
         # Remove one stock thickness axis, preserving the other local axes.
-        axis = next((i for i, v in enumerate(dims) if abs(v - thickness) < 1e-8), None)
-        if axis is None:
+        axis = item["stock"].get("thickness_axis")
+        if axis not in (0, 1, 2) or abs(dims[axis] - thickness) >= 1e-8:
             raise ValueError(f"{item['id']}: stock thickness is not a stock dimension")
         planar = [v for i, v in enumerate(dims) if i != axis]
         stock = {"length": max(planar), "width": min(planar), "thickness": thickness}
         motion = item.get("motion_group")
         if item["kind"] == "divider":
             item["divider_role"] = item["role"]
-        item.update(cabinet_id=cabinet_id, component=item["kind"], quantity=1,
+        item.update(cabinet_id=owner, ancestor_ids=ancestors(item["id"]), component=item["kind"], quantity=1,
                     stock_mm=stock, role=item["id"], viewer_role=item["id"],
                     label=item["kind"].replace("_", " ").title())
         if item["kind"] == "door":
-            item.update(hinge_side="right", hinge_side_status="assumed_for_preview",
+            item.update(hinge_side=item.get("hinge_side", "right"),
                         preview_pose="illustrative_only")
         if motion in drawer_ids:
             item["instance_id"] = motion
         parts.append(item)
         key = (item["material"], *stock.values())
         groups.setdefault(key, []).append(item)
-    cutting_groups = [dict(id=f"space-group-{i}", label=members[0]["label"],
+    cutting_groups = [dict(id="space-group-" + hashlib.sha256(json.dumps(key, separators=(",", ":")).encode()).hexdigest()[:16], label=members[0]["label"],
         quantity=len(members), material=members[0]["material"],
         members=[p["id"] for p in members], blank_mm=members[0]["stock_mm"])
-        for i, members in enumerate(groups.values(), 1)]
-    drawers = [dict(instance_id=c["id"], box_mm=dict(zip(("width", "depth", "height"), c["size"]))) for c in model.contents]
+        for key, members in sorted(groups.items())]
+    drawers = [dict(instance_id=c["id"], box_mm=dict(zip(("width", "depth", "height"), c["size"]))) for c in model.contents if "slide_key" in c]
     return {"parts": parts, "contacts": deepcopy(model.part_plan.contacts),
             "viewer": {"parts": parts, "cutting_groups": cutting_groups,
-                       "drawers": drawers, "cabinets": [{"id": cabinet_id, "name": cabinet_id}]}}
+                       "drawers": drawers, "cabinets": [dict(p, name=p["id"].rsplit("/", 1)[-1], parent_id=(ancestors(p["id"])[-1] if ancestors(p["id"]) else None), ancestor_ids=ancestors(p["id"])) for p in instances] or [{"id": cabinet_id, "name": cabinet_id}],
+                       "instances": [dict(p, parent_id=(ancestors(p["id"])[-1] if ancestors(p["id"]) else None), ancestor_ids=ancestors(p["id"])) for p in hierarchy]}}
 
 
 def materialize_model(model: ResolvedModel) -> dict:

@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, replace
 
+from .allocation import Fixed, Fr, Natural
 from .inclined import prism
 from .layout import (
     Bounds3D,
@@ -377,6 +378,61 @@ def _layout_with_profile_heights(
     raise TypeError(f"unsupported layout node: {type(node).__name__}")
 
 
+def _reserve_profile_envelope(node: LayoutNode, names: set[str], height: float) -> tuple[LayoutNode, str]:
+    """Reserve the physical roof span in the smallest enclosing profile group."""
+    def contained(item):
+        if isinstance(item, LayoutLeaf):
+            return {item.name} & names
+        if isinstance(item, (Row, Stack)):
+            return set().union(*(contained(child) for child in item.children))
+        return set()
+
+    def reserve(item, parent_path):
+        path = f"{parent_path}/{item.name}" if parent_path else item.name
+        if isinstance(item, LayoutLeaf):
+            wrapper = Row(item.name + "_profile_envelope", (item,), size_z=Fixed(height))
+            return wrapper, f"{parent_path}/{wrapper.name}" if parent_path else wrapper.name
+        if not isinstance(item, (Row, Stack)):
+            raise ValueError("profile envelope must contain its cabinet leaves")
+        matches = [child for child in item.children if contained(child)]
+        if len(matches) == 1 and (isinstance(matches[0], (Row, Stack)) or isinstance(item, Stack)):
+            target = matches[0]
+            updated, reserved_path = reserve(target, path)
+            return replace(item, children=tuple(updated if child is target else child for child in item.children)), reserved_path
+        if isinstance(item.size_z, Natural):
+            return replace(item, size_z=Fixed(height)), path
+        if isinstance(item.size_z, Fixed):
+            declared = item.size_z.mm
+            if (isinstance(declared, bool) or not isinstance(declared, (int, float))
+                    or not math.isfinite(declared) or declared < height):
+                raise ValueError(f"{item.name}: fixed height does not fit profile envelope")
+            return item, path
+        if isinstance(item.size_z, Fr):
+            return item, path
+        raise ValueError(f"{item.name}: invalid profile envelope height")
+
+    if contained(node) != names:
+        raise ValueError("profile cabinet leaves are missing from the layout")
+    return reserve(node, "")
+
+
+def _shift_profile_datum(layout: ResolvedLayout, names: set[str], shift: float) -> ResolvedLayout:
+    if not shift:
+        return layout
+    def moved(bounds):
+        return replace(bounds, min_z=bounds.min_z + shift, max_z=bounds.max_z + shift)
+    placements = tuple(
+        replace(p, origin_mm=(p.origin_mm[0], p.origin_mm[1], p.origin_mm[2] + shift),
+                carcass_bounds_mm=moved(p.carcass_bounds_mm),
+                occupied_world_bounds_mm=moved(p.occupied_world_bounds_mm))
+        if p.name in names else p for p in layout.placements
+    )
+    occupied = placements[0].occupied_world_bounds_mm
+    for placement in placements[1:]:
+        occupied = _bounds_union(occupied, placement.occupied_world_bounds_mm)
+    return replace(layout, placements=placements, occupied_world_bounds_mm=occupied)
+
+
 def resolve_profile_assembly(
     layout: LayoutNode,
     roof: RoofProfile,
@@ -431,11 +487,18 @@ def resolve_profile_assembly(
         anchor.depth_mm - anchor.back_mm,
         max(0, *(z for cap in caps for _, z in cap.profile_xz_mm)),
     )
-    resolved = resolve_layout(
-        _layout_with_profile_heights(
-            layout, heights, shared_owner or anchor.name, cap_bounds
-        )
+    profile_layout = _layout_with_profile_heights(
+        layout, heights, shared_owner or anchor.name, cap_bounds
     )
+    envelope_low = min(0, cap_bounds.min_z)
+    envelope_high = max(cap_bounds.max_z, *heights.values())
+    envelope_height = envelope_high - envelope_low
+    profile_layout, envelope_path = _reserve_profile_envelope(profile_layout, set(heights), envelope_height)
+    resolved = resolve_layout(profile_layout)
+    allocated = next(a.bounds.height_mm for a in resolved.allocations if a.path == envelope_path)
+    if allocated < envelope_height:
+        raise ValueError(f"{envelope_path}: allocated height does not fit profile envelope")
+    resolved = _shift_profile_datum(resolved, set(heights), -envelope_low)
     placements = {p.name: p for p in resolved.placements}
     if len(placements) != len(resolved.placements) or not boxes:
         raise ValueError("assembly needs distinct placement names and boxes")

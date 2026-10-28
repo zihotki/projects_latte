@@ -20,6 +20,7 @@ mode and can be exercised by the eval harness directly.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
@@ -37,12 +38,15 @@ from .joinery import (
     BiscuitSpec,
     DowelSpec,
 )
-from .layout import LayoutNode, layout_from_dict, layout_to_dict
+from .layout import (LayoutNode, LayoutLeaf, Frame, Row, Stack, CabinetRef, Bounds3D,
+                     layout_from_dict, layout_to_dict)
 from .spaces import (Carcass, Space, Split, Divider, Fixed, Fr, DrawerBox, Door,
-                     AppliedDrawerFront, ResolvedModel, resolve_model, _input)
+                     AppliedDrawerFront, AppliedFaceboard, AssemblyModule, AssemblyRef,
+                     Insets, SpaceCabinetDefinition, Natural, ResolvedModel, resolve_model, _input)
 from .profiles import (
     ProfileAssembly,
-    ProfileAssemblySpec,
+    ProfileAssemblySpec, RoofProfile, ProfiledBox, ProfileFaceSpec,
+    ProfileDrawerSpec, ProfileShelfSpec, ProfileLowerDrawerSpec,
     adjustable_shelf_parts,
     assembly_faces,
     layout_with_face_occupancy,
@@ -250,20 +254,54 @@ class SpaceModelSpec:
     fronts: tuple[Door | AppliedDrawerFront, ...] = ()
 
 
-def space_model_from_dict(data: dict) -> SpaceModelSpec:
-    """Read the tagged input tree stored in project snapshots."""
-    types = {c.__name__: c for c in (Carcass, Space, Split, Divider, Fixed, Fr,
-                                     DrawerBox, Door, AppliedDrawerFront)}
-    def read(value):
-        if isinstance(value, list):
-            return tuple(read(item) for item in value)
-        if isinstance(value, dict):
-            tag = value.get("type")
-            if tag not in types:
-                raise ValueError(f"unknown space model type {tag!r}")
-            return types[tag](**{k: read(v) for k, v in value.items() if k != "type"})
+def _read_input(value):
+    """Decode the one tagged representation for Space and assembly inputs."""
+    types = {cls.__name__: cls for cls in (
+        Carcass, Space, Split, Divider, Fixed, Fr, Natural, DrawerBox, Door,
+        AppliedDrawerFront, AppliedFaceboard, Insets, AssemblyRef, AssemblyModule,
+        SpaceCabinetDefinition, CabinetRef, Frame, Row, Stack, LayoutLeaf, Bounds3D,
+        ProfileAssemblySpec, RoofProfile, ProfiledBox, ProfileFaceSpec,
+        ProfileDrawerSpec, ProfileShelfSpec, ProfileLowerDrawerSpec,
+    )}
+    if isinstance(value, list):
+        return tuple(_read_input(item) for item in value)
+    if not isinstance(value, dict):
         return value
-    return SpaceModelSpec(read(data["carcass"]), read(data["root"]), read(data.get("fronts", [])))
+    tag = value.get("type")
+    if tag not in types:
+        raise ValueError(f"unknown input type {tag!r}")
+    cls = types[tag]
+    allowed = {f.name for f in fields(cls)}
+    unknown = set(value) - allowed - {"type"}
+    if unknown:
+        raise ValueError(f"{tag}: unknown fields {sorted(unknown)}")
+    try:
+        return cls(**{k: (v if cls is ProfileFaceSpec and k == "drawer" else _read_input(v))
+                      for k, v in value.items() if k != "type"})
+    except TypeError as exc:
+        raise ValueError(f"{tag}: {exc}") from exc
+
+
+def _encode_input(value):
+    if hasattr(value, "__dataclass_fields__"):
+        return {"type": type(value).__name__, **{
+            f.name: _encode_input(getattr(value, f.name)) for f in fields(value)
+        }}
+    if isinstance(value, (list, tuple)):
+        return [_encode_input(item) for item in value]
+    return value
+
+
+def space_model_from_dict(data: dict) -> SpaceModelSpec:
+    if not isinstance(data, dict) or set(data) - {"carcass", "root", "fronts"}:
+        raise ValueError("space_model must contain only carcass, root and fronts")
+    carcass, root = _read_input(data["carcass"]), _read_input(data["root"])
+    fronts = _read_input(data.get("fronts", []))
+    if not isinstance(carcass, Carcass) or not isinstance(root, Space):
+        raise ValueError("space_model requires a Carcass and root Space")
+    if not isinstance(fronts, tuple) or not all(isinstance(f, (Door, AppliedDrawerFront, AppliedFaceboard)) for f in fronts):
+        raise ValueError("space_model fronts must be a list of front inputs")
+    return SpaceModelSpec(carcass, root, fronts)
 
 
 @dataclass(frozen=True)
@@ -288,17 +326,40 @@ class CabinetProject:
     layout: Optional[LayoutNode] = None
     profile_assembly: Optional[ProfileAssemblySpec] = None
     space_model: Optional[SpaceModelSpec] = None
+    space_cabinets: tuple[SpaceCabinetDefinition, ...] = ()
+    space_modules: tuple[AssemblyModule, ...] = ()
 
     def __post_init__(self) -> None:
         if self.space_model is not None and (self.cabinets or self.layout is not None
                 or self.profile_assembly is not None or self.worktop is not None
                 or self.shared != SharedDesign()):
             raise ValueError("space_model cannot be combined with legacy cabinets, shared design, worktop, layout or profile assembly")
+        if (self.space_cabinets or self.space_modules) and (self.cabinets or self.profile_assembly is not None or self.worktop is not None or self.shared != SharedDesign()):
+            raise ValueError("Space registries cannot be combined with legacy project inputs")
+        if self.profile_assembly is not None and not isinstance(self.profile_assembly, ProfileAssemblySpec):
+            raise ValueError("profile_assembly requires a ProfileAssemblySpec")
+        if self.space_cabinets and self.space_model is None and self.layout is None:
+            raise ValueError("Space cabinet assembly requires a layout")
+        for label, registry, cls in (("cabinet", self.space_cabinets, SpaceCabinetDefinition), ("module", self.space_modules, AssemblyModule)):
+            if not all(isinstance(item, cls) for item in registry):
+                raise ValueError(f"{label} registry has an invalid entry")
+            names = [item.name for item in registry]
+            if len(names) != len(set(names)):
+                raise ValueError(f"duplicate {label} definition name")
+
+    def resolved_space_assembly(self) -> ResolvedModel:
+        from .space_assembly import resolve_space_assembly
+        return resolve_space_assembly(self)
 
     def resolved_space_model(self) -> ResolvedModel:
         if self.space_model is None:
             raise ValueError("space_model is required")
-        return resolve_model(self.space_model.carcass, self.space_model.root, self.space_model.fronts)
+        return self.resolved_space_assembly()
+
+    @property
+    def is_space_assembly(self) -> bool:
+        return self.space_model is not None or bool(self.space_cabinets or self.space_modules)
+
 
     def resolved(self) -> tuple[tuple[str, CabinetConfig], ...]:
         """Return ``((name, merged_config), ...)`` with shared tokens applied."""
@@ -533,26 +594,34 @@ def list_saved_projects(
             modified = None  # dangling symlink / raced deletion
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            cabinets = data.get("cabinets", [])
-            space = data.get("space_model")
+            project = project_from_dict(data)
+            if project.is_space_assembly:
+                plan = project.resolved_space_assembly()
+                instances = [p for p in plan.placements if p["kind"] in ("cabinet", "assembly_ref")]
+                count = sum(p["kind"] == "cabinet" for p in instances)
+                names = [p["id"] for p in instances if p["kind"] == "cabinet"]
+                bounds = plan.structural_bounds
+                width = bounds["max_x"] - bounds["min_x"]
+            else:
+                cabinets = project.resolved()
+                names = [name for name, _ in cabinets]
+                count = len(names)
+                if project.layout is not None or project.profile_assembly is not None:
+                    bounds = project.resolved_assembly().layout.carcass_bounds_mm
+                    width = bounds.width_mm
+                else:
+                    width = sum(cfg.width for _, cfg in cabinets)
+                    if not math.isfinite(width) or width <= 0:
+                        raise ValueError("project run width must be positive and finite")
+                instances = None
             entries.append({
-                "name": data.get("name", path.stem),
-                "cabinet_count": 1 if space else len(cabinets),
-                "cabinet_names": ["cabinet"] if space else [c.get("name", "") for c in cabinets],
-                "total_run_width_mm": round(sum(
-                    float(c.get("config", {}).get("width", 0) or 0)
-                    for c in cabinets
-                ) + (float(space["carcass"]["width"]) if space else 0), 1),
-                "wall_width_mm": data.get("wall_width_mm"),
-                "notes": data.get("notes", ""),
-                "modified": modified,
-                "path": str(path),
-                **(
-                    {"forked_from": data["forked_from"]}
-                    if data.get("forked_from") else {}
-                ),
+                "name": project.name, "cabinet_count": count, "cabinet_names": names,
+                "total_run_width_mm": round(width, 1), "wall_width_mm": project.wall_width_mm,
+                "notes": project.notes, "modified": modified, "path": str(path),
+                **({"instances": instances} if instances is not None else {}),
+                **({"forked_from": project.forked_from} if project.forked_from else {}),
             })
-        except (OSError, ValueError, TypeError, AttributeError) as exc:
+        except Exception as exc:  # isolate malformed snapshots and resolution failures
             entries.append({
                 "name": path.stem,
                 "error": f"unreadable snapshot: {exc}",
@@ -722,6 +791,18 @@ def apply_project_patch(base: dict, patch: dict) -> tuple[dict, list[str]]:
     """
     out = json.loads(json.dumps(base))  # deep copy; payloads are plain JSON
     changes: list[str] = []
+
+    known = {"name", "notes", "wall_width_mm", "worktop", "shared", "cabinets", "space_model", "space_cabinets", "space_modules", "layout", "profile_assembly"}
+    unknown = set(patch) - known
+    if unknown:
+        raise ValueError(f"unknown update fields: {sorted(unknown)}")
+    for key in ("space_model", "space_cabinets", "space_modules", "layout", "profile_assembly"):
+        if key in patch and out.get(key) != patch[key]:
+            if patch[key] is None:
+                out.pop(key, None)
+            else:
+                out[key] = patch[key]
+            changes.append(f"{key} replaced")
 
     if "notes" in patch:
         # None follows the patch shape's null-clears convention (it used to
@@ -950,6 +1031,10 @@ def update_saved_project(patch: dict) -> tuple["CabinetProject", list[str]]:
     base = json.loads(path.read_text(encoding="utf-8"))
     patched, changes = apply_project_patch(base, patch)
     project = build_project(patched)
+    if project.is_space_assembly:
+        project.resolved_space_assembly()
+    elif project.layout is not None or project.profile_assembly is not None:
+        project.resolved_assembly()
     if changes:  # an empty patch shouldn't bump the snapshot's mtime
         save_project(project)
     return project, changes
@@ -1158,6 +1243,7 @@ def worktop_from_dict(d: dict | None) -> Optional[WorktopSpec]:
 
 def project_to_dict(project: CabinetProject) -> dict:
     out = {
+        "input_schema_version": 2,
         "name": project.name,
         "notes": project.notes,
         "shared": _shared_to_dict(project.shared),
@@ -1170,6 +1256,10 @@ def project_to_dict(project: CabinetProject) -> dict:
             for pc in project.cabinets
         ],
     }
+    if project.space_cabinets:
+        out["space_cabinets"] = _encode_input(project.space_cabinets)
+    if project.space_modules:
+        out["space_modules"] = _encode_input(project.space_modules)
     if project.space_model is not None:
         out["space_model"] = {"carcass": _input(project.space_model.carcass), "root": _input(project.space_model.root), "fronts": _input(project.space_model.fronts)}
     if project.wall_width_mm is not None:
@@ -1183,11 +1273,32 @@ def project_to_dict(project: CabinetProject) -> dict:
     if project.layout is not None:
         out["layout"] = layout_to_dict(project.layout)
     if project.profile_assembly is not None:
-        out["profile_assembly"] = profile_spec_to_dict(project.profile_assembly)
+        out["profile_assembly"] = _encode_input(project.profile_assembly)
     return out
 
 
+def _validate_project_input(d: dict, *, tool_input: bool = False) -> None:
+    if not isinstance(d, dict):
+        raise ValueError("project must be an object")
+    version = d.get("input_schema_version", 2 if tool_input else None)
+    if type(version) is not int or version != 2:
+        raise ValueError("input_schema_version must be 2")
+    allowed = {"input_schema_version", "name", "notes", "shared", "cabinets", "wall_width_mm", "forked_from", "forked_at", "worktop", "layout", "profile_assembly", "space_model", "space_cabinets", "space_modules"}
+    if tool_input:
+        allowed.add("overwrite")
+    unknown = set(d) - allowed
+    if unknown:
+        raise ValueError(f"unknown project fields: {sorted(unknown)}")
+    for cabinet in d.get("cabinets", ()):
+        if not isinstance(cabinet, dict):
+            raise ValueError("cabinet entry must be an object")
+        extra = set(cabinet) - {"name", "config", "overrides"}
+        if extra:
+            raise ValueError(f"unknown cabinet fields: {sorted(extra)}")
+
+
 def project_from_dict(d: dict) -> CabinetProject:
+    _validate_project_input(d)
     shared = shared_from_dict(d.get("shared"))
     cabinets = tuple(
         ProjectCabinet(
@@ -1210,9 +1321,11 @@ def project_from_dict(d: dict) -> CabinetProject:
         forked_at=str(at_raw) if at_raw is not None else None,
         worktop=worktop_from_dict(d.get("worktop")),
         layout=layout_from_dict(d["layout"]) if d.get("layout") is not None else None,
-        profile_assembly=(profile_spec_from_dict(d["profile_assembly"])
+        profile_assembly=(_read_input(d["profile_assembly"])
                           if d.get("profile_assembly") is not None else None),
         space_model=space_model_from_dict(d["space_model"]) if d.get("space_model") is not None else None,
+        space_cabinets=_read_input(d.get("space_cabinets", [])),
+        space_modules=_read_input(d.get("space_modules", [])),
     )
 
 
@@ -1246,6 +1359,7 @@ def build_project(payload: dict) -> CabinetProject:
     spells out a value for that field.  To pin a child value in such a
     payload, add the field name to its ``overrides`` list.
     """
+    _validate_project_input(payload, tool_input=True)
     name = str(payload["name"])
     shared = shared_from_dict(payload.get("shared"))
     notes = str(payload.get("notes", ""))
@@ -1309,9 +1423,11 @@ def build_project(payload: dict) -> CabinetProject:
         forked_at=str(at_raw) if at_raw is not None else None,
         worktop=worktop_from_dict(payload.get("worktop")),
         layout=layout_from_dict(payload["layout"]) if payload.get("layout") is not None else None,
-        profile_assembly=(profile_spec_from_dict(payload["profile_assembly"])
+        profile_assembly=(_read_input(payload["profile_assembly"])
                           if payload.get("profile_assembly") is not None else None),
         space_model=space_model_from_dict(payload["space_model"]) if payload.get("space_model") is not None else None,
+        space_cabinets=_read_input(payload.get("space_cabinets", [])),
+        space_modules=_read_input(payload.get("space_modules", [])),
     )
 
 
@@ -1362,13 +1478,16 @@ def check_project_consistency(project: CabinetProject) -> list[dict]:
     """
     issues: list[dict] = []
     resolved = project.resolved()
-    if not resolved and project.space_model is None:
+    if not resolved and not project.is_space_assembly:
         return issues
 
     # ── Wall fit ───────────────────────────────────────────────────────────
     if project.wall_width_mm:
-        total = (project.space_model.carcass.width if project.space_model is not None
-                 else sum(cfg.width for _, cfg in resolved))
+        if project.is_space_assembly:
+            bounds = project.resolved_space_assembly().structural_bounds
+            total = bounds["max_x"] - bounds["min_x"]
+        else:
+            total = sum(cfg.width for _, cfg in resolved)
         gap = project.wall_width_mm - total
         if gap < 0:
             issues.append({

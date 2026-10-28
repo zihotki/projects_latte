@@ -249,15 +249,16 @@ function renderVisibilityControls() {
   const parts = result.parts;
   ui.visibility.replaceChildren();
   visibilityControls = new Map();
-  const owners = result.cabinets?.length
-    ? result.cabinets.map(owner => ({id: owner.id ?? owner.name, label: owner.name ?? owner.id}))
+  const instances = result.instances?.length ? result.instances : result.cabinets;
+  const owners = instances?.length
+    ? instances.map(owner => ({id: owner.id ?? owner.name, label: owner.name ?? owner.id, parentId: owner.parent_id ?? null}))
     : [...new Set(parts.map(part => part.cabinet_id ?? 'cabinet'))]
-      .map(id => ({id, label: id}));
+      .map(id => ({id, label: id, parentId: null}));
   const knownOwners = new Set(owners.map(owner => owner.id));
   for (const part of parts) {
     const id = part.cabinet_id ?? 'cabinet';
     if (!knownOwners.has(id)) {
-      owners.push({id, label: id});
+      owners.push({id, label: id, parentId: null});
       knownOwners.add(id);
     }
   }
@@ -270,11 +271,14 @@ function renderVisibilityControls() {
   });
   const partsByOwner = new Map(owners.map(owner => [owner.id, []]));
   for (const part of parts) {
-    const ownerId = part.cabinet_id ?? 'cabinet';
-    if (!partsByOwner.has(ownerId)) partsByOwner.set(ownerId, []);
+    const ancestors = (part.ancestor_ids ?? []).filter(id => knownOwners.has(id));
+    const ownerId = ancestors.at(-1) ?? part.cabinet_id ?? 'cabinet';
     partsByOwner.get(ownerId).push(part);
     visibilityControls.set(`part:${part.id}`, true);
   }
+  const descendants = owner => parts.filter(part =>
+    (part.ancestor_ids ?? []).includes(owner.id) ||
+    (!(part.ancestor_ids?.length) && (part.cabinet_id ?? 'cabinet') === owner.id));
 
   function ownerLabel(owner) {
     const key = String(owner.id).toLowerCase().replaceAll('_', '.');
@@ -288,8 +292,9 @@ function renderVisibilityControls() {
     return known[key] ?? humanizeProjectName(owner.label);
   }
 
-  for (const owner of owners) {
-    const ownerParts = partsByOwner.get(owner.id) ?? [];
+  function renderOwner(owner, container) {
+    const directParts = partsByOwner.get(owner.id) ?? [];
+    const ownerParts = descendants(owner);
     const row = document.createElement('div');
     row.className = 'tree-row tree-owner';
     row.setAttribute('role', 'treeitem');
@@ -323,19 +328,19 @@ function renderVisibilityControls() {
       applyPartVisibility();
     });
     row.append(disclosure, label, eye);
-    ui.visibility.appendChild(row);
+    container.appendChild(row);
 
     const children = document.createElement('div');
     children.className = 'tree-children';
     children.setAttribute('role', 'group');
     children.hidden = true;
     const labelCounts = new Map();
-    for (const part of ownerParts) {
+    for (const part of directParts) {
       const baseLabel = friendlyPartLabel(part);
       labelCounts.set(baseLabel, (labelCounts.get(baseLabel) ?? 0) + 1);
     }
     const seenLabels = new Map();
-    for (const part of ownerParts) {
+    for (const part of directParts) {
       const baseLabel = friendlyPartLabel(part);
       const ordinal = (seenLabels.get(baseLabel) ?? 0) + 1;
       seenLabels.set(baseLabel, ordinal);
@@ -365,7 +370,11 @@ function renderVisibilityControls() {
       childRow.append(spacer, partButton, partEye);
       children.appendChild(childRow);
     }
-    ui.visibility.appendChild(children);
+    for (const child of owners.filter(item => item.parentId === owner.id)) renderOwner(child, children);
+    container.appendChild(children);
+  }
+  for (const owner of owners.filter(item => !item.parentId || !knownOwners.has(item.parentId))) {
+    renderOwner(owner, ui.visibility);
   }
   document.getElementById('group-count').textContent = `${parts.length} parts`;
   syncVisibilityControls();

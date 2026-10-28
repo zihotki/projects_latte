@@ -641,8 +641,9 @@ def test_full_native_profile_assembly(level, overlay_top):
             project, profile_assembly=replace(spec, faces=shifted_face)
         ).resolved_assembly()
         shifted_placements = {p.name: p for p in shifted.layout.placements}
-        assert shifted_placements["lower"].origin_mm[2] == 7
-        assert shifted_placements["frame.support"].origin_mm[2] == 727
+        assert shifted_placements["lower"].origin_mm[2] == 0
+        assert shifted_placements["frame.support"].origin_mm[2] == 720
+        assert shifted_placements["lower"].occupied_world_bounds_mm.min_z == -7
     from cabineteer.profiles import assembly_records
 
     records = assembly_records(result)
@@ -1017,3 +1018,46 @@ def test_adjustable_shelf_rejects_invalid_positions_and_names():
         ProfileShelfSpec("bad", "upper.right", float("nan"))
     with pytest.raises(ValueError):
         ProfileShelfSpec("bad", "upper.right", 100, front_recess_mm=-1)
+
+
+@pytest.mark.parametrize('declared, next_z', [(600, 650), (700, 750)])
+def test_profile_envelope_honors_fixed_group_height(declared, next_z):
+    from dataclasses import replace
+
+    from cabineteer.allocation import Fixed
+    from cabineteer.layout import LayoutLeaf, Row, Stack
+    from cabineteer.profiles import resolve_profile_assembly
+
+    frame = Frame('frame', 720, 380, 50, 18)
+    boxes = (ProfiledBox('left', 0, 360, 420, 18, 18, 6),
+             ProfiledBox('right', 400, 320, 420, 18, 18, 6))
+    roof = RoofProfile(((0, 300), (360, 400), (380, 600), (400, 400), (720, 300)), 18)
+    row = Row('upper', (LayoutLeaf('left', 360, 420, 1), LayoutLeaf('right', 320, 420, 1)),
+              gap_mm=40, size_z=Fixed(declared))
+    layout = Stack('stack', (frame, row, LayoutLeaf('next', 720, 420, 10)))
+    result = resolve_profile_assembly(layout, roof, boxes, 'roof', ('a', 'b', 'c', 'd'), frame)
+    assert next(p for p in result.layout.placements if p.name == 'next').origin_mm[2] == next_z
+    with pytest.raises(ValueError, match='does not fit profile envelope'):
+        resolve_profile_assembly(replace(layout, children=(frame, replace(row, size_z=Fixed(599)), layout.children[-1])), roof, boxes, 'roof', ('a', 'b', 'c', 'd'), frame)
+
+
+def test_profile_envelope_fixed_and_allocated_heights_preserve_datum():
+    from cabineteer.allocation import Fixed, Fr
+    from cabineteer.layout import LayoutLeaf, Row, Stack
+    from cabineteer.profiles import resolve_profile_assembly
+
+    frame = Frame('frame', 720, 380, 50, 18)
+    boxes = (ProfiledBox('left', 0, 360, 420, 18, 18, 6),
+             ProfiledBox('right', 400, 320, 420, 18, 18, 6))
+    roof = RoofProfile(((0, 300), (360, 300), (380, -30), (400, 300), (720, 300)), 18)
+    minimum = -30 - 18 * math.hypot(1, 330 / 20)
+    for request, stack_size in ((Fixed(700), None), (Fr(), Fixed(760))):
+        row = Row('upper', (LayoutLeaf('left', 360, 420, 1), LayoutLeaf('right', 320, 420, 1)),
+                  gap_mm=40, size_z=request)
+        kwargs = {'size_z': stack_size} if stack_size else {}
+        layout = Stack('stack', (frame, row, LayoutLeaf('next', 720, 420, 10)), **kwargs)
+        result = resolve_profile_assembly(layout, roof, boxes, 'roof', ('a', 'b', 'c', 'd'), frame)
+        placements = {p.name: p for p in result.layout.placements}
+        assert placements['left'].origin_mm[2] == pytest.approx(50 - minimum)
+        assert placements['left'].occupied_world_bounds_mm.min_z == pytest.approx(50)
+        assert placements['next'].origin_mm[2] == pytest.approx(750)

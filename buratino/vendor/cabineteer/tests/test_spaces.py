@@ -62,7 +62,7 @@ def test_drawer_fit_and_front_relationships():
 
 def test_unequal_fronts_and_roundtrip():
     r = model([Space('a', Fixed(240), content=DrawerBox('one',30)), Space('b', Fixed(360), content=DrawerBox('two',30)), Space('rest', Fr())], fronts=[AppliedDrawerFront('fa','a','one'), AppliedDrawerFront('fb','b','two')])
-    assert [f['size'][2] for f in r.fronts] == [239,359]
+    assert [f['size'][2] for f in r.fronts] == [255,357]
     assert ResolvedModel.from_dict(json.loads(json.dumps(r.to_dict()))).to_dict() == r.to_dict()
 
 

@@ -5,6 +5,7 @@ Coordinates are millimetres, with X left-to-right, Y front-to-back, and Z up.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from itertools import combinations
 import math
 from typing import Any
 
@@ -15,14 +16,7 @@ from .hardware import OverlayType, get_slide
 from .joinery import DrawerJoineryStyle
 
 
-@dataclass(frozen=True)
-class Fixed:
-    mm: float
-
-
-@dataclass(frozen=True)
-class Fr:
-    weight: int = 1
+from .allocation import Fixed, Fr, Natural, allocate_tracks
 
 
 @dataclass(frozen=True)
@@ -64,7 +58,7 @@ class Space:
     name: str
     size: Fixed | Fr | None = None
     split: Split | None = None
-    content: DrawerBox | None = None
+    content: DrawerBox | AssemblyRef | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +68,7 @@ class Door:
     hinge_key: str = "blum_clip_top_blumotion_110_full"
     thickness: float = 18
     material: str = "finished_wood"
+    hinge_side: str = "right"
 
 
 @dataclass(frozen=True)
@@ -83,6 +78,50 @@ class AppliedDrawerFront:
     attached_to: str
     thickness: float = 18
     material: str = "finished_wood"
+
+
+@dataclass(frozen=True)
+class AppliedFaceboard:
+    name: str
+    covers: str
+    thickness: float = 18
+    material: str = "finished_wood"
+    boundary_gap: float | None = None
+
+
+@dataclass(frozen=True)
+class Insets:
+    left: int = 0
+    right: int = 0
+    front: int = 0
+    back: int = 0
+    bottom: int = 0
+    top: int = 0
+
+
+@dataclass(frozen=True)
+class AssemblyRef:
+    name: str
+    module: str
+    insets: Insets = field(default_factory=Insets)
+
+
+@dataclass(frozen=True)
+class AssemblyModule:
+    name: str
+    root: Any
+    size_x: Fixed | Fr | Natural = field(default_factory=Natural)
+    size_y: Fixed | Fr | Natural = field(default_factory=Natural)
+    size_z: Fixed | Fr | Natural = field(default_factory=Natural)
+    fronts: tuple[Door | AppliedDrawerFront | AppliedFaceboard, ...] = ()
+
+
+@dataclass(frozen=True)
+class SpaceCabinetDefinition:
+    name: str
+    carcass: Carcass
+    root: Space
+    fronts: tuple[Door | AppliedDrawerFront | AppliedFaceboard, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -96,7 +135,9 @@ class Carcass:
     back_thickness: float = 6
     material: str = "baltic_birch"
     back_material: str = "plywood"
-    face_gap: float = 2
+    door_gap: float = 2
+    drawer_front_gap: float = 2
+    outer_reveal: float = 2
 
 
 @dataclass(frozen=True)
@@ -114,6 +155,12 @@ class ResolvedModel:
     fronts: list[dict[str, Any]]
     part_plan: PhysicalPartPlan
     inputs: dict[str, Any]
+    placements: list[dict[str, Any]] = field(default_factory=list)
+    allocations: list[dict[str, Any]] = field(default_factory=list)
+    structural_bounds: Any = None
+    occupied_bounds: Any = None
+    diagnostics: list[dict[str, Any]] = field(default_factory=list)
+    plan_version: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -133,9 +180,10 @@ def _number(value: float, label: str, *, zero: bool = False) -> float:
 
 def _integer(value: float, label: str, *, zero: bool = False) -> int:
     value = _number(value, label, zero=zero)
-    if value != int(value):
+    rounded = round(value)
+    if not math.isclose(value, rounded, rel_tol=0, abs_tol=1e-9):
         raise ValueError(f"{label}: incompatible fractional millimetre value {value:g}")
-    return int(value)
+    return rounded
 
 
 def _name(name: str, path: str) -> None:
@@ -151,16 +199,18 @@ def _input(value: Any) -> Any:
     return value
 
 
-def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDrawerFront, ...] | list[Door | AppliedDrawerFront] = ()) -> ResolvedModel:
+def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDrawerFront | AppliedFaceboard, ...] | list[Door | AppliedDrawerFront | AppliedFaceboard] = (), *, _bare: bool = False) -> ResolvedModel:
     """Resolve an applied-back, butt carcass and its rectangular clear spaces."""
     for k in ("width", "height", "depth", "side_thickness", "bottom_thickness", "top_thickness", "back_thickness"):
         _number(getattr(carcass, k), f"carcass.{k}")
-    _number(carcass.face_gap, "carcass.face_gap", zero=True)
+    for key in ("door_gap", "drawer_front_gap", "outer_reveal"):
+        _number(getattr(carcass, key), f"carcass.{key}", zero=True)
     cfg = CabinetConfig(width=carcass.width, height=carcass.height, depth=carcass.depth,
                         side_thickness=carcass.side_thickness, bottom_thickness=carcass.bottom_thickness,
                         top_thickness=carcass.top_thickness, back_thickness=carcass.back_thickness,
                         back_capture="overlay")
-    dims = tuple(_integer(v, f"root {a}") for a, v in zip(("width", "depth", "height"), (cfg.interior_width, cfg.interior_depth, cfg.interior_height)))
+    volume = (carcass.width, carcass.depth, carcass.height) if _bare else (cfg.interior_width, cfg.interior_depth, cfg.interior_height)
+    dims = tuple(_integer(v, f"root {a}") for a, v in zip(("width", "depth", "height"), volume))
     spaces, dividers, allowances, contents, faces, parts = [], [], [], [], [], []
     active: set[int] = set()
     contacts: list[dict[str, str]] = []
@@ -176,30 +226,31 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
             contact_keys.add(key)
             contacts.append(dict(part_a=a, part_b=b, type=kind))
 
-    def part(id: str, kind: str, origin: tuple, size: tuple, material: str, thickness: float, **extra: Any) -> None:
+    def part(id: str, kind: str, origin: tuple, size: tuple, material: str, thickness: float, thickness_axis: int, **extra: Any) -> None:
         if id in part_ids:
             raise ValueError(f"duplicate part ID {id}: choose different space or part names")
         part_ids.add(id)
         if any(v <= 0 for v in size):
             raise ValueError(f"{id}: invalid part dimensions {size}")
-        parts.append(dict(id=id, kind=kind, origin=list(origin), size=list(size), bounds=[list(origin), [a+b for a,b in zip(origin,size)]], material=material, thickness=thickness, profile={"type": "box", "size": list(size)}, stock={"dimensions": list(size), "thickness": thickness}, transform={"translation": list(origin), "axes": [[1,0,0],[0,1,0],[0,0,1]]}, operations=[], **extra))
+        parts.append(dict(id=id, kind=kind, origin=list(origin), size=list(size), bounds=[list(origin), [a+b for a,b in zip(origin,size)]], material=material, thickness=thickness, profile={"type": "box", "size": list(size)}, stock={"dimensions": list(size), "thickness": thickness, "thickness_axis": thickness_axis}, transform={"translation": list(origin), "axes": [[1,0,0],[0,1,0],[0,0,1]]}, operations=[], **extra))
 
-    # Existing panel dimension helpers are the source of butt carcass stock.
-    side = carcass_panel(cfg, "side")
-    bottom = carcass_panel(cfg, "bottom")
-    top = carcass_panel(cfg, "top")
-    back = back_capture_geometry(cfg)
-    part("/carcass/side_left", "carcass", (0,0,0), (carcass.side_thickness,side.width,carcass.height), carcass.material, carcass.side_thickness)
-    part("/carcass/side_right", "carcass", (carcass.width-carcass.side_thickness,0,0), (carcass.side_thickness,side.width,carcass.height), carcass.material, carcass.side_thickness)
-    part("/carcass/bottom", "carcass", (carcass.side_thickness,0,0), (bottom.length,bottom.width,carcass.bottom_thickness), carcass.material, carcass.bottom_thickness)
-    part("/carcass/top", "carcass", (carcass.side_thickness,0,carcass.height-carcass.top_thickness), (top.length,top.width,carcass.top_thickness), carcass.material, carcass.top_thickness)
-    part("/carcass/back", "carcass", (0,carcass.depth-carcass.back_thickness,0), (back.width,carcass.back_thickness,back.height), carcass.back_material, carcass.back_thickness)
+    if not _bare:
+        # Existing panel dimension helpers are the source of butt carcass stock.
+        side = carcass_panel(cfg, "side")
+        bottom = carcass_panel(cfg, "bottom")
+        top = carcass_panel(cfg, "top")
+        back = back_capture_geometry(cfg)
+        part("/carcass/side_left", "carcass", (0,0,0), (carcass.side_thickness,side.width,carcass.height), carcass.material, carcass.side_thickness, 0)
+        part("/carcass/side_right", "carcass", (carcass.width-carcass.side_thickness,0,0), (carcass.side_thickness,side.width,carcass.height), carcass.material, carcass.side_thickness, 0)
+        part("/carcass/bottom", "carcass", (carcass.side_thickness,0,0), (bottom.length,bottom.width,carcass.bottom_thickness), carcass.material, carcass.bottom_thickness, 2)
+        part("/carcass/top", "carcass", (carcass.side_thickness,0,carcass.height-carcass.top_thickness), (top.length,top.width,carcass.top_thickness), carcass.material, carcass.top_thickness, 2)
+        part("/carcass/back", "carcass", (0,carcass.depth-carcass.back_thickness,0), (back.width,carcass.back_thickness,back.height), carcass.back_material, carcass.back_thickness, 1)
 
-    for member in ("side_left", "side_right", "bottom", "top"):
-        contact("/carcass/back", "/carcass/" + member, "butt")
-    for side_name in ("side_left", "side_right"):
-        for panel_name in ("bottom", "top"):
-            contact("/carcass/" + side_name, "/carcass/" + panel_name, "butt")
+        for member in ("side_left", "side_right", "bottom", "top"):
+            contact("/carcass/back", "/carcass/" + member, "butt")
+        for side_name in ("side_left", "side_right"):
+            for panel_name in ("bottom", "top"):
+                contact("/carcass/" + side_name, "/carcass/" + panel_name, "butt")
 
     def visit(space: Space, path: str, origin: tuple, size: tuple, boundaries: dict[str, str | None]) -> None:
         if id(space) in active:
@@ -208,7 +259,10 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
         spaces.append(dict(id=path, origin=list(origin), size=list(size), boundaries=dict(boundaries)))
         if space.split and space.content:
             raise ValueError(f"{path}: a space cannot contain both a split and content")
-        if space.content:
+        if isinstance(space.content, AssemblyRef):
+            _name(space.content.name, path)
+            contents.append(dict(id=path + "/" + space.content.name, space=path, origin=list(origin), size=list(size), boundaries=dict(boundaries), assembly_ref=_input(space.content)))
+        elif space.content:
             box = space.content
             _name(box.name, path)
             cid = path + "/" + box.name
@@ -240,7 +294,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
                 sizes = {"side_L": (d.side_thickness,d.side_panel_length,height), "side_R": (d.side_thickness,d.side_panel_length,height), "sub_front": (d.front_back_panel_length,d.front_back_thickness,height), "back": (d.front_back_panel_length,d.front_back_thickness,height), "bottom": (d.bottom_panel_width,d.bottom_panel_depth,d.bottom_thickness)}
                 for name, sz in sizes.items():
                     p = tuple(a+b for a,b in zip(box_origin, offsets[name]))
-                    part(cid+"/"+name, "drawer_"+name, p, sz, box.bottom_material if name == "bottom" else box.material, d.bottom_thickness if name == "bottom" else (d.side_thickness if name.startswith("side") else d.front_back_thickness), owner=cid, motion_group=cid)
+                    part(cid+"/"+name, "drawer_"+name, p, sz, box.bottom_material if name == "bottom" else box.material, d.bottom_thickness if name == "bottom" else (d.side_thickness if name.startswith("side") else d.front_back_thickness), 2 if name == "bottom" else (0 if name.startswith("side") else 1), owner=cid, motion_group=cid)
                     if name != "bottom":
                         parts[-1]["operations"].append(dict(type="bottom_dado", inset=d.bottom_dado_inset, depth=d.bottom_dado_depth, width=d.bottom_thickness, side=name))
                         parts[-1]["operations"].append(dict(type="drawer_corner", style=box.joinery_style, side=name, parameters=asdict(d.joinery) | {"style": box.joinery_style}))
@@ -286,16 +340,17 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
                     weighted.append(child)
                 else:
                     raise ValueError(f"{path}/{child.name}: split child needs Fixed or Fr size")
-            budget = size[axis] - fixed
-            if budget < 0:
-                raise ValueError(f"{path}: split overfills by {-budget} mm")
-            if not weighted and budget:
-                raise ValueError(f"{path}: split has {budget} mm unallocated; add a flexible space")
-            weight = sum(c.size.weight for c in weighted)
-            allocation = {id(c): budget*c.size.weight//weight for c in weighted} if weighted else {}
-            slack = budget - sum(allocation.values()) if weighted else 0
-            if any(n <= 0 for n in allocation.values()):
-                raise ValueError(f"{path}: flexible space resolves to zero")
+            tracks = [child.size for child in children if isinstance(child, Space)]
+            reserved = sum(child.thickness for child in children if isinstance(child, Divider))
+            try:
+                result = allocate_tracks(size[axis], tracks, reserved)
+            except ValueError as exc:
+                raise ValueError(f"{path}: split overfills or has invalid tracks: {exc}") from exc
+            slack = result.slack
+            if not weighted and slack:
+                raise ValueError(f"{path}: split has {slack:g} mm unallocated; add a flexible space")
+            allocation = {id(child): length for child, length in zip(
+                (child for child in children if isinstance(child, Space)), result.lengths)}
             cursor = origin[axis] + (slack if edge == edges[0] else 0)
             if slack:
                 ao = list(origin); ao[axis] = origin[axis] if edge == edges[0] else origin[axis]+size[axis]-slack
@@ -314,7 +369,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
                     if recess >= cs[1]: raise ValueError(f"{child_path}: recess exceeds depth")
                     co[1] += recess; cs[1] -= recess
                     dividers.append(dict(id=child_path, owner=path, axis=split.axis, role=child.role, origin=co, size=cs, recess=recess))
-                    part(child_path, "divider", tuple(co), tuple(cs), child.material, length, owner=path, role=child.role)
+                    part(child_path, "divider", tuple(co), tuple(cs), child.material, length, axis, owner=path, role=child.role)
                     # The panel spans the parent in the perpendicular direction.
                     ends = ("bottom", "top") if axis == 0 else ("left", "right")
                     for boundary in (*ends, "back"):
@@ -332,13 +387,15 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
 
     _name(root.name, "root")
     if root.size is not None: raise ValueError("root: size comes from carcass")
-    visit(root, "/"+root.name, (carcass.side_thickness,0,carcass.bottom_thickness), dims,
-          dict(left="/carcass/side_left", right="/carcass/side_right", bottom="/carcass/bottom", top="/carcass/top", back="/carcass/back"))
+    visit(root, "/"+root.name, (0,0,0) if _bare else (carcass.side_thickness,0,carcass.bottom_thickness), dims,
+          dict(left=None, right=None, bottom=None, top=None, back=None) if _bare else dict(left="/carcass/side_left", right="/carcass/side_right", bottom="/carcass/bottom", top="/carcass/top", back="/carcass/back"))
     def reference(ref: str, records: list[dict], kind: str) -> dict:
         matches = [r for r in records if r["id"] == ref or (not ref.startswith("/") and r["id"].rsplit("/",1)[-1] == ref)]
         if len(matches) != 1:
             raise ValueError(f"{kind} reference {ref!r} is {'ambiguous' if matches else 'unknown'}")
         return matches[0]
+
+    from .front_boundaries import resolve_front_boundaries
 
     selected = []
     seen = set()
@@ -346,50 +403,80 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
         _name(front.name, "front")
         if front.name in seen: raise ValueError(f"front: duplicate name {front.name!r}")
         seen.add(front.name)
-        if not isinstance(front, (Door, AppliedDrawerFront)): raise ValueError("invalid front")
+        if not isinstance(front, (Door, AppliedDrawerFront, AppliedFaceboard)):
+            raise ValueError("invalid front")
         _number(front.thickness, f"front/{front.name} thickness")
+        if isinstance(front, Door) and front.hinge_side not in ("left", "right"):
+            raise ValueError(f"front/{front.name}: invalid hinge side")
+        if isinstance(front, AppliedFaceboard) and front.boundary_gap is not None:
+            _number(front.boundary_gap, f"front/{front.name} boundary gap", zero=True)
         region = reference(front.covers, spaces, "coverage")
         attachment = None
         if isinstance(front, AppliedDrawerFront):
             attachment = reference(front.attached_to, contents, "drawer attachment")
             if not (attachment["space"] == region["id"] or attachment["space"].startswith(region["id"] + "/")):
                 raise ValueError(f"front/{front.name}: attachment is outside coverage {region['id']}")
-        selected.append((front, region, attachment))
-
-    for front, region, attachment in selected:
-        x,y,z = region["origin"]; w,depth,h = region["size"]
-        bounds = [x, x+w, z, z+h]
-        inset = False
-        if isinstance(front, Door):
-            door = DoorConfig(opening_width=w, opening_height=h, hinge_key=front.hinge_key, door_thickness=front.thickness)
-            inset = door.hinge.overlay_type == OverlayType.INSET
-            if inset:
-                bounds = [x+door.gap_side, x+w-door.gap_side, z+door.gap_bottom, z+h-door.gap_top]
+        x, y, z = region["origin"]
+        w, depth, h = region["size"]
+        coverage = [x, x+w, z, z+h]
+        for idx, edge in enumerate(("left", "right", "bottom", "top")):
+            owner = region["boundaries"][edge]
+            if owner and owner.startswith("/carcass/"):
+                coverage[idx] = (0, carcass.width, 0, carcass.height)[idx]
+            elif owner:
+                divider = next(d for d in dividers if d["id"] == owner)
+                axis = 0 if idx < 2 else 2
+                coverage[idx] = divider["origin"][axis] + divider["size"][axis] / 2
             else:
-                bounds[0], bounds[1] = x-door.hinge.overlay, x+w+door.hinge.overlay
+                # Follow adjoining allowances toward an inherited exterior
+                # boundary. An allowance against a virtual or divider edge
+                # remains owned by its parent, not by this child.
+                axis = 0 if idx < 2 else 2
+                coordinate = coverage[idx]
+                for allowance in reversed(allowances):
+                    owner_path = allowance["owner"]
+                    if not region["id"].startswith(owner_path + "/") or allowance["edge"] != edge:
+                        continue
+                    low = allowance["origin"][axis]
+                    high = low + allowance["size"][axis]
+                    inside = high if idx in (0, 2) else low
+                    if abs(inside - coordinate) >= 1e-8:
+                        continue
+                    coordinate = low if idx in (0, 2) else high
+                    owner_space = next(s for s in spaces if s["id"] == owner_path)
+                    boundary = owner_space["boundaries"][edge]
+                    exterior = (0, carcass.width, 0, carcass.height)[idx]
+                    if (boundary and boundary.startswith("/carcass/")) or (
+                        _bare and boundary is None and abs(coordinate - exterior) < 1e-8
+                    ):
+                        coverage[idx] = exterior
+                        break
+                    if boundary:
+                        break
+        kind = "door" if isinstance(front, Door) else "drawer_front" if isinstance(front, AppliedDrawerFront) else "applied_faceboard"
+        inset = isinstance(front, Door) and DoorConfig(opening_width=w, opening_height=h, hinge_key=front.hinge_key, door_thickness=front.thickness).hinge.overlay_type == OverlayType.INSET
+        fid = "/front/" + front.name
+        candidate = dict(id=fid, coverage=coverage, plane=0, kind=kind, reveal=carcass.outer_reveal,
+                         door_gap=carcass.door_gap, drawer_front_gap=carcass.drawer_front_gap,
+                         boundary_gap=getattr(front, "boundary_gap", None), instance="cabinet")
+        selected.append((front, region, attachment, inset, candidate))
+    boundaries = resolve_front_boundaries([candidate for _, _, _, inset, candidate in selected if not inset])
+    for front, region, attachment, inset, candidate in selected:
+        x, y, z = region["origin"]; w, depth, h = region["size"]
+        if inset:
+            door = DoorConfig(opening_width=w, opening_height=h, hinge_key=front.hinge_key, door_thickness=front.thickness)
+            bounds = (x+door.gap_side, x+w-door.gap_side, z+door.gap_bottom, z+h-door.gap_top)
         else:
-            if x == carcass.side_thickness: bounds[0] = 0
-            if x+w == carcass.width-carcass.side_thickness: bounds[1] = carcass.width
-        # Boundaries shared by declared faces use the middle of any physical
-        # divider and one half-reveal each. They do not change the spaces.
-        for other, other_region, _ in selected:
-            if other is front or inset: continue
-            ox,_,oz = other_region["origin"]; ow,_,oh = other_region["size"]
-            if max(x,ox) < min(x+w,ox+ow):
-                for idx, a, b in ((2, oz+oh, z), (3, z+h, oz)):
-                    if a > b: continue
-                    between = [d for d in dividers if d["axis"] == "height" and d["origin"][2] == a and d["origin"][2]+d["size"][2] == b and d["origin"][0] <= x and d["origin"][0]+d["size"][0] >= x+w]
-                    if a == b or between:
-                        bounds[idx] = (a+b)/2 + (carcass.face_gap/2 if idx == 2 else -carcass.face_gap/2)
-            if max(z,oz) < min(z+h,oz+oh):
-                for idx, a, b in ((0, ox+ow, x), (1, x+w, ox)):
-                    if a > b: continue
-                    between = [d for d in dividers if d["axis"] == "width" and d["origin"][0] == a and d["origin"][0]+d["size"][0] == b and d["origin"][2] <= z and d["origin"][2]+d["size"][2] >= z+h]
-                    if a == b or between:
-                        bounds[idx] = (a+b)/2 + (carcass.face_gap/2 if idx == 0 else -carcass.face_gap/2)
-        fid = "/front/"+front.name
+            bounds = boundaries[candidate["id"]]
+        fid = candidate["id"]
         pos = (bounds[0], -front.thickness, bounds[2]); sz = (bounds[1]-bounds[0], front.thickness, bounds[3]-bounds[2])
-        motion = attachment["id"] if attachment else fid
-        part(fid, "door" if isinstance(front, Door) else "drawer_front", pos, sz, front.material, front.thickness, owner=region["id"], motion_group=motion)
-        faces.append(dict(id=fid, covers=region["id"], attached_to=attachment["id"] if attachment else None, motion_group=motion, origin=list(pos), size=list(sz)))
+        motion = attachment["id"] if attachment else (fid if isinstance(front, Door) else None)
+        extra = dict(owner=region["id"], motion_group=motion, attached_to=attachment["id"] if attachment else None)
+        if isinstance(front, Door): extra["hinge_side"] = front.hinge_side
+        part(fid, candidate["kind"], pos, sz, front.material, front.thickness, 1, **extra)
+        faces.append(dict(id=fid, covers=region["id"], attached_to=attachment["id"] if attachment else None, motion_group=motion, origin=list(pos), size=list(sz), hinge_side=getattr(front, "hinge_side", None), hinge_key=getattr(front, "hinge_key", None), coverage=candidate["coverage"], boundary_policy=candidate, inset=inset))
+    front_parts = [p for p in parts if p["id"] in {face["id"] for face in faces}]
+    for left, right in combinations(front_parts, 2):
+        if all(min(left["bounds"][1][i], right["bounds"][1][i]) - max(left["bounds"][0][i], right["bounds"][0][i]) > 1e-6 for i in range(3)):
+            raise ValueError(f"overlapping closed fronts: {left['id']} and {right['id']}")
     return ResolvedModel(spaces, dividers, allowances, contents, faces, PhysicalPartPlan(parts, contacts), dict(carcass=_input(carcass), root=_input(root), fronts=_input(fronts)))

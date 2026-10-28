@@ -2975,7 +2975,10 @@ async def list_tools() -> list[types.Tool]:
                             "required": ["name", "config"],
                         },
                     },
-                    "space_model": {"type": "object", "description": "Object with tagged carcass, root and fronts. Each node has type: Carcass, Space, Split, Divider, Fixed, Fr, DrawerBox, Door or AppliedDrawerFront."},
+                    "input_schema_version": {"type": "integer", "enum": [2], "default": 2},
+                    "space_model": {"type": "object", "description": "Tagged standalone carcass, root and fronts."},
+                    "space_cabinets": {"type": "array", "items": {"type": "object"}},
+                    "space_modules": {"type": "array", "items": {"type": "object"}},
                     "worktop": _worktop_schema(),
                     "layout": {"type": "object", "description": "Native row/stack layout."},
                     "profile_assembly": {"type": "object", "description": "Native roof, frame, box and face inputs."},
@@ -3018,6 +3021,11 @@ async def list_tools() -> list[types.Tool]:
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Saved project to update (see list_projects)."},
+                    "space_model": {"type": ["object", "null"]},
+                    "space_cabinets": {"type": ["array", "null"], "items": {"type": "object"}},
+                    "space_modules": {"type": ["array", "null"], "items": {"type": "object"}},
+                    "layout": {"type": ["object", "null"]},
+                    "profile_assembly": {"type": ["object", "null"]},
                     "notes": {"type": "string"},
                     "wall_width_mm": {"type": ["number", "null"]},
                     "worktop": {
@@ -6084,14 +6092,14 @@ def _columns_dict_from_cfg(cfg: CabinetConfig) -> list | None:
 
 def _project_summary(project, path) -> dict:
     """Per-cabinet resolved summary shared by design/update project handlers."""
-    from .project import check_project_consistency
+    from .project import check_project_consistency, project_to_dict
 
-    if project.space_model is not None:
+    if project.is_space_assembly:
         from .space_adapter import space_model_records
-        model = project.resolved_space_model()
-        return {"name": project.name, "cabinet_count": 1, "saved_to": str(path),
+        model = project.resolved_space_assembly()
+        return {"name": project.name, "cabinet_count": sum(p["kind"] == "cabinet" for p in model.placements), "saved_to": str(path),
                 "consistency_issues": check_project_consistency(project),
-                "space_model": model.to_dict(), "records": space_model_records(model)}
+                "project": project_to_dict(project), "space_model": model.to_dict(), "records": space_model_records(model)}
     resolved = project.resolved()
     per_cabinet = []
     for (cname, cfg), pc in zip(resolved, project.cabinets):
@@ -6139,8 +6147,8 @@ async def _tool_design_project(args: dict) -> list[types.TextContent]:
         )
 
     project = build_project(args)
-    if project.space_model is not None:
-        project.resolved_space_model()
+    if project.is_space_assembly:
+        project.resolved_space_assembly()
     elif project.layout is not None or project.profile_assembly is not None:
         project.resolved_assembly()
     elif not project.cabinets:
@@ -6252,10 +6260,10 @@ async def _tool_load_project(args: dict) -> list[types.TextContent]:
     if not name:
         return _err("Provide 'name' (see list_projects for saved names).")
     project = load_project(str(name))
-    if project.space_model is not None:
+    if project.is_space_assembly:
         from .space_adapter import space_model_records
-        model = project.resolved_space_model()
-        return _ok({"name": project.name, "cabinet_count": 1, "project": project_to_dict(project),
+        model = project.resolved_space_assembly()
+        return _ok({"name": project.name, "cabinet_count": sum(p["kind"] == "cabinet" for p in model.placements), "project": project_to_dict(project),
                     "space_model": model.to_dict(), "records": space_model_records(model)})
 
     per_cabinet = []
@@ -6295,9 +6303,9 @@ async def _tool_evaluate_project(args: dict) -> list[types.TextContent]:
 
     project = _project_from_args(args)
 
-    if project.space_model is not None:
+    if project.is_space_assembly:
         from .space_adapter import validate_model
-        model = project.resolved_space_model()
+        model = project.resolved_space_assembly()
         physical = validate_model(model) if args.get("physical_validation", False) else {"status": "not_requested", "diagnostics": []}
         project_issues = check_project_consistency(project)
         numeric_pass = not any(issue["severity"] == "error" for issue in project_issues)
@@ -6395,13 +6403,13 @@ async def _tool_generate_project_cutlist(args: dict) -> list[types.TextContent]:
             )
         projects = [_project_from_args(args)]
         out_name = projects[0].name
-    if any(p.space_model is not None for p in projects):
+    if any(p.is_space_assembly for p in projects):
         if len(projects) != 1:
             raise ValueError("Space models do not support batch cutlists")
         from .space_adapter import space_model_records
         import csv
         _safe_stem(out_name, kind="project name")
-        records = space_model_records(projects[0].resolved_space_model())
+        records = space_model_records(projects[0].resolved_space_assembly())
         out_dir = data_dir() / "cutlists" / out_name
         out_dir.mkdir(parents=True, exist_ok=True)
         json_path, csv_path = out_dir / "parts.json", out_dir / "parts.csv"
@@ -6824,20 +6832,25 @@ async def _tool_generate_bench_card(args: dict) -> list[types.TextContent]:
 
 
 async def _tool_visualize_project(args: dict) -> list[types.TextContent]:
-    import cadquery as cq  # raises in lite mode; call_tool wraps into an error
-
     project = _project_from_args(args)
-    if project.space_model is not None:
+    if project.is_space_assembly:
         from .space_adapter import materialize_model, space_model_records
         _safe_stem(project.name, kind="project name")
-        model = project.resolved_space_model()
+        model = project.resolved_space_assembly()
         records = space_model_records(model)
+        try:
+            import cadquery as cq
+        except ImportError as exc:
+            return _ok({"project": project.name, "records": records,
+                        "visualization_status": "cad_unavailable", "reason": str(exc)})
         shapes = materialize_model(model)
         assembly = cq.Assembly(name=project.name)
         for ident, shape in shapes.items():
             assembly.add(shape, name=ident)
-        carcass = project.space_model.carcass
-        dimensions = {"width": carcass.width, "height": carcass.height, "depth": carcass.depth}
+        bounds = model.structural_bounds
+        dimensions = {"width": bounds["max_x"] - bounds["min_x"],
+                      "height": bounds["max_z"] - bounds["min_z"],
+                      "depth": bounds["max_y"] - bounds["min_y"]}
         viewer = {**records["viewer"], "name": project.name, "dimensions_mm": dimensions,
                   "draft_status": "DRAFT · NOT FOR MANUFACTURING", "draft_state": "draft"}
         result = _visualize_assembly(assembly, list(shapes.values()),
@@ -6845,6 +6858,8 @@ async def _tool_visualize_project(args: dict) -> list[types.TextContent]:
             name=project.name, open_browser=bool(args.get("open_browser", True)),
             tolerance=float(args.get("tolerance", 0.1)), info=dimensions, viewer_data=viewer)
         return _ok({"project": project.name, **result, "records": records})
+    import cadquery as cq
+
     if project.layout is not None or project.profile_assembly is not None:
         from .profiles import assembly_records
         native = project.resolved_assembly()

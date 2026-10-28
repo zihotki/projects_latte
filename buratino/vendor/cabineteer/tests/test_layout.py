@@ -6,7 +6,8 @@ import pytest
 from cabineteer.cabinet import CabinetConfig
 from cabineteer.layout import (
     Bounds3D,
-    Fill,
+    Fixed,
+    Fr,
     Frame,
     LayoutLeaf,
     Row,
@@ -32,7 +33,7 @@ def test_synthetic_stack_resolves_positions_and_frame_rails():
             LayoutLeaf("upper.left", 360, 420, 450),
             LayoutLeaf("upper.right", 360, 420, 600),
         ),
-        span_mm=720,
+        size_x=Fixed(720),
         depth_alignment="back",
     )
     stack = Stack(
@@ -64,11 +65,11 @@ def test_row_fixed_and_fill_widths_use_parent_span_and_named_alignment():
         "row",
         (
             LayoutLeaf("fixed_left", 100, 20, 10),
-            LayoutLeaf("fill", Fill(), 20, 10),
+            LayoutLeaf("fill", Fr(), 20, 10),
             LayoutLeaf("fixed_right", 100, 20, 10),
         ),
         gap_mm=10,
-        span_mm=720,
+        size_x=Fixed(720),
         alignment="center",
         depth_alignment="center",
     )
@@ -80,46 +81,48 @@ def test_row_fixed_and_fill_widths_use_parent_span_and_named_alignment():
     centered = Row(
         "centered",
         (LayoutLeaf("narrow", 100, 20, 10),),
-        span_mm=720,
+        size_x=Fixed(720),
         alignment="center",
     )
     assert resolve_layout(centered).placements[0].origin_mm == (310, 0, 0)
 
 
-def test_stack_passes_its_constrained_width_to_a_fill_row():
+def test_stack_contains_explicitly_sized_weighted_row():
     row = Row(
         "upper_row",
         (
             LayoutLeaf("left", 100, 20, 10),
-            LayoutLeaf("middle", Fill(), 20, 10),
+            LayoutLeaf("middle", Fr(), 20, 10),
             LayoutLeaf("right", 100, 20, 10),
         ),
         gap_mm=10,
+        size_x=Fixed(720),
     )
-    result = resolve_layout(Stack("assembly", (row,), width_mm=720))
+    result = resolve_layout(Stack("assembly", (row,), size_x=Fixed(720)))
     placements = {placement.name: placement for placement in result.placements}
     assert placements["middle"].carcass_bounds_mm.width_mm == 500
     assert placements["right"].origin_mm == (620, 0, 0)
 
 
-def test_stack_passes_constrained_width_through_nested_stacks():
+def test_nested_stacks_contain_explicitly_sized_weighted_row():
     row = Row(
         "upper_row",
         (
             LayoutLeaf("left", 100, 20, 10),
-            LayoutLeaf("middle", Fill(), 20, 10),
+            LayoutLeaf("middle", Fr(), 20, 10),
             LayoutLeaf("right", 100, 20, 10),
         ),
         gap_mm=10,
+        size_x=Fixed(720),
     )
     inner = Stack("inner", (row,))
-    result = resolve_layout(Stack("outer", (inner,), width_mm=720))
+    result = resolve_layout(Stack("outer", (inner,), size_x=Fixed(720)))
     placements = {placement.name: placement for placement in result.placements}
     assert placements["middle"].carcass_bounds_mm.width_mm == 500
     assert placements["right"].origin_mm == (620, 0, 0)
 
 
-def test_stack_uses_occupied_height_once_and_keeps_bounds_distinct():
+def test_stack_uses_structural_height_and_keeps_bounds_distinct():
     first = LayoutLeaf(
         "first",
         100,
@@ -130,46 +133,46 @@ def test_stack_uses_occupied_height_once_and_keeps_bounds_distinct():
     second = LayoutLeaf("second", 100, 100, 20)
     result = resolve_layout(Stack("stack", (first, second), gap_mm=5))
     placements = {p.name: p for p in result.placements}
-    assert placements["second"].origin_mm == (0, 0, 65)
+    assert placements["second"].origin_mm == (0, 0, 55)
     assert placements["first"].carcass_bounds_mm.height_mm == 50
     assert placements["first"].occupied_world_bounds_mm.height_mm == 60
-    assert result.carcass_bounds_mm.max_z == 85
+    assert result.carcass_bounds_mm.max_z == 75
     assert result.occupied_world_bounds_mm.min_y == -20
 
 
-def test_row_aligns_carcass_bases_and_stack_advances_by_union_occupied_height():
+def test_row_aligns_carcass_bases_and_stack_advances_by_structural_height():
     row = Row(
         "row",
         (
             LayoutLeaf("extended", 50, 10, 20, Bounds3D(0, 0, -2, 50, 10, 20)),
             LayoutLeaf("plain", 50, 10, 20),
         ),
-        span_mm=100,
+        size_x=Fixed(100),
     )
     result = resolve_layout(
-        Stack("stack", (row, LayoutLeaf("next", 100, 10, 5)), gap_mm=3, width_mm=100)
+        Stack("stack", (row, LayoutLeaf("next", 100, 10, 5)), gap_mm=3, size_x=Fixed(100))
     )
     placements = {placement.name: placement for placement in result.placements}
-    assert placements["extended"].origin_mm[2] == 2
-    assert placements["plain"].origin_mm[2] == 2
-    assert placements["next"].origin_mm[2] == 25
+    assert placements["extended"].origin_mm[2] == 0
+    assert placements["plain"].origin_mm[2] == 0
+    assert placements["next"].origin_mm[2] == 23
 
 
-def test_stack_gap_starts_after_next_child_occupied_minimum():
+def test_stack_gap_starts_after_structural_height():
     first = LayoutLeaf("first", 100, 10, 20)
     second = LayoutLeaf("second", 100, 10, 20, Bounds3D(0, 0, -2, 100, 10, 20))
     result = resolve_layout(Stack("stack", (first, second), gap_mm=3))
     placements = {placement.name: placement for placement in result.placements}
     assert placements["first"].occupied_world_bounds_mm.max_z == 20
-    assert placements["second"].occupied_world_bounds_mm.min_z == 23
-    assert placements["second"].origin_mm[2] == 25
+    assert placements["second"].occupied_world_bounds_mm.min_z == 21
+    assert placements["second"].origin_mm[2] == 23
 
 
 def test_occupied_bounds_include_the_carcass_for_fixed_and_fill_leaves():
     extension = Bounds3D(-10, -5, -2, 90, 95, 45)
     fixed = LayoutLeaf("fixed", 100, 100, 50, extension)
-    fill = LayoutLeaf("fill", Fill(), 100, 50, extension)
-    result = resolve_layout(Row("row", (fixed, fill), span_mm=220))
+    fill = LayoutLeaf("fill", Fr(), 100, 50, extension)
+    result = resolve_layout(Row("row", (fixed, fill), size_x=Fixed(220)))
     placements = {placement.name: placement for placement in result.placements}
     for name in ("fixed", "fill"):
         placement = placements[name]
@@ -198,9 +201,9 @@ def test_layout_rejects_finite_inputs_that_overflow_during_resolution():
         Row(
             "overflow",
             (LayoutLeaf("a", 100, 10, 10), LayoutLeaf("b", 100, 10, 10)),
-            span_mm=150,
+            size_x=Fixed(150),
         ),
-        Row("unbounded", (LayoutLeaf("fill", Fill(), 10, 10),)),
+        Row("unbounded", (LayoutLeaf("fill", Fr(), 10, 10),)),
     ],
 )
 def test_row_rejects_overflow_and_unbounded_fill(row):
