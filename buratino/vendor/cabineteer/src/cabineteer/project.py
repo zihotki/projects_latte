@@ -39,7 +39,7 @@ from .joinery import (
 )
 from .layout import LayoutNode, layout_from_dict, layout_to_dict
 from .profiles import (
-    ProfileAssembly, ProfileAssemblySpec, assembly_faces, layout_with_face_occupancy, native_carcass_parts,
+    ProfileAssembly, ProfileAssemblySpec, adjustable_shelf_parts, assembly_faces, layout_with_face_occupancy, native_carcass_parts,
     profile_spec_from_dict, profile_spec_to_dict, resolve_profile_assembly,
     ProfilePart, with_profile_operations, resolved_profile_spec,
 )
@@ -276,7 +276,8 @@ class CabinetProject:
         p = placements[spec.shared_owner or anchor.name].origin_mm
         row_origin = (p[0] - anchor.x_mm, p[1], p[2])
         faces = assembly_faces(spec, configs[spec.lower], placements[spec.lower], row_origin)
-        parts = lower + result.parts + faces
+        shelves = adjustable_shelf_parts(spec, lower, result.parts + faces, placements)
+        parts = lower + result.parts + faces + shelves
         parts = tuple(with_profile_operations(p) if isinstance(p, ProfilePart) else p for p in parts)
         hardware = ()
         if spec.faces is not None:

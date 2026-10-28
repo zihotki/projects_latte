@@ -5,7 +5,9 @@ from cabineteer.layout import Frame, LayoutLeaf, Stack
 from cabineteer.profiles import (
     ProfileAssemblySpec,
     ProfiledBox,
+    ProfileDrawerSpec,
     ProfileFaceSpec,
+    ProfileShelfSpec,
     RoofProfile,
 )
 from cabineteer.project import CabinetProject, ProjectCabinet
@@ -68,6 +70,25 @@ profile = ProfileAssemblySpec(
     ProfileFaceSpec(drawer, 30, material="18 mm plywood"),
     shared_owner="upper",
     roof_joint="level_over_divider",
+    upper_drawers=(
+        ProfileDrawerSpec(
+            section="upper.left",
+            slide_key="buratino_hettich_quadro_v6_eb20_380",
+            box_height_mm=140,
+            bottom_clearance_mm=20,
+            side_mm=16,
+            front_back_mm=18,
+            bottom_mm=12,
+            bottom_dado_inset_mm=13,
+            material="plywood",
+            bottom_material="12 mm plywood",
+        ),
+    ),
+    adjustable_shelves=(
+        ProfileShelfSpec("right_low", "upper.right", 180, material="18 mm plywood"),
+        ProfileShelfSpec("right_high", "upper.right", 350, material="18 mm plywood"),
+        ProfileShelfSpec("lower", "lower", 500),
+    ),
 )
 project = CabinetProject(
     "profile-row-sloped",

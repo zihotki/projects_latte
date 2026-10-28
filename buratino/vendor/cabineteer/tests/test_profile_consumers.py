@@ -11,9 +11,9 @@ import pytest
 @pytest.mark.parametrize(
     "name,count",
     [
-        ("profile-row-sloped", 26),
+        ("profile-row-sloped", 34),
         ("profile-row-transition", 27),
-        ("profile-row-drawers", 32),
+        ("profile-row-drawers", 35),
     ],
 )
 def test_native_project_consumers(monkeypatch, tmp_path, name, count):
@@ -246,8 +246,8 @@ def test_shared_upper_geometry_and_roundtrip(name):
     upper = [p for p in assembly.parts if p.owner == "upper"]
     divider = next(p for p in upper if p.id == "upper.divider")
     assert {x for x, _ in divider.profile_xz_mm} == {351, 369}
-    assert sorted(p.stock_mm[0] for p in upper if p.component == "bottom") == [333, 333]
-    sides = [p for p in upper if p.component in ("side_left", "side_right", "divider")]
+    assert sorted(p.stock_mm[0] for p in upper if p.component == "bottom" and ".drawer." not in p.id) == [333, 333]
+    sides = [p for p in upper if p.component in ("side_left", "side_right", "divider") and ".drawer." not in p.id]
     assert len(sides) == 3
     assert evaluate_assembly(assembly) == []
     for i, side in enumerate(sides):
@@ -257,17 +257,15 @@ def test_shared_upper_geometry_and_roundtrip(name):
     for cap in caps:
         assert divider.solid().val().distance(cap.solid().val()) < 0.01
         assert divider.solid().intersect(cap.solid()).val().Volume() < 0.01
-    bottoms = [p for p in upper if p.component == "bottom"]
+    bottoms = [p for p in upper if p.component == "bottom" and ".drawer." not in p.id]
     for bottom in bottoms:
         assert bottom.solid().val().distance(divider.solid().val()) < 0.01
         assert bottom.solid().intersect(divider.solid()).val().Volume() < 0.01
     doors = sorted(
         (p for p in upper if p.component == "door"), key=lambda p: p.profile_xz_mm[0][0]
     )
-    assert [(p.profile_xz_mm[0][0], p.profile_xz_mm[1][0]) for p in doors] == [
-        (2, 359),
-        (361, 718),
-    ]
+    expected_doors = [(2, 359), (361, 718)] if name.endswith("transition") else [(361, 718)]
+    assert [(p.profile_xz_mm[0][0], p.profile_xz_mm[1][0]) for p in doors] == expected_doors
     assert all(p.owner == "upper" for p in doors)
     if name.endswith("transition"):
         assert divider.profile_xz_mm == ((351, 0), (369, 0), (369, 582), (351, 582))
@@ -359,6 +357,7 @@ def test_plain_applied_backs_match_carcass_geometry(name):
     for part in assembly.parts:
         if (
             part.owner == "upper"
+            and ".drawer." not in part.id
             and part.component in ("side_left", "side_right", "divider", "bottom")
             or part.component == "cap"
         ):

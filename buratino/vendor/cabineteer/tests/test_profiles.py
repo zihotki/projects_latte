@@ -938,3 +938,82 @@ def test_unshared_upper_drawer_keeps_section_as_cabinet_owner():
     viewer = records["viewer"]["parts"]["upper.left.drawer.side_left"]
     assert viewer["cabinet_id"] == "upper.left"
     assert viewer["instance_id"] == "upper.left.drawer"
+
+
+@pytest.mark.parametrize("name", ["profile-row-sloped", "profile-row-drawers"])
+def test_declared_adjustable_shelves_keep_structural_parts(name):
+    from dataclasses import replace
+    from cabineteer.profiles import ProfileShelfSpec, assembly_records
+    from cabineteer.project import project_from_dict, project_to_dict
+
+    root = Path(__file__).resolve().parents[3]
+    project = runpy.run_path(str(root / f"projects/{name}/project.py"))["project"]
+    baseline = replace(
+        project,
+        profile_assembly=replace(project.profile_assembly, adjustable_shelves=()),
+    ).resolved_assembly()
+    assembly = project_from_dict(project_to_dict(project)).resolved_assembly()
+    original = {part.id: part for part in baseline.parts}
+    current = {part.id: part for part in assembly.parts}
+    for part_id in ("upper.divider", "upper.left.bottom", "upper.right.bottom", "lower.carcass.floor"):
+        assert current[part_id].stock_mm == original[part_id].stock_mm
+        current_box = current[part_id].solid().val().BoundingBox()
+        original_box = original[part_id].solid().val().BoundingBox()
+        assert tuple(getattr(current_box, key) for key in ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax")) == tuple(
+            getattr(original_box, key) for key in ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax")
+        )
+    assert len(current) == len(assembly.parts)
+    for part_id, width, depth, x, y, z, owner in (
+        ("upper.right.shelf.right_low", 333, 411, 369, 133, 950, "upper"),
+        ("upper.right.shelf.right_high", 333, 411, 369, 133, 1120, "upper"),
+        ("lower.shelf.lower", 684, 541, 18, 3, 500, "lower"),
+    ):
+        part = current[part_id]
+        assert part.component == "adjustable_shelf"
+        assert part.mounting == "adjustable"
+        assert part.owner == owner
+        assert part.stock_mm == (width, depth, 18)
+        assert part.solid().val().BoundingBox().xmin == x
+        assert part.solid().val().BoundingBox().ymin == y
+        assert part.solid().val().BoundingBox().zmin == z
+    records = assembly_records(assembly)
+    assert records["viewer"]["parts"]["upper.right.shelf.right_low"]["cabinet_id"] == "upper"
+    assert records["viewer"]["parts"]["upper.right.shelf.right_low"]["label"] == "Adjustable shelf"
+    assert next(p for p in records["parts"] if p["id"] == "lower.shelf.lower")["stock_mm"] == {
+        "length": 684, "width": 541, "thickness": 18,
+    }
+    assert "upper.left.drawer.side_left" in current
+    assert "upper.left.door" not in current
+
+
+def test_adjustable_shelf_rejects_invalid_positions_and_names():
+    from dataclasses import replace
+    from cabineteer.profiles import ProfileShelfSpec
+
+    root = Path(__file__).resolve().parents[3]
+    project = runpy.run_path(str(root / "projects/profile-row-sloped/project.py"))["project"]
+    spec = project.profile_assembly
+
+    def resolve(*shelves):
+        return replace(project, profile_assembly=replace(spec, adjustable_shelves=shelves)).resolved_assembly()
+
+    for shelf in (
+        ProfileShelfSpec("bad", "missing", 100),
+        ProfileShelfSpec("high", "upper.right", 550),
+        ProfileShelfSpec("floor", "lower", 260),
+        ProfileShelfSpec("drawer", "lower", 100),
+        ProfileShelfSpec("drawer", "upper.left", 100),
+        ProfileShelfSpec("bottom", "upper.right", 1),
+        ProfileShelfSpec("deep", "lower", 500, front_recess_mm=544),
+    ):
+        with pytest.raises(ValueError):
+            resolve(shelf)
+    with pytest.raises(ValueError, match="distinct"):
+        resolve(spec.adjustable_shelves[0], spec.adjustable_shelves[0])
+    with pytest.raises(ValueError, match="overlap"):
+        resolve(ProfileShelfSpec("a", "upper.right", 180), ProfileShelfSpec("b", "upper.right", 190))
+    assert resolve(ProfileShelfSpec("touch", "upper.right", 18))
+    with pytest.raises(ValueError):
+        ProfileShelfSpec("bad", "upper.right", float("nan"))
+    with pytest.raises(ValueError):
+        ProfileShelfSpec("bad", "upper.right", 100, front_recess_mm=-1)

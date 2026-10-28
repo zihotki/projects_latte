@@ -693,6 +693,27 @@ class ProfileDrawerSpec:
 
 
 @dataclass(frozen=True)
+class ProfileShelfSpec:
+    """Adjustable shelf with its bottom height from the target cabinet base."""
+
+    name: str
+    target: str
+    height_mm: float
+    thickness_mm: float = 18
+    front_recess_mm: float = 3
+    material: str = ""
+
+    def __post_init__(self):
+        if not self.name or not self.target or "." in self.name:
+            raise ValueError("shelf name and target are required; name cannot contain a dot")
+        if any(
+            not math.isfinite(value) or value <= 0
+            for value in (self.height_mm, self.thickness_mm)
+        ) or not math.isfinite(self.front_recess_mm) or self.front_recess_mm < 0:
+            raise ValueError("shelf dimensions must be finite and valid")
+
+
+@dataclass(frozen=True)
 class ProfileAssemblySpec:
     roof: RoofProfile
     boxes: tuple[ProfiledBox, ...]
@@ -705,6 +726,7 @@ class ProfileAssemblySpec:
     shared_owner: str | None = None
     roof_joint: str | None = None
     upper_drawers: tuple[ProfileDrawerSpec, ...] = ()
+    adjustable_shelves: tuple[ProfileShelfSpec, ...] = ()
 
 
 def resolved_profile_spec(spec: ProfileAssemblySpec) -> ProfileAssemblySpec:
@@ -756,6 +778,9 @@ def profile_spec_from_dict(data: dict) -> ProfileAssemblySpec:
         roof_joint=data.get("roof_joint"),
         upper_drawers=tuple(
             ProfileDrawerSpec(**drawer) for drawer in data.get("upper_drawers", ())
+        ),
+        adjustable_shelves=tuple(
+            ProfileShelfSpec(**shelf) for shelf in data.get("adjustable_shelves", ())
         ),
     )
 
@@ -967,6 +992,102 @@ def upper_drawer_configs(spec: ProfileAssemblySpec):
             raise ValueError(f"upper drawer {item.section} does not fit opening")
         result[item.section] = (item, drawer, x0, box.bottom_mm)
     return result
+
+
+def adjustable_shelf_parts(spec, lower_parts, other_parts, placements):
+    """Resolve declared shelves in the clear carcass spans, without machining."""
+    targets = {box.name: (index, box) for index, box in enumerate(spec.boxes)}
+    targets[spec.lower] = None
+    ids = [f"{item.target}.shelf.{item.name}" for item in spec.adjustable_shelves]
+    if len(ids) != len(set(ids)):
+        raise ValueError("adjustable shelf IDs must be distinct")
+
+    lower_by_component = {part.component: part for part in lower_parts}
+    lower_left = lower_by_component["side_left"].solid().val().BoundingBox()
+    lower_right = lower_by_component["side_right"].solid().val().BoundingBox()
+    lower_back = lower_by_component["back"].solid().val().BoundingBox()
+    lower_origin = placements[spec.lower].origin_mm
+    anchor = spec.boxes[0]
+    upper_origin = placements[spec.shared_owner or anchor.name].origin_mm
+    upper_origin = (upper_origin[0] - anchor.x_mm, *upper_origin[1:])
+    result = []
+    occupied = []
+    for item, part_id in zip(spec.adjustable_shelves, ids, strict=True):
+        if item.target not in targets:
+            raise ValueError(f"unknown adjustable shelf target: {item.target}")
+        if item.target == spec.lower:
+            x0 = lower_left.xmax
+            x1 = lower_right.xmin
+            y0 = lower_left.ymin + item.front_recess_mm
+            y1 = lower_back.ymin
+            z0 = lower_origin[2] + item.height_mm
+            origin = lower_origin
+            owner = spec.lower
+            material = item.material or lower_by_component["bottom"].material
+            roof_limit = lower_by_component["top"].solid().val().BoundingBox().zmin
+        else:
+            index, box = targets[item.target]
+            half = box.side_mm / 2 if spec.shared_owner else box.side_mm
+            local_x0 = box.x_mm + (box.side_mm if index == 0 else half)
+            local_x1 = box.x_mm + box.width_mm - (
+                box.side_mm if index == len(spec.boxes) - 1 else half
+            )
+            x0, x1 = upper_origin[0] + local_x0, upper_origin[0] + local_x1
+            y0 = upper_origin[1] + item.front_recess_mm
+            y1 = upper_origin[1] + box.depth_mm - box.back_mm
+            z0 = upper_origin[2] + item.height_mm
+            origin = upper_origin
+            owner = spec.shared_owner or box.name
+            material = item.material or box.material
+            roof_limit = upper_origin[2] + min(
+                z for _, z in _clip(spec.roof, local_x0, local_x1, underside=True)
+            )
+            if item.height_mm < box.bottom_mm - 1e-9:
+                raise ValueError(f"adjustable shelf {part_id} overlaps fixed bottom")
+        z1 = z0 + item.thickness_mm
+        if x1 <= x0 or y1 <= y0 or z1 > roof_limit + 1e-9:
+            raise ValueError(f"adjustable shelf {part_id} does not fit its opening")
+        bounds = (x0, x1, y0, y1, z0, z1)
+        for other_id, other_bounds in occupied:
+            if _bounds_overlap(bounds, other_bounds):
+                raise ValueError(f"adjustable shelves {part_id} and {other_id} overlap")
+        # Structural lower panels and drawer boxes are checked in world space.
+        # Upper roof and sides use their actual clear spans and underside above.
+        blockers = (
+            tuple(lower_parts) + tuple(other_parts)
+            if item.target == spec.lower
+            else tuple(
+                part for part in other_parts
+                if part.id.startswith(f"{item.target}.drawer.")
+            )
+        )
+        for blocker in blockers:
+            if item.target == spec.lower and blocker.component in (
+                "side_left", "side_right", "back"
+            ):
+                continue
+            bb = blocker.solid().val().BoundingBox()
+            if _bounds_overlap(bounds, (bb.xmin, bb.xmax, bb.ymin, bb.ymax, bb.zmin, bb.zmax)):
+                raise ValueError(f"adjustable shelf {part_id} overlaps {blocker.id}")
+        occupied.append((part_id, bounds))
+        local_x0, local_x1 = x0 - origin[0], x1 - origin[0]
+        local_z0, local_z1 = z0 - origin[2], z1 - origin[2]
+        result.append(
+            ProfilePart(
+                part_id, owner, "adjustable_shelf", material,
+                ((local_x0, local_z0), (local_x1, local_z0),
+                 (local_x1, local_z1), (local_x0, local_z1)),
+                y0 - origin[1], y1 - y0,
+                (x1 - x0, y1 - y0, item.thickness_mm),
+                orientation="bottom", mounting="adjustable",
+            ).placed(origin)
+        )
+    return tuple(result)
+
+
+def _bounds_overlap(a, b):
+    return all(a[low] < b[high] - 1e-9 and b[low] < a[high] - 1e-9
+               for low, high in ((0, 1), (2, 3), (4, 5)))
 
 
 def assembly_faces(spec: ProfileAssemblySpec, cfg, placement, row_origin):
@@ -1357,6 +1478,8 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
             "mounting": getattr(part, "mounting", ""),
         }
         viewer = {"role": part.id, "cabinet_id": part.owner}
+        if part.component == "adjustable_shelf":
+            viewer["label"] = "Adjustable shelf"
         if part.component in ("door", "drawer_front"):
             viewer["hinge_side"] = "right" if part.component == "door" else None
             viewer["hinge_side_status"] = (

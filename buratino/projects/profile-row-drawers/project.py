@@ -7,6 +7,7 @@ from cabineteer.profiles import (
     ProfiledBox,
     ProfileDrawerSpec,
     ProfileFaceSpec,
+    ProfileShelfSpec,
     RoofProfile,
 )
 from cabineteer.project import CabinetProject, ProjectCabinet
@@ -82,6 +83,11 @@ profile = ProfileAssemblySpec(
             material="plywood",
             bottom_material="12 mm plywood",
         ),
+    ),
+    adjustable_shelves=(
+        ProfileShelfSpec("right_low", "upper.right", 180, material="18 mm plywood"),
+        ProfileShelfSpec("right_high", "upper.right", 350, material="18 mm plywood"),
+        ProfileShelfSpec("lower", "lower", 500),
     ),
 )
 project = CabinetProject(
