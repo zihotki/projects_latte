@@ -88,6 +88,57 @@ def test_native_project_consumers(monkeypatch, tmp_path, name, count):
         loop.close()
 
 
+def test_real_native_project_consumers(monkeypatch, tmp_path):
+    from cabineteer import server
+    from cabineteer.project import project_to_dict
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    root = Path(__file__).resolve().parents[3]
+    project = runpy.run_path(
+        str(root / "projects/real-assembly-native/project.py")
+    )["project"]
+    payload = json.loads(json.dumps(project_to_dict(project)))
+
+    async def call(handler, args):
+        return json.loads((await handler(args))[0].text)
+
+    async def run():
+        designed = await call(server._tool_design_project, payload)
+        name = project.name
+        loaded = await call(server._tool_load_project, {"name": name})
+        evaluated = await call(server._tool_evaluate_project, {"project_name": name})
+        cutlist = await call(server._tool_generate_project_cutlist, {"project_name": name})
+        viewer = await call(server._tool_visualize_project, {
+            "project_name": name, "open_browser": False, "output_dir": str(tmp_path),
+        })
+        expected = designed["assembly"]
+        assert len(expected["parts"]) == 94
+        assert len(expected["drawers"]) == len(expected["hardware"]) == 9
+        assert len(expected["viewer"]["drawers"]) == 9
+        for actual in (loaded["assembly"], evaluated["assembly"],
+                       cutlist["assembly"], viewer["assembly"]):
+            assert actual == expected
+        assert loaded["project"]["profile_assembly"] == payload["profile_assembly"]
+        assert evaluated["issues"] == []
+        assert Path(cutlist["files"]["csv"]).is_file()
+        import csv
+
+        with Path(cutlist["files"]["csv"]).open(newline="") as stream:
+            rows = {row["id"]: row for row in csv.DictReader(stream)}
+        for name in ("left-drawers", "right-drawers"):
+            back = rows[f"{name}.carcass.back"]
+            assert back["material"] == "6 mm board"
+            assert json.loads(back["stock_mm"])["thickness"] == 6
+        assert Path(viewer["glb"]).is_file()
+        assert_rendered_profiles(Path(viewer["glb"]), project.resolved_assembly())
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(run())
+    finally:
+        loop.close()
+
+
 def assert_rendered_profiles(glb_path, assembly):
     """Compare exported vertices against each native world-space profile."""
     import struct

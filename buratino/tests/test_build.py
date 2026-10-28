@@ -80,6 +80,22 @@ def test_build_captures_consistent_outputs_without_editing_inputs(root, project)
     assert profile["native_slide_spec"]["available_lengths"] == [450]
 
 
+def test_native_real_assembly_build_reports_resolved_contents(root, tmp_path):
+    project = tmp_path / "real-assembly-native"
+    shutil.copytree(root / "projects/real-assembly-native", project)
+    outcome = build.build_project(root, project)
+    directory, _ = latest_build(project)
+    result = read_json(directory / "result.json")
+    assert outcome["status"] == "draft"
+    assert len(result["cabinets"]) == 2
+    assert len(result["frames"]) == 2
+    assert len(result["upper_cabinets"]) == 1
+    assert len(result["drawers"]) == 9
+    assert len(result["parts"]) == 94
+    assert (directory / "report.html").is_file()
+    assert (directory / "cabinet.glb").read_bytes()[:4] == b"glTF"
+
+
 def test_drawer_reports_keep_actual_parts_and_unverified_work_visible(root, tmp_path):
     project = tmp_path / "drawer-cabinet"
     shutil.copytree(

@@ -39,9 +39,19 @@ from .joinery import (
 )
 from .layout import LayoutNode, layout_from_dict, layout_to_dict
 from .profiles import (
-    ProfileAssembly, ProfileAssemblySpec, adjustable_shelf_parts, assembly_faces, layout_with_face_occupancy, native_carcass_parts,
-    profile_spec_from_dict, profile_spec_to_dict, resolve_profile_assembly,
-    ProfilePart, with_profile_operations, resolved_profile_spec,
+    ProfileAssembly,
+    ProfileAssemblySpec,
+    adjustable_shelf_parts,
+    assembly_faces,
+    layout_with_face_occupancy,
+    lower_drawer_parts,
+    native_carcass_parts,
+    profile_spec_from_dict,
+    profile_spec_to_dict,
+    resolve_profile_assembly,
+    ProfilePart,
+    with_profile_operations,
+    resolved_profile_spec,
 )
 
 
@@ -266,32 +276,74 @@ class CabinetProject:
             raise ValueError("profile assembly and layout are required")
         spec = resolved_profile_spec(self.profile_assembly)
         configs = dict(self.resolved())
-        layout = layout_with_face_occupancy(self.layout, spec, configs[spec.lower])
-        result = resolve_profile_assembly(layout, spec.roof, spec.boxes,
-                                          spec.cap_owner, spec.cap_names, spec.frame,
-                                          spec.cap_material, spec.shared_owner)
+        layout = layout_with_face_occupancy(
+            self.layout, spec, configs if spec.lower_drawers else configs[spec.lower]
+        )
+        result = resolve_profile_assembly(
+            layout,
+            spec.roof,
+            spec.boxes,
+            spec.cap_owner,
+            spec.cap_names,
+            spec.frame,
+            spec.cap_material,
+            spec.shared_owner,
+            spec.frames or None,
+        )
         placements = {p.name: p for p in result.layout.placements}
-        lower = native_carcass_parts(spec.lower, configs[spec.lower], placements[spec.lower])
+        lowers = tuple(
+            part
+            for name, cfg in configs.items()
+            for part in native_carcass_parts(
+                name, cfg, placements[name], spec.lower_back_material
+            )
+        )
         anchor = spec.boxes[0]
         p = placements[spec.shared_owner or anchor.name].origin_mm
         row_origin = (p[0] - anchor.x_mm, p[1], p[2])
-        faces = assembly_faces(spec, configs[spec.lower], placements[spec.lower], row_origin)
-        shelves = adjustable_shelf_parts(spec, lower, result.parts + faces, placements)
-        parts = lower + result.parts + faces + shelves
-        parts = tuple(with_profile_operations(p) if isinstance(p, ProfilePart) else p for p in parts)
+        faces = assembly_faces(
+            spec, configs[spec.lower], placements[spec.lower], row_origin
+        )
+        lower_faces, lower_hardware = (
+            lower_drawer_parts(spec, configs, placements)
+            if spec.lower_drawers
+            else ((), ())
+        )
+        shelves = adjustable_shelf_parts(
+            spec,
+            tuple(part for part in lowers if part.owner == spec.lower),
+            result.parts + faces + lower_faces,
+            placements,
+        )
+        parts = lowers + result.parts + faces + lower_faces + shelves
+        parts = tuple(
+            with_profile_operations(p) if isinstance(p, ProfilePart) else p
+            for p in parts
+        )
         hardware = ()
-        if spec.faces is not None:
-            hardware = ({
-                "type": "drawer_runner", "slide_key": spec.faces.drawer["slide_key"],
-                "quantity": 2, "status": "unverified",
-                "box_bottom_clearance_mm": spec.faces.drawer_box_bottom_clearance_mm,
-            },)
-        hardware += tuple({
-            "type": "drawer_runner", "slide_key": item.slide_key,
-            "instance_id": f"{item.section}.drawer", "quantity": 2,
-            "status": "unverified",
-            "box_bottom_clearance_mm": item.bottom_clearance_mm,
-        } for item in spec.upper_drawers)
+        if spec.faces is not None and not spec.lower_drawers:
+            hardware = (
+                {
+                    "type": "drawer_runner",
+                    "slide_key": spec.faces.drawer["slide_key"],
+                    "instance_id": f"{spec.lower}.drawer",
+                    "quantity": 2,
+                    "status": "unverified",
+                    "box_bottom_clearance_mm": spec.faces.drawer_box_bottom_clearance_mm,
+                },
+            )
+        hardware += lower_hardware
+        hardware += tuple(
+            {
+                "type": "drawer_runner",
+                "slide_key": item.slide_key,
+                "instance_id": f"{item.section}.drawer",
+                "quantity": 2,
+                "status": "unverified",
+                "box_bottom_clearance_mm": item.bottom_clearance_mm,
+            }
+            for item in spec.upper_drawers
+        )
         return ProfileAssembly(result.layout, parts, hardware=hardware)
 
 

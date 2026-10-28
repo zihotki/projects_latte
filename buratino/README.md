@@ -19,6 +19,11 @@ packages and integrity-checked Three.js assets into `buratino/.local/`.
 
 The drawer example uses the same commands with `projects/drawer-cabinet`.
 The two-cabinet draft uses `projects/real-assembly`.
+The native migration uses `projects/real-assembly-native`; the earlier project
+remains a working reference. The native design has two lower drawer cabinets,
+two frames, and one four-section upper carcass with shared dividers. Its nine
+drawers, seven adjustable shelves, roof, fronts, and cut list come from one
+resolved assembly. Both projects remain draft designs.
 The bare inclined example uses `projects/inclined-cabinet`.
 Open the loopback URL printed by `preview`. Each page shows one captured build.
 After a new build, refresh the page to load it; the server can stay running.
@@ -53,10 +58,12 @@ the maximum exterior height. The top caps the sides, and its thickness is
 measured normal to the slope. Stock dimensions are rectangular blanks that
 need trimming to the finished profiles.
 
-Inclined cabinets currently support bare butt carcasses with an unmachined
-back. Openings, drawers, doors, shelves, columns, edge banding, and machining
-plans are not supported. Separate cabinets need heights calculated from their
-positions to follow the same roof line; the tool does not calculate them yet.
+The single-cabinet `roof_angle_deg` path supports bare butt carcasses with an
+unmachined back. That path does not support openings, drawers, doors, shelves,
+columns, edge banding, or machining plans. Separate cabinets in that path need
+heights calculated from their positions. Composite `ProfileAssemblySpec`
+projects, including `real-assembly-native`, support one shared profiled upper
+carcass with drawers, fronts, and adjustable shelves.
 
 The native hardware catalog includes Hettich Quadro V6 EB20 runners in 380,
 450, and 480 mm lengths. Mounting details and other open assumptions remain

@@ -247,6 +247,7 @@ def native_snapshot(
     project: ProjectInputs, built_drawer_configs: dict[str, DrawerConfig] | None = None
 ) -> dict:
     """Return JSON-ready records of native configs resolved from this source."""
+    from cabineteer.profiles import lower_slide_keys
     from cabineteer.project import project_to_dict
 
     from .drawers import EB20_SLIDE_KEYS, eb20_profile_for_key, register_eb20_profile
@@ -272,6 +273,21 @@ def native_snapshot(
         else project.drawer_configs
     )
     keys = {cfg.slide_key for cfg in configs.values()}
+    spec = project.native_project.profile_assembly
+    selected_by_cabinet = {}
+    if spec is not None:
+        recipes = {item.cabinet: item for item in spec.lower_drawers}
+        selected_by_cabinet = {
+            name: tuple(sorted(set(lower_slide_keys(cabinet, recipes[name]))))
+            for name, cabinet in project.native_project.resolved()
+            if name in recipes
+        }
+        if not recipes and spec.faces and spec.faces.drawer:
+            selected_by_cabinet[spec.lower] = (spec.faces.drawer["slide_key"],)
+        keys.update(
+            key for selected in selected_by_cabinet.values() for key in selected
+        )
+        keys.update(item.slide_key for item in spec.upper_drawers)
     # Retain the historical default snapshot entry for projects with no drawers.
     if not keys:
         keys = {EB20_SLIDE_KEYS[project.variables.get("runner_length_mm", 450)]}
@@ -291,12 +307,24 @@ def native_snapshot(
     for name, _ in project.native_project.resolved():
         prefix = f"{name}.drawer." if built_drawer_configs is not None else f"{name}/"
         matching = [cfg for key, cfg in configs.items() if key.startswith(prefix)]
-        if matching:
-            slide_key = matching[0].slide_key
-            cabinet_profiles[name] = {
-                "slide_key": slide_key,
-                "source_data": plain(eb20_profile_for_key(slide_key)),
-            }
+        selected = selected_by_cabinet.get(name) or tuple(
+            sorted({cfg.slide_key for cfg in matching})
+        )
+        if selected:
+            cabinet_profiles[name] = (
+                {
+                    "slide_key": selected[0],
+                    "source_data": plain(eb20_profile_for_key(selected[0])),
+                }
+                if len(selected) == 1
+                else {
+                    "slide_key": None,
+                    "slide_keys": list(selected),
+                    "source_data_by_key": {
+                        key: plain(eb20_profile_for_key(key)) for key in selected
+                    },
+                }
+            )
 
     return {
         "project": plain(project_to_dict(project.native_project)),

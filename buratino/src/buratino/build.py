@@ -849,7 +849,13 @@ def build_project(root: Path, path: Path) -> dict:
             assembly, calculation.result["parts"], calculation.result["joints"]
         )
         views = panel_views(assembly, [group[0] for group in groups])
-        render_documents(stage, calculation.result, calculation.configs, views, groups)
+        render_documents(
+            stage,
+            calculation.result,
+            None if calculation.native_assembly is not None else calculation.configs,
+            views,
+            groups,
+        )
         if input_identity(path) != project.identity:
             raise InputError(
                 "inputs_changed", "Inputs changed during the build; rebuild."

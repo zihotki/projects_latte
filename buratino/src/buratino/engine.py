@@ -302,6 +302,82 @@ def _calculate_native_assembly(project: ProjectInputs) -> Calculation:
     native = project.native_project.resolved_assembly()
     data = assembly_records(native)
     geometry_issues = evaluate_assembly(native)
+    spec = project.native_project.profile_assembly
+    placements = {item.name: item for item in native.layout.placements}
+
+    def point(values):
+        return dict(zip(("x", "y", "z"), values, strict=True))
+
+    def bounds(placement):
+        box = placement.occupied_world_bounds_mm
+        return {
+            "min": point((box.min_x, box.min_y, box.min_z)),
+            "max": point((box.max_x, box.max_y, box.max_z)),
+        }
+
+    cabinets = []
+    for name, config in project.native_project.resolved():
+        placement = placements[name]
+        selected = sorted(
+            {
+                item["slide_key"]
+                for item in native.hardware
+                if item.get("instance_id", "").startswith(f"{name}.")
+            }
+        )
+        single_slide = selected[0] if len(selected) == 1 else None
+        cabinets.append(
+            {
+                "id": name,
+                "name": name,
+                "placement_mm": point(placement.origin_mm),
+                "dimensions_mm": {
+                    "width": config.width,
+                    "height": config.height,
+                    "depth": config.depth,
+                },
+                "bounds_mm": bounds(placement),
+                "slide_key": single_slide,
+                "slide_keys": selected,
+                "hardware_profile": eb20_profile_for_key(single_slide)
+                if single_slide
+                else None,
+            }
+        )
+    frames = [
+        {
+            "id": item.name,
+            "width": item.width_mm,
+            "depth": item.depth_mm,
+            "height": item.height_mm,
+            "thickness": item.stock_mm,
+            "material": item.material,
+            **point(placements[item.name].origin_mm),
+        }
+        for item in (spec.frames or (spec.frame,))
+    ]
+    upper_names = (
+        (spec.shared_owner,)
+        if spec.shared_owner
+        else tuple(box.name for box in spec.boxes)
+    )
+    upper_cabinets = [
+        {
+            "id": name,
+            "placement_mm": point(placements[name].origin_mm),
+            "bounds_mm": bounds(placements[name]),
+        }
+        for name in upper_names
+    ]
+    drawers = [
+        {
+            **item,
+            "hardware_profile": eb20_profile_for_key(item["slide_key"])
+            if item.get("slide_key")
+            else None,
+        }
+        for item in data["drawers"]
+    ]
     bounds = native.layout.occupied_world_bounds_mm
     dimensions = {
         "width": bounds.width_mm,
@@ -331,11 +407,11 @@ def _calculate_native_assembly(project: ProjectInputs) -> Calculation:
         "overall_dimensions_mm": dimensions,
         "variables": project.variables,
         "calculated": project.calculated,
-        "cabinets": [],
-        "frames": [],
-        "upper_cabinets": [],
+        "cabinets": cabinets,
+        "frames": frames,
+        "upper_cabinets": upper_cabinets,
         "parts": parts,
-        "drawers": [],
+        "drawers": drawers,
         "joints": [],
         "hardware": data["hardware"],
         "checks": [
