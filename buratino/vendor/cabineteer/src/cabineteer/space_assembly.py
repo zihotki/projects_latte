@@ -8,9 +8,11 @@ from dataclasses import asdict, replace
 
 from .allocation import Fixed, Fr, Natural
 from .front_boundaries import resolve_front_boundaries
+from .hardware import get_hinge, get_slide
+from .joinery import DrawerJoineryStyle
 from .layout import CabinetRef, Frame, Row, Stack, resolve_layout
-from .spaces import (AppliedDrawerFront, AppliedFaceboard, Carcass, Door, DrawerBox,
-                     PhysicalPartPlan, ResolvedModel, Space, _input, _integer,
+from .spaces import (AppliedDrawerFront, AppliedFaceboard, AssemblyRef, Carcass,
+                     Divider, Door, DrawerBox, Insets, PhysicalPartPlan, ResolvedModel, Space, Split, _input, _integer,
                      _name, _number, resolve_model)
 
 
@@ -21,6 +23,115 @@ def _bounds(origin, size):
 
 def _bounds_dict(bounds):
     return asdict(bounds)
+
+
+def _part_bounds(parts):
+    """Return physical bounds, or None when the plan contains no parts."""
+    if not parts:
+        return None
+    return ({"min_" + axis: min(part["bounds"][0][i] for part in parts)
+             for i, axis in enumerate("xyz")} |
+            {"max_" + axis: max(part["bounds"][1][i] for part in parts)
+             for i, axis in enumerate("xyz")})
+
+
+def _validate_size_request(value, path, *, natural=False, integer=False):
+    if isinstance(value, Fr):
+        if isinstance(value.weight, bool) or not isinstance(value.weight, int) or value.weight <= 0:
+            raise ValueError(f"{path}: Fr weight must be a positive integer")
+    elif isinstance(value, Natural) and natural:
+        return
+    else:
+        number = value.mm if isinstance(value, Fixed) else value
+        (_integer if integer else _number)(number, path)
+
+
+def _validate_carcass(carcass, path):
+    if not isinstance(carcass, Carcass):
+        raise ValueError(f"{path}: expected Carcass")
+    for axis in ("width", "height"):
+        _validate_size_request(getattr(carcass, axis), f"{path}.{axis}")
+    _number(carcass.depth, path + ".depth")
+    for field in ("side_thickness", "bottom_thickness", "top_thickness", "back_thickness"):
+        _number(getattr(carcass, field), f"{path}.{field}")
+    for field in ("door_gap", "drawer_front_gap", "outer_reveal"):
+        _number(getattr(carcass, field), f"{path}.{field}", zero=True)
+    for field, stock in (("width", 2 * carcass.side_thickness),
+                         ("height", carcass.bottom_thickness + carcass.top_thickness),
+                         ("depth", carcass.back_thickness)):
+        value = getattr(carcass, field)
+        if isinstance(value, Fixed):
+            value = value.mm
+        if not isinstance(value, Fr):
+            _integer(value - stock, f"{path} clear {field}")
+
+
+def _validate_space_inputs(space, path, *, root=False):
+    """Validate authored Space recipes without needing an allocated host box."""
+    _name(space.name, path)
+    if root and space.size is not None:
+        raise ValueError(f"{path}: root size comes from its host")
+    if not root:
+        if not isinstance(space.size, (Fixed, Fr)):
+            raise ValueError(f"{path}: split child needs Fixed or Fr size")
+        _validate_size_request(space.size, path + " size", integer=True)
+    if space.split is not None and space.content is not None:
+        raise ValueError(f"{path}: a space cannot contain both a split and content")
+    content = space.content
+    if isinstance(content, AssemblyRef):
+        _name(content.name, path)
+        if not isinstance(content.insets, Insets):
+            raise ValueError(f"{path}: expected Insets")
+        for edge in ("left", "right", "front", "back", "bottom", "top"):
+            _integer(getattr(content.insets, edge), f"{path}/{content.name} inset {edge}", zero=True)
+    elif isinstance(content, DrawerBox):
+        _name(content.name, path)
+        label = f"{path}/{content.name}"
+        _number(content.bottom_clearance, label + " bottom_clearance", zero=True)
+        if content.height != "fit":
+            _number(content.height, label + " height")
+        for field in ("top_clearance", "bottom_dado_inset"):
+            if getattr(content, field) is not None:
+                _number(getattr(content, field), f"{label} {field}", zero=True)
+        _number(content.front_gap, label + " front_gap", zero=True)
+        for field in ("side_thickness", "front_back_thickness", "bottom_dado_depth"):
+            _number(getattr(content, field), f"{label} {field}")
+        if content.bottom_thickness is not None:
+            _number(content.bottom_thickness, label + " bottom_thickness")
+        try:
+            get_slide(content.slide_key)
+            DrawerJoineryStyle(content.joinery_style)
+        except (KeyError, ValueError, TypeError) as exc:
+            raise ValueError(f"{label}: {exc}") from exc
+    elif content is not None:
+        raise ValueError(f"{path}: invalid space content")
+    split = space.split
+    if split is None:
+        return
+    if not isinstance(split, Split) or split.axis not in ("width", "height"):
+        raise ValueError(f"{path}: invalid split")
+    edges = ("left", "right") if split.axis == "width" else ("bottom", "top")
+    if split.allowance_edge is not None and split.allowance_edge not in edges:
+        raise ValueError(f"{path}: invalid allowance edge {split.allowance_edge!r}")
+    children = split.children
+    if not children or not isinstance(children[0], Space) or not isinstance(children[-1], Space):
+        raise ValueError(f"{path}: split must start and end with a space")
+    names = set()
+    for index, child in enumerate(children):
+        if not isinstance(child, (Space, Divider)):
+            raise ValueError(f"{path}: invalid split child")
+        _name(child.name, path)
+        if child.name in names:
+            raise ValueError(f"{path}: duplicate child name {child.name!r}")
+        names.add(child.name)
+        if isinstance(child, Divider):
+            if not isinstance(children[index-1], Space) or not isinstance(children[index+1], Space):
+                raise ValueError(f"{path}/{child.name}: divider must separate spaces")
+            _integer(child.thickness, f"{path}/{child.name} thickness")
+            if child.role not in ("structural", "adjustable") or (child.role == "adjustable" and split.axis != "height"):
+                raise ValueError(f"{path}/{child.name}: invalid divider role")
+            if child.recess is not None:
+                _number(child.recess, f"{path}/{child.name} recess", zero=True)
 
 
 def _validate_front_references(root, fronts, path):
@@ -74,6 +185,11 @@ def _validate_front_references(root, fronts, path):
         _number(front.thickness, path + "/front/" + front.name + " thickness")
         if isinstance(front, Door) and front.hinge_side not in ("left", "right"):
             raise ValueError(f"{path}/front/{front.name}: invalid hinge side")
+        if isinstance(front, Door):
+            try:
+                get_hinge(front.hinge_key)
+            except (KeyError, TypeError) as exc:
+                raise ValueError(f"{path}/front/{front.name}: {exc}") from exc
         if isinstance(front, AppliedFaceboard) and front.boundary_gap is not None:
             _number(front.boundary_gap, path + "/front/" + front.name + " boundary gap", zero=True)
         coverage = reference(front.covers, spaces, "coverage")
@@ -101,32 +217,64 @@ def _validate_graph(project, definitions, modules):
         active.add(key)
         item = registry[name]
         item_path = path + "/" + name
+        if kind == "cabinet":
+            _validate_carcass(item.carcass, item_path + "/carcass")
+            if not isinstance(item.root, Space):
+                raise ValueError(f"{item_path}: cabinet root must be a Space")
+        else:
+            if not isinstance(item.root, (Space, Row, Stack)):
+                raise ValueError(f"{item_path}: module root must be a Space, Row or Stack")
+            for axis in ("size_x", "size_y", "size_z"):
+                value = getattr(item, axis)
+                if not isinstance(value, (Fixed, Fr, Natural)):
+                    raise ValueError(f"{item_path}: invalid {axis} request")
+                _validate_size_request(value, item_path + "/" + axis, natural=True)
         visit(item.root, item_path, set())
         _validate_front_references(item.root, item.fronts, item_path)
         active.remove(key)
         done.add(key)
 
-    def visit(node, path, objects):
+    def visit(node, path, objects, *, space_root=True):
         key = id(node)
         if key in objects:
             raise ValueError(f"{path}: cyclic input tree")
         if isinstance(node, CabinetRef):
+            _name(node.name, path)
             definition("cabinet", node.definition, path)
         elif isinstance(node, Space):
             objects.add(key)
+            _validate_space_inputs(node, path, root=space_root)
             if node.split:
                 for child in node.split.children:
                     if isinstance(child, Space):
-                        visit(child, path + "/" + child.name, objects)
-            if node.content is not None and hasattr(node.content, "module"):
+                        visit(child, path + "/" + child.name, objects, space_root=False)
+            if isinstance(node.content, AssemblyRef):
                 definition("module", node.content.module, path + "/" + node.content.name)
             objects.remove(key)
         elif isinstance(node, (Row, Stack)):
             objects.add(key)
+            _name(node.name, path)
+            for axis in ("size_x", "size_z"):
+                request = getattr(node, axis)
+                if not isinstance(request, (Fixed, Fr, Natural)):
+                    raise ValueError(f"{path}: invalid {axis} request")
+                _validate_size_request(request, path + "/" + axis, natural=True)
+            _number(node.gap_mm, path + " gap", zero=True)
+            if isinstance(node, Stack) and node.depth_mm is not None:
+                _number(node.depth_mm, path + " depth")
+            if not node.children or any(not isinstance(child, (CabinetRef, Frame, Row, Stack)) for child in node.children):
+                raise ValueError(f"{path}: invalid layout child")
+            if len({child.name for child in node.children}) != len(node.children):
+                raise ValueError(f"{path}: layout children must have distinct names")
+            if node.alignment not in ("left", "center", "right", "bottom", "top") or node.depth_alignment not in ("front", "center", "back"):
+                raise ValueError(f"{path}: invalid alignment")
             for child in node.children:
                 visit(child, path + "/" + child.name, objects)
             objects.remove(key)
-        elif not isinstance(node, Frame):
+        elif isinstance(node, Frame):
+            _name(node.name, path)
+            node.rails()
+        else:
             raise ValueError(f"{path}: invalid assembly node {type(node).__name__}")
 
     for name in definitions:
@@ -136,6 +284,7 @@ def _validate_graph(project, definitions, modules):
     if project.layout is not None:
         visit(project.layout, "/layout", set())
     if project.space_model is not None:
+        _validate_carcass(project.space_model.carcass, "/host/carcass")
         visit(project.space_model.root, "/host", set())
         _validate_front_references(project.space_model.root, project.space_model.fronts, "/host")
 
@@ -365,12 +514,8 @@ def resolve_space_assembly(project):
     for contact in contacts:
         signature = "\0".join((contact["part_a"], contact["part_b"], contact["type"]))
         contact["id"] = "contact-" + hashlib.sha256(signature.encode()).hexdigest()[:16]
-    occupied = dict(structural)
-    for part in parts:
-        for i, axis in enumerate("xyz"):
-            occupied["min_"+axis] = min(occupied["min_"+axis], part["bounds"][0][i])
-            occupied["max_"+axis] = max(occupied["max_"+axis], part["bounds"][1][i])
-    if any(occupied["min_"+axis] < structural["min_"+axis] - 1e-6 or occupied["max_"+axis] > structural["max_"+axis] + 1e-6 for axis in "xyz"):
+    occupied = _part_bounds(parts)
+    if occupied and any(occupied["min_"+axis] < structural["min_"+axis] - 1e-6 or occupied["max_"+axis] > structural["max_"+axis] + 1e-6 for axis in "xyz"):
         diagnostics.append(dict(code="occupied_overhang", structural_bounds=structural, occupied_bounds=occupied))
     return ResolvedModel(spaces, dividers, allowances, contents, fronts, PhysicalPartPlan(parts, contacts),
                          dict(space_model=_input(project.space_model), layout=_input(project.layout), space_cabinets=_input(project.space_cabinets), space_modules=_input(project.space_modules)),

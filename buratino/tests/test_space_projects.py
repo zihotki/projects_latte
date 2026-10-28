@@ -173,6 +173,9 @@ def test_assembled_space_uses_one_plan_for_reports_cutlists_and_fronts(root):
 
     assert result["plan_version"] == plan["plan_version"]
     assert result["dimensions_mm"]["width"] == 953
+    assert plan["structural_bounds"]["max_x"] == 953
+    assert plan["occupied_bounds"]["max_x"] == 952
+    assert max(part["bounds"][1][0] for part in physical.values()) == 952
     assert _space_dimensions(placement_named("left")["size"])[0] == 240
     assert _space_dimensions(placement_named("right")["size"])[0] == 233
     assert _space_dimensions(placement_named("far-right")["size"])[0] == 467

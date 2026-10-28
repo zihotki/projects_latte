@@ -146,3 +146,46 @@ def test_unused_module_front_must_resolve_in_its_own_space_tree():
         resolve_space_assembly(project(host=host, modules=(module,)))
     module = AssemblyModule("unused", Space("insert"), Fr(), Fr(), Fr(), (Door("good", "insert"),))
     assert len(resolve_space_assembly(project(host=host, modules=(module,))).part_plan.parts) == 5
+
+
+def test_occupied_bounds_exclude_allocated_empty_slack():
+    recipe = SpaceCabinetDefinition('base', Carcass(Fr(), 720, 560), Space('inside'))
+    layout = Row('row', (CabinetRef('a', 'base'), CabinetRef('b', 'base')), size_x=Fixed(953))
+    plan = resolve_space_assembly(project(layout=layout, cabinets=(recipe,)))
+    assert plan.structural_bounds['max_x'] == 953
+    assert plan.occupied_bounds['max_x'] == 952
+    assert max(part['bounds'][1][0] for part in plan.part_plan.parts) == 952
+
+
+@pytest.mark.parametrize('carcass', [
+    Carcass(-1, 100, 100), Carcass(Fr(0), 100, 100), Carcass(100, 100, 0),
+    Carcass(100, 100, 100, side_thickness=-1), Carcass(100, 100, 100, outer_reveal=-1),
+])
+def test_unused_cabinet_rejects_invalid_static_dimensions(carcass):
+    host = SimpleNamespace(carcass=Carcass(400, 400, 400), root=Space('inside'), fronts=())
+    definition = SpaceCabinetDefinition('unused', carcass, Space('inside'))
+    with pytest.raises(ValueError, match='unused/carcass'):
+        resolve_space_assembly(project(host=host, cabinets=(definition,)))
+
+
+def test_unused_recipes_validate_static_inputs_without_host_allocation():
+    from cabineteer.spaces import DrawerBox
+    host = SimpleNamespace(carcass=Carcass(400, 400, 400), root=Space('inside'), fronts=())
+    def check(module):
+        return resolve_space_assembly(project(host=host, modules=(module,)))
+    valid = AssemblyModule('unused', Space('inside', split=Split('height', (Space('a', Fr()), Space('b', Fr())))), Fr(), Fr(), Fr())
+    assert len(check(valid).part_plan.parts) == 5
+    invalid = [
+        AssemblyModule('unused', Space('inside'), Fr(0), Fr(), Fr()),
+        AssemblyModule('unused', Space('inside', split=Split('height', (Space('a', Fixed(-1)), Space('b', Fr())))), Fr(), Fr(), Fr()),
+        AssemblyModule('unused', Space('inside', content=DrawerBox('drawer', 30, slide_key='not-a-slide')), Fr(), Fr(), Fr()),
+        AssemblyModule('unused', Space('inside', content=AssemblyRef('ref', 'unused', Insets(front=-1))), Fr(), Fr(), Fr()),
+    ]
+    for module in invalid:
+        with pytest.raises(ValueError, match='unused'):
+            check(module)
+
+
+def test_empty_physical_plan_has_no_occupied_envelope():
+    from cabineteer.space_assembly import _part_bounds
+    assert _part_bounds([]) is None

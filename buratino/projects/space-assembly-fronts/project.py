@@ -114,7 +114,7 @@ layout = Row(
     ),
     gap_mm=6,
     size_x=Fixed(953),
-    size_z=600,
+    size_z=Fixed(600),
 )
 
 project = CabinetProject(
