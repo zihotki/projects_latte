@@ -12,6 +12,7 @@ from cabineteer.profiles import (
     RoofProfile,
 )
 from cabineteer.project import CabinetProject, ProjectCabinet
+from cabineteer.spaces import Fixed
 
 variables = {
     "space_mm": {},
@@ -70,10 +71,14 @@ layout = Stack(
                 LayoutLeaf("left-drawers", 720, 506, 930),
                 LayoutLeaf("right-drawers", 720, 506, 930),
             ),
+            size_x=Fixed(1440),
+            size_z=Fixed(930),
         ),
         support_frame,
         LayoutLeaf("upper", 1440, 426, 1204),
     ),
+    size_x=Fixed(1440),
+    size_z=Fixed(2234),
 )
 boxes = tuple(
     ProfiledBox(

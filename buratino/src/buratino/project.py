@@ -267,25 +267,34 @@ def native_snapshot(
             return [plain(item) for item in value]
         return value
 
-    if project.native_project.space_model is not None:
+    native_project = project.native_project
+    is_space_project = (
+        native_project.space_model is not None
+        or native_project.space_cabinets
+        or native_project.space_modules
+    )
+    if is_space_project:
         from cabineteer.hardware import get_slide
         from cabineteer.project import project_to_dict
-        from cabineteer.spaces import Door
 
-        model = project.native_project.resolved_space_model()
+        is_space_assembly = native_project.layout is not None
+        plan = (
+            native_project.resolved_space_assembly()
+            if is_space_assembly
+            else native_project.resolved_space_model()
+        )
         selected = sorted(
-            {item["slide_key"] for item in model.contents if item.get("slide_key")}
+            {item["slide_key"] for item in plan.contents if item.get("slide_key")}
         )
         hinge_keys = sorted(
-            {
-                item.hinge_key
-                for item in project.native_project.space_model.fronts
-                if isinstance(item, Door)
-            }
+            {item["hinge_key"] for item in plan.fronts if item.get("hinge_key")}
         )
+        resolved = plain(plan.to_dict())
         return {
-            "project": plain(project_to_dict(project.native_project)),
-            "resolved_space_model": plain(model.to_dict()),
+            "project": plain(project_to_dict(native_project)),
+            "resolved_space_plan": resolved,
+            **({"resolved_space_assembly": resolved} if is_space_assembly else {}),
+            **({"resolved_space_model": resolved} if not is_space_assembly else {}),
             "drawer_configs": {},
             "built_drawer_configs": {},
             "hardware_profiles": {

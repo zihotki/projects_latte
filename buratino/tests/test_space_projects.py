@@ -44,10 +44,19 @@ def test_space_projects_use_resolved_native_records(root, name, expected_heights
     assert all(content["slide_key"].endswith("_480") for content in model["contents"])
     assert all(part.get("stock_mm", {}).get("thickness") for part in result["parts"])
     parts_by_id = {part["id"]: part for part in result["parts"]}
-    assert parts_by_id["/root/lower/box-lower/side_L"]["stock_mm"]["thickness"] == 16
-    assert parts_by_id["/root/lower/box-lower/sub_front"]["stock_mm"]["thickness"] == 18
-    assert parts_by_id["/root/lower/box-lower/bottom"]["stock_mm"]["thickness"] == 12
-    assert parts_by_id["/carcass/side_left"]["stock_mm"]["thickness"] == 18
+    assert (
+        parts_by_id["/cabinet/root/lower/box-lower/side_L"]["stock_mm"]["thickness"]
+        == 16
+    )
+    assert (
+        parts_by_id["/cabinet/root/lower/box-lower/sub_front"]["stock_mm"]["thickness"]
+        == 18
+    )
+    assert (
+        parts_by_id["/cabinet/root/lower/box-lower/bottom"]["stock_mm"]["thickness"]
+        == 12
+    )
+    assert parts_by_id["/cabinet/carcass/side_left"]["stock_mm"]["thickness"] == 18
     assert calculation.native_assembly is None
     assert calculation.space_model is not None
     snapshot = native_snapshot(inputs)
@@ -61,16 +70,16 @@ def test_space_project_keeps_drawers_fronts_and_door_visibility_separate(root):
     covered = calculate(load_project(root / "projects/spaces-covered-drawers")).result
 
     fixed_parts = {part["id"]: part for part in fixed["parts"]}
-    lower = fixed_parts["/root/lower/box-lower/side_L"]
-    lower_front = fixed_parts["/front/lower-front"]
-    assert lower["instance_id"] == "/root/lower/box-lower"
-    assert lower_front["instance_id"] == "/root/lower/box-lower"
+    lower = fixed_parts["/cabinet/root/lower/box-lower/side_L"]
+    lower_front = fixed_parts["/cabinet/front/lower-front"]
+    assert lower["instance_id"] == "/cabinet/root/lower/box-lower"
+    assert lower_front["instance_id"] == "/cabinet/root/lower/box-lower"
     assert lower_front["motion_group"] == lower["instance_id"]
-    assert "instance_id" not in fixed_parts["/root/adjustable-shelf"]
+    assert "instance_id" not in fixed_parts["/cabinet/root/adjustable-shelf"]
     assert not any(part["component"] == "door" for part in fixed["parts"])
 
     covered_parts = {part["id"]: part for part in covered["parts"]}
-    assert covered_parts["/front/parent-door"].get("instance_id") is None
+    assert covered_parts["/cabinet/front/parent-door"].get("instance_id") is None
     assert covered["hardware"] == [
         {
             "type": "drawer_runner",
@@ -83,11 +92,11 @@ def test_space_project_keeps_drawers_fronts_and_door_visibility_separate(root):
             "quantity": None,
         },
     ]
-    assert covered_parts["/root/lower/box-lower/side_L"]["instance_id"] == (
-        "/root/lower/box-lower"
+    assert covered_parts["/cabinet/root/lower/box-lower/side_L"]["instance_id"] == (
+        "/cabinet/root/lower/box-lower"
     )
-    assert covered_parts["/root/middle/box-middle/side_L"]["instance_id"] == (
-        "/root/middle/box-middle"
+    assert covered_parts["/cabinet/root/middle/box-middle/side_L"]["instance_id"] == (
+        "/cabinet/root/middle/box-middle"
     )
 
 
@@ -139,6 +148,109 @@ def test_build_validates_the_materialized_shape_map_once(root, tmp_path, monkeyp
     }
     assert "Status: passed" in (directory / "report.html").read_text()
     assert "No CAD diagnostics." in (directory / "report.html").read_text()
+
+
+def _space_dimensions(point):
+    if isinstance(point, dict):
+        return point["x"], point["y"], point["z"]
+    return tuple(point)
+
+
+def test_assembled_space_uses_one_plan_for_reports_cutlists_and_fronts(root):
+    inputs = load_project(root / "projects/space-assembly-fronts")
+    calculation = calculate(inputs)
+    result = calculation.result
+    plan = result["space_plan"]
+    placements = plan["placements"]
+
+    def placement_named(name):
+        return next(
+            item for item in placements if item["id"].rstrip("/").endswith(name)
+        )
+
+    fronts = {item["id"].rsplit("/", 1)[-1]: item for item in plan["fronts"]}
+    physical = {item["id"]: item for item in plan["part_plan"]["parts"]}
+
+    assert result["plan_version"] == plan["plan_version"]
+    assert result["dimensions_mm"]["width"] == 953
+    assert _space_dimensions(placement_named("left")["size"])[0] == 240
+    assert _space_dimensions(placement_named("right")["size"])[0] == 233
+    assert _space_dimensions(placement_named("far-right")["size"])[0] == 467
+    row_allocation = next(
+        item for item in plan["allocations"] if item["path"].endswith("main-row")
+    )
+    assert row_allocation["used_span"] == 952
+    assert row_allocation["slack"] == 1
+    assert {part["id"] for part in result["parts"]} == set(physical)
+    assert result["cutting_groups"]
+    assert {
+        front["hinge_side"] for front in fronts.values() if front.get("hinge_side")
+    } == {"left", "right"}
+    assert any(item["slide_key"].endswith("_380") for item in plan["contents"])
+    assert any(
+        item.get("slide_key", "").endswith("_380") for item in result["hardware"]
+    )
+    assert all(
+        item["stock"]["thickness_axis"] in (0, 1, 2) for item in physical.values()
+    )
+    assert any(item.get("motion_group") for item in result["parts"])
+    assert all(
+        definition.carcass.door_gap
+        == definition.carcass.drawer_front_gap
+        == definition.carcass.outer_reveal
+        == 2
+        for definition in inputs.native_project.space_cabinets
+    )
+    summary = _space_model_summary(result)
+    assert "Placements" in summary
+    assert "Allocations" in summary
+    assert "hinge side left" in summary
+
+    snapshot = native_snapshot(inputs)
+    assert snapshot["resolved_space_assembly"]["plan_version"] == plan["plan_version"]
+    assert snapshot["selected_hinge_keys"]
+    assert "buratino_hettich_quadro_v6_eb20_380" in snapshot["hardware_profiles"]
+
+
+def test_nested_bare_and_complete_references_keep_qualified_part_ids(root):
+    inputs = load_project(root / "projects/space-nested-inserts")
+    calculation = calculate(inputs)
+    plan = calculation.result["space_plan"]
+    part_ids = {item["id"] for item in plan["part_plan"]["parts"]}
+    content_ids = {item["id"] for item in plan["contents"]}
+    instance_paths = {
+        item.get("instance_id")
+        for item in calculation.result["parts"]
+        if item.get("instance_id")
+    }
+    viewer = calculation.result["assembly"]["viewer"]
+    instances = viewer["instances"]
+    host = next(item for item in instances if not item.get("parent_id"))
+    nested = next(
+        item for item in instances if "complete-cabinet-instance" in item["id"]
+    )
+    nested_parts = [
+        item for item in viewer["parts"] if "complete-cabinet-instance" in item["id"]
+    ]
+
+    assert any("bare-insert-instance" in ident for ident in part_ids)
+    assert any("complete-cabinet-instance" in ident for ident in part_ids)
+    assert any("insert-box" in ident for ident in content_ids)
+    assert any(
+        "box" in ident and "complete-cabinet-instance" in ident for ident in content_ids
+    )
+    assert all(path.startswith("/") for path in instance_paths)
+    assert all(
+        item["stock"]["thickness_axis"] in (0, 1, 2)
+        for item in plan["part_plan"]["parts"]
+    )
+    assert any(item.get("slide_key", "").endswith("_480") for item in plan["contents"])
+    assert any(item["hinge_side"] == "right" for item in plan["fronts"])
+    assert host["id"] in nested["ancestor_ids"]
+    assert nested_parts and host["id"] in nested_parts[0]["ancestor_ids"]
+    assert nested["parent_id"] in {item["id"] for item in instances}
+    snapshot = native_snapshot(inputs)
+    assert snapshot["resolved_space_plan"]["plan_version"] == plan["plan_version"]
 
 
 def test_physical_validation_report_keeps_stable_part_ids():

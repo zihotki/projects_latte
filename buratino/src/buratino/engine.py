@@ -436,14 +436,40 @@ def _calculate_native_assembly(project: ProjectInputs) -> Calculation:
     return Calculation([], result, [], native)
 
 
-def _calculate_space_model(project: ProjectInputs) -> Calculation:
-    """Format native resolved space records for Buratino reports and cut lists."""
-    from cabineteer.space_adapter import space_model_records
-    from cabineteer.spaces import Door
+def _space_point(value):
+    """Return a plan point as a named report coordinate map."""
+    if isinstance(value, dict):
+        return {axis: value[axis] for axis in ("x", "y", "z")}
+    return dict(zip(("x", "y", "z"), value, strict=True))
 
-    model = project.native_project.resolved_space_model()
-    records = space_model_records(model)
-    carcass = project.native_project.space_model.carcass
+
+def _space_dimensions(value):
+    point = _space_point(value)
+    return {"width": point["x"], "depth": point["y"], "height": point["z"]}
+
+
+def _space_bounds_size(bounds):
+    """Project native bounds to width, height and depth."""
+    return {
+        "width": bounds["max_x"] - bounds["min_x"],
+        "height": bounds["max_z"] - bounds["min_z"],
+        "depth": bounds["max_y"] - bounds["min_y"],
+    }
+
+
+def _calculate_space_model(project: ProjectInputs) -> Calculation:
+    """Format a resolved native Space plan for Buratino reports and cut lists."""
+    from cabineteer.space_adapter import space_model_records
+
+    native_project = project.native_project
+    is_assembly = native_project.layout is not None
+    plan = (
+        native_project.resolved_space_assembly()
+        if is_assembly
+        else native_project.resolved_space_model()
+    )
+    plan_data = plan.to_dict()
+    records = space_model_records(plan)
     parts = []
     for source in records["parts"]:
         part = dict(source)
@@ -457,7 +483,7 @@ def _calculate_space_model(project: ProjectInputs) -> Calculation:
         part.setdefault("edge_treatment", "unverified")
         parts.append(part)
 
-    contents = model.contents
+    contents = plan.contents
     hardware = []
     slide_counts: dict[str, int] = {}
     for content in contents:
@@ -471,30 +497,53 @@ def _calculate_space_model(project: ProjectInputs) -> Calculation:
     hardware.extend(
         {
             "type": "concealed_door_hinge",
-            "name": front.hinge_key,
+            "name": front["hinge_key"],
             "quantity": None,
         }
-        for front in project.native_project.space_model.fronts
-        if isinstance(front, Door)
+        for front in plan.fronts
+        if front.get("hinge_key")
     )
     drawer_records = records["viewer"].get("drawers", [])
-    dimensions = {
-        "width": carcass.width,
-        "height": carcass.height,
-        "depth": carcass.depth,
+    dimensions = _space_bounds_size(plan_data["structural_bounds"])
+    occupied_dimensions = _space_bounds_size(plan_data["occupied_bounds"])
+    cabinet_records = records["viewer"].get("cabinets", [])
+    placements = {
+        placement["id"]: placement for placement in plan_data.get("placements", [])
     }
+    cabinets = []
+    for source in cabinet_records:
+        cabinet = dict(source)
+        placement = placements.get(cabinet.get("id"))
+        if placement is not None:
+            cabinet["placement_mm"] = _space_point(placement["origin"])
+            cabinet["dimensions_mm"] = _space_dimensions(placement["size"])
+            cabinet["bounds_mm"] = placement["structural_bounds"]
+        cabinets.append(cabinet)
+    diagnostics = []
+    for item in plan_data.get("diagnostics", []):
+        if {"severity", "code", "message"} <= set(item):
+            diagnostics.append(item)
+        else:
+            diagnostics.append(
+                {
+                    "severity": "unknown",
+                    "code": item.get("code", "space.diagnostic"),
+                    "message": item.get("message", str(item)),
+                }
+            )
     result = {
         "schema_version": 2,
+        "plan_version": plan.plan_version,
         "name": project.native_project.name,
         "input_identity": project.identity,
         "status": "draft",
         "validation_status": "blocked",
         "manufacturing_ready": False,
         "dimensions_mm": dimensions,
-        "overall_dimensions_mm": dimensions,
+        "overall_dimensions_mm": occupied_dimensions,
         "variables": project.variables,
         "calculated": project.calculated,
-        "cabinets": records["viewer"].get("cabinets", []),
+        "cabinets": cabinets,
         "frames": [],
         "upper_cabinets": [],
         "parts": parts,
@@ -504,29 +553,43 @@ def _calculate_space_model(project: ProjectInputs) -> Calculation:
         "checks": [
             {
                 "severity": "unknown",
-                "code": "space_model.unverified",
+                "code": "space_assembly.unverified",
                 "message": (
                     "Hardware, joinery, support and installation remain unverified."
                 ),
-            }
+            },
+            *diagnostics,
         ],
         "explanations": {
-            "assembly": "Native resolved space model and physical part plan."
+            "assembly": "Native resolved Space plan and physical part plan."
         },
         "assembly": {
             "contacts": records["contacts"],
             "viewer": records["viewer"],
-            "space_model": model.to_dict(),
+            "plan_version": plan.plan_version,
+            "placements": plan_data.get("placements", []),
+            "allocations": plan_data.get("allocations", []),
+            "structural_bounds": plan_data["structural_bounds"],
+            "occupied_bounds": plan_data["occupied_bounds"],
+            "spaces": plan_data.get("spaces", []),
+            "contents": plan_data.get("contents", []),
+            "fronts": plan_data.get("fronts", []),
+            "diagnostics": plan_data.get("diagnostics", []),
         },
-        "space_model": model.to_dict(),
+        "space_model": plan_data,
+        "space_plan": plan_data,
         "cutting_groups": records["viewer"].get("cutting_groups", []),
     }
-    return Calculation([], result, [], None, model)
+    return Calculation([], result, [], None, plan)
 
 
 def calculate(project: ProjectInputs) -> Calculation:
     """Resolve native project configs into draft parts, checks, and placements."""
-    if project.native_project.space_model is not None:
+    if (
+        project.native_project.space_model is not None
+        or project.native_project.space_cabinets
+        or project.native_project.space_modules
+    ):
         return _calculate_space_model(project)
     if (
         project.native_project.layout is not None

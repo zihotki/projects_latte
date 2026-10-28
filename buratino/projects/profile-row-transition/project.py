@@ -9,6 +9,7 @@ from cabineteer.profiles import (
     RoofProfile,
 )
 from cabineteer.project import CabinetProject, ProjectCabinet
+from cabineteer.spaces import Fixed
 
 variables = {
     "assumptions": [
@@ -24,6 +25,8 @@ layout = Stack(
         frame,
         LayoutLeaf("upper", 720, 420, 600),
     ),
+    size_x=Fixed(720),
+    size_z=Fixed(1370),
 )
 boxes = (
     ProfiledBox("upper.left", 0, 360, 420, 18, 18, 6, "18 mm plywood", "6 mm board"),

@@ -204,7 +204,7 @@ def _drawer_summary(result: dict) -> str:
 
 
 def _space_model_summary(result: dict) -> str:
-    model = result.get("space_model")
+    model = result.get("space_plan") or result.get("space_model")
     if not model:
         return ""
     rows = []
@@ -224,15 +224,43 @@ def _space_model_summary(result: dict) -> str:
     )
     fronts = "".join(
         f"<li>{html.escape(front.get('id', front.get('name', 'Front')))}: "
-        f"{html.escape(front.get('type', 'front'))}.</li>"
+        f"{html.escape(front.get('type') or 'front')}; "
+        f"hinge side {html.escape(front.get('hinge_side') or 'not applicable')}; "
+        f"motion group {html.escape(front.get('motion_group') or 'none')}.</li>"
         for front in model.get("fronts", [])
     )
+    placements = "".join(
+        f"<li>{html.escape(item.get('id', 'Instance'))}: origin "
+        f"{html.escape(str(item.get('origin', [])))} mm; size "
+        f"{html.escape(str(item.get('size', [])))} mm.</li>"
+        for item in model.get("placements", [])
+    )
+    allocations = "".join(
+        f"<li>{html.escape(item.get('path', item.get('id', 'Allocation')))}: "
+        f"{item.get('used_span', 0):g} mm used, {item.get('slack', 0):g} mm slack, "
+        f"{item.get('used_span', 0) + item.get('slack', 0):g} mm available.</li>"
+        for item in model.get("allocations", [])
+    )
+    diagnostics = "".join(
+        f"<li>{html.escape(item.get('code', 'diagnostic'))}: "
+        f"{html.escape(item.get('message', str(item)))}</li>"
+        for item in model.get("diagnostics", [])
+    )
     return (
+        f"<p>Resolved native plan version {result.get('plan_version', 'unknown')}. "
+        "Structural and occupied dimensions come from the resolved plan.</p>"
         "<h2>Resolved spaces</h2><ul>"
         + "".join(rows)
         + "</ul>"
+        + ("<h2>Placements</h2><ul>" + placements + "</ul>" if placements else "")
+        + ("<h2>Allocations</h2><ul>" + allocations + "</ul>" if allocations else "")
         + ("<h2>Allowance</h2><ul>" + allowances + "</ul>" if allowances else "")
         + ("<h2>Fronts</h2><ul>" + fronts + "</ul>" if fronts else "")
+        + (
+            "<h2>Plan diagnostics</h2><ul>" + diagnostics + "</ul>"
+            if diagnostics
+            else ""
+        )
     )
 
 
@@ -852,6 +880,10 @@ def render_geometry(root: Path, directory: Path, calculation):
         ]
         viewer_data["cutting_groups"] = assembly_viewer.get("cutting_groups", [])
         viewer_data["drawers"] = assembly_viewer.get("drawers", [])
+        viewer_data["instances"] = assembly_viewer.get("instances", [])
+        viewer_data["cabinets"] = assembly_viewer.get(
+            "cabinets", calculation.result.get("cabinets", [])
+        )
     generated = visualize_assembly(
         assembly,
         geometry,

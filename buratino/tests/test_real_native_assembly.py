@@ -37,6 +37,20 @@ def test_real_native_report_has_cabinet_and_drawer_summaries(root):
     assert all(item["part_ids"] for item in result["drawers"])
     assert result["manufacturing_ready"] is False
     snapshot = native_snapshot(project)
+    assert snapshot["project"]["input_schema_version"] == 2
+    assert snapshot["project"]["layout"]["type"] == "Stack"
+    assert snapshot["project"]["layout"]["size_x"] == {
+        "type": "Fixed",
+        "mm": 1440,
+    }
+    assert snapshot["project"]["layout"]["size_z"] == {
+        "type": "Fixed",
+        "mm": 2234,
+    }
+    assert snapshot["project"]["layout"]["children"][1]["size_x"] == {
+        "type": "Fixed",
+        "mm": 1440,
+    }
     selected_keys = {
         key for key in snapshot["hardware_profiles"] if key.startswith("buratino_")
     }
