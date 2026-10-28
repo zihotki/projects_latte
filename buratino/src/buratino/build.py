@@ -159,6 +159,22 @@ def _drawer_summary(result: dict) -> str:
     )
     parts = sum(len(drawer.get("part_ids", [])) for drawer in drawers)
     panel_count = sum(part.get("quantity", 1) for part in result["parts"])
+    if any("face_mm" not in drawer for drawer in drawers):
+        rows = []
+        for drawer in drawers:
+            box = drawer.get("box_mm", {})
+            rows.append(
+                f"<li>{html.escape(drawer.get('instance_id', 'Drawer'))}: "
+                f"box {box.get('width', 0):g} × {box.get('depth', 0):g} × "
+                f"{box.get('height', 0):g} mm.</li>"
+            )
+        panel_count = sum(part.get("quantity", 1) for part in result["parts"])
+        return (
+            f"<p>{len(drawers)} drawer boxes with {panel_count} total physical "
+            f"parts. The preview uses a {html.escape(pose)} display pose. "
+            "This pose does not change exported coordinates.</p>"
+            "<h2>Drawer layout</h2><ul>" + "".join(rows) + "</ul>"
+        )
     return (
         f"<p>{len(drawers)} drawer instances with {parts} physical drawer parts. "
         f"The cut list retains {panel_count} total physical panels. "
@@ -184,6 +200,60 @@ def _drawer_summary(result: dict) -> str:
             ).items()
         )
         + "</ul>"
+    )
+
+
+def _space_model_summary(result: dict) -> str:
+    model = result.get("space_model")
+    if not model:
+        return ""
+    rows = []
+    for space in model.get("spaces", []):
+        size = space["size"]
+        origin = space["origin"]
+        rows.append(
+            f"<li>{html.escape(space['id'])}: {size[0]:g} wide × "
+            f"{size[1]:g} deep × {size[2]:g} high mm; "
+            f"origin {origin[0]:g}, {origin[1]:g}, {origin[2]:g} mm.</li>"
+        )
+    allowances = "".join(
+        f"<li>{html.escape(item['owner'])}: {item['size'][0]:g} × "
+        f"{item['size'][1]:g} × {item['size'][2]:g} mm at "
+        f"{html.escape(item['edge'])} edge.</li>"
+        for item in model.get("allowances", [])
+    )
+    fronts = "".join(
+        f"<li>{html.escape(front.get('id', front.get('name', 'Front')))}: "
+        f"{html.escape(front.get('type', 'front'))}.</li>"
+        for front in model.get("fronts", [])
+    )
+    return (
+        "<h2>Resolved spaces</h2><ul>"
+        + "".join(rows)
+        + "</ul>"
+        + ("<h2>Allowance</h2><ul>" + allowances + "</ul>" if allowances else "")
+        + ("<h2>Fronts</h2><ul>" + fronts + "</ul>" if fronts else "")
+    )
+
+
+def _physical_validation_summary(result: dict) -> str:
+    validation = result.get("physical_validation")
+    if not validation:
+        return ""
+    diagnostics = "".join(
+        "<li>"
+        + html.escape(item.get("code", "physical_validation"))
+        + ": "
+        + html.escape(", ".join(item.get("part_ids", [])) or "No part IDs")
+        + "</li>"
+        for item in validation.get("diagnostics", [])
+    )
+    details = f"<ul>{diagnostics}</ul>" if diagnostics else "<p>No CAD diagnostics.</p>"
+    return (
+        "<h2>Physical validation</h2><p>Status: "
+        + html.escape(validation.get("status", "unknown"))
+        + "</p>"
+        + details
     )
 
 
@@ -500,13 +570,30 @@ def render_documents(
     )
     part_codes = {part["id"]: code for code, members in groups for part in members}
     parts_by_id = {part["id"]: part for part in result["parts"]}
-    cut_groups = [
-        (
-            ", ".join(sorted({part_codes[ident] for ident in group["members"]})),
-            [parts_by_id[ident] for ident in group["members"]],
-        )
-        for group in group_cutting_blanks(result["parts"])
-    ]
+    if result.get("space_model"):
+        cut_groups = [
+            (
+                ", ".join(
+                    sorted(
+                        {
+                            part_codes[ident]
+                            for ident in group["members"]
+                            if ident in part_codes
+                        }
+                    )
+                ),
+                [parts_by_id[ident] for ident in group["members"]],
+            )
+            for group in result["cutting_groups"]
+        ]
+    else:
+        cut_groups = [
+            (
+                ", ".join(sorted({part_codes[ident] for ident in group["members"]})),
+                [parts_by_id[ident] for ident in group["members"]],
+            )
+            for group in group_cutting_blanks(result["parts"])
+        ]
     cut_groups.sort(key=lambda group: (group[1][0]["material"].casefold(), group[0]))
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer)
@@ -540,7 +627,7 @@ def render_documents(
             ]
         )
     (directory / "parts.csv").write_text(buffer.getvalue(), encoding="utf-8")
-    if result.get("assembly"):
+    if result.get("assembly") and not result.get("space_model"):
         buffer = io.StringIO(newline="")
         fields = (
             "id",
@@ -590,6 +677,8 @@ def render_documents(
         f"<p>{dimension_label}: {dims['width']:g} wide × {dims['height']:g} high × "
         f"{dims['depth']:g} deep, mm.</p>"
         + _drawer_summary(result)
+        + _space_model_summary(result)
+        + _physical_validation_summary(result)
         + (
             '<p><a href="preview.html">Inspect 3D model</a> · '
             '<a href="parts.csv">Draft cut list</a> · '
@@ -612,7 +701,20 @@ def render_documents(
         )
         + f"</ul><p>Input identity: <code>{result['input_identity']}</code></p>"
     )
-    if result.get("assembly"):
+    if result.get("space_model"):
+        content = (
+            f"<p>Carcass dimensions: {dims['width']:g} × {dims['height']:g} × "
+            f"{dims['depth']:g} mm.</p>"
+            + _space_model_summary(result)
+            + _physical_validation_summary(result)
+            + '<p><a href="preview.html">Inspect 3D model</a> · '
+            '<a href="parts.csv">Draft cut list</a> · '
+            '<a href="result.json">Calculation JSON</a></p>'
+            + _table(cut_groups, part_codes)
+            + "<h2>Selected hardware</h2>"
+            + _hardware_table(result, part_codes, diagnostics=False)
+        )
+    elif result.get("assembly"):
         operations = []
         for part in result["assembly"]["parts"]:
             for operation in part["operations"]:
@@ -738,6 +840,8 @@ def render_geometry(root: Path, directory: Path, calculation):
     assembly_viewer = calculation.result.get("assembly", {}).get("viewer")
     if assembly_viewer:
         metadata = assembly_viewer.get("parts", {})
+        if isinstance(metadata, list):
+            metadata = {part["id"]: part for part in metadata}
         viewer_data["parts"] = [
             {
                 **part,
@@ -839,6 +943,13 @@ def build_project(root: Path, path: Path) -> dict:
             if source_dir.is_dir():
                 shutil.copytree(source_dir, snapshots / directory)
         assembly = render_geometry(root, stage, calculation)
+        if calculation.space_model is not None:
+            from cabineteer.space_adapter import validate_model
+
+            calculation.result["physical_validation"] = validate_model(
+                calculation.space_model, shapes=calculation.space_shapes
+            )
+            write_json(stage / "result.json", calculation.result)
         if input_identity(path) != project.identity:
             raise InputError(
                 "inputs_changed", "Inputs changed during the build; rebuild."
@@ -852,7 +963,10 @@ def build_project(root: Path, path: Path) -> dict:
         render_documents(
             stage,
             calculation.result,
-            None if calculation.native_assembly is not None else calculation.configs,
+            None
+            if calculation.native_assembly is not None
+            or calculation.space_model is not None
+            else calculation.configs,
             views,
             groups,
         )
@@ -891,6 +1005,7 @@ def build_project(root: Path, path: Path) -> dict:
             "input_identity": project.identity,
             "directory": str(published),
             "checks": calculation.result["checks"],
+            "physical_validation": calculation.result.get("physical_validation"),
         }
     except Exception as exc:
         failed = builds / f"failed-{revision}"

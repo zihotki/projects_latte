@@ -267,6 +267,41 @@ def native_snapshot(
             return [plain(item) for item in value]
         return value
 
+    if project.native_project.space_model is not None:
+        from cabineteer.hardware import get_slide
+        from cabineteer.project import project_to_dict
+        from cabineteer.spaces import Door
+
+        model = project.native_project.resolved_space_model()
+        selected = sorted(
+            {item["slide_key"] for item in model.contents if item.get("slide_key")}
+        )
+        hinge_keys = sorted(
+            {
+                item.hinge_key
+                for item in project.native_project.space_model.fronts
+                if isinstance(item, Door)
+            }
+        )
+        return {
+            "project": plain(project_to_dict(project.native_project)),
+            "resolved_space_model": plain(model.to_dict()),
+            "drawer_configs": {},
+            "built_drawer_configs": {},
+            "hardware_profiles": {
+                key: {"native_slide_spec": plain(get_slide(key))} for key in selected
+            },
+            "selected_hinge_keys": hinge_keys,
+            "cabinet_hardware_profiles": {
+                project.native_project.name: {
+                    "slide_key": selected[0],
+                    "slide_keys": selected,
+                }
+            }
+            if selected
+            else {},
+        }
+
     configs = (
         built_drawer_configs
         if built_drawer_configs is not None

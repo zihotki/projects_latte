@@ -25,6 +25,12 @@ two frames, and one four-section upper carcass with shared dividers. Its nine
 drawers, seven adjustable shelves, roof, fronts, and cut list come from one
 resolved assembly. Both projects remain draft designs.
 The bare inclined example uses `projects/inclined-cabinet`.
+The declarative space examples use `projects/spaces-fixed-drawers`,
+`projects/spaces-fixed-open`, and `projects/spaces-covered-drawers`. Each exports
+a native `CabinetProject` with a `SpaceModelSpec`. Cabineteer resolves clear
+spaces, drawer boxes, fronts, stock records, and viewer metadata. Buratino uses
+those records for its report and cut list, then materializes the same part plan
+for the GLB preview. Build and preview them with the same commands above.
 Open the loopback URL printed by `preview`. Each page shows one captured build.
 After a new build, refresh the page to load it; the server can stay running.
 Rotate or zoom the model, or choose a standard view. Drawer controls

@@ -28,6 +28,8 @@ class Calculation:
     result: dict
     drawer_instances: list
     native_assembly: object = None
+    space_model: object = None
+    space_shapes: dict | None = None
 
 
 def _slug(value: str) -> str:
@@ -434,8 +436,98 @@ def _calculate_native_assembly(project: ProjectInputs) -> Calculation:
     return Calculation([], result, [], native)
 
 
+def _calculate_space_model(project: ProjectInputs) -> Calculation:
+    """Format native resolved space records for Buratino reports and cut lists."""
+    from cabineteer.space_adapter import space_model_records
+    from cabineteer.spaces import Door
+
+    model = project.native_project.resolved_space_model()
+    records = space_model_records(model)
+    carcass = project.native_project.space_model.carcass
+    parts = []
+    for source in records["parts"]:
+        part = dict(source)
+        stock = part.get("stock_mm") or part.get("stock")
+        if isinstance(stock, dict) and {"length", "width", "thickness"} <= set(stock):
+            part["finished_mm"] = dict(stock)
+            part["blank_mm"] = dict(stock)
+        part.setdefault("scene_name", part.get("role", part["id"]))
+        part.setdefault("grain_direction", "unknown")
+        part.setdefault("grain_status", "unverified")
+        part.setdefault("edge_treatment", "unverified")
+        parts.append(part)
+
+    contents = model.contents
+    hardware = []
+    slide_counts: dict[str, int] = {}
+    for content in contents:
+        key = content.get("slide_key")
+        if key:
+            slide_counts[key] = slide_counts.get(key, 0) + 2
+    hardware.extend(
+        {"type": "drawer_runner", "slide_key": key, "quantity": count}
+        for key, count in sorted(slide_counts.items())
+    )
+    hardware.extend(
+        {
+            "type": "concealed_door_hinge",
+            "name": front.hinge_key,
+            "quantity": None,
+        }
+        for front in project.native_project.space_model.fronts
+        if isinstance(front, Door)
+    )
+    drawer_records = records["viewer"].get("drawers", [])
+    dimensions = {
+        "width": carcass.width,
+        "height": carcass.height,
+        "depth": carcass.depth,
+    }
+    result = {
+        "schema_version": 2,
+        "name": project.native_project.name,
+        "input_identity": project.identity,
+        "status": "draft",
+        "validation_status": "blocked",
+        "manufacturing_ready": False,
+        "dimensions_mm": dimensions,
+        "overall_dimensions_mm": dimensions,
+        "variables": project.variables,
+        "calculated": project.calculated,
+        "cabinets": records["viewer"].get("cabinets", []),
+        "frames": [],
+        "upper_cabinets": [],
+        "parts": parts,
+        "drawers": drawer_records,
+        "joints": [],
+        "hardware": hardware,
+        "checks": [
+            {
+                "severity": "unknown",
+                "code": "space_model.unverified",
+                "message": (
+                    "Hardware, joinery, support and installation remain unverified."
+                ),
+            }
+        ],
+        "explanations": {
+            "assembly": "Native resolved space model and physical part plan."
+        },
+        "assembly": {
+            "contacts": records["contacts"],
+            "viewer": records["viewer"],
+            "space_model": model.to_dict(),
+        },
+        "space_model": model.to_dict(),
+        "cutting_groups": records["viewer"].get("cutting_groups", []),
+    }
+    return Calculation([], result, [], None, model)
+
+
 def calculate(project: ProjectInputs) -> Calculation:
     """Resolve native project configs into draft parts, checks, and placements."""
+    if project.native_project.space_model is not None:
+        return _calculate_space_model(project)
     if (
         project.native_project.layout is not None
         or project.native_project.profile_assembly is not None
@@ -1661,6 +1753,31 @@ def make_geometry(calculation: Calculation):
     from cabineteer.drawer import make_drawer_face
 
     assembly = cq.Assembly(name="base_cabinet")
+    if calculation.space_model is not None:
+        from cabineteer.space_adapter import materialize_model
+
+        shapes = materialize_model(calculation.space_model)
+        calculation.space_shapes = shapes
+        geometry = []
+        for part in calculation.result["parts"]:
+            ident = part["id"]
+            assembly.add(
+                shapes[ident],
+                name=part["role"],
+                color=cq.Color(0.91, 0.92, 0.90, 1),
+            )
+            from cabineteer.cabinet import PartInfo
+
+            thickness = part.get("stock_mm", {}).get("thickness", 0)
+            geometry.append(
+                PartInfo(
+                    name=part["role"],
+                    shape=shapes[ident],
+                    material_thickness=thickness,
+                    grain_direction="unknown",
+                )
+            )
+        return assembly, geometry
     if calculation.native_assembly is not None:
         for part in calculation.native_assembly.parts:
             assembly.add(part.solid(), name=part.id)

@@ -1,6 +1,6 @@
 # Buratino
 
-- [README](README.md) covers the project and CLI: `./buratino/bin/buratino`.
-- Cabineteer source is in [`vendor/cabineteer`](vendor/cabineteer). It supports cabinet layouts, frames, shared inclined cabinets, doors, drawers, and adjustable shelves.
-- Current full native assembly: [`projects/real-assembly-native`](projects/real-assembly-native); earlier reference: [`projects/real-assembly`](projects/real-assembly).
-- Smaller profile examples: [`projects/profile-row-sloped`](projects/profile-row-sloped) and [`projects/profile-row-transition`](projects/profile-row-transition).
+- The CLI is `./buratino/bin/buratino`; project and command details are in [README](README.md).
+- Buratino source is in `src/buratino`; editable Cabineteer source is in `vendor/cabineteer`.
+- Native space inputs use `CabinetProject`, `SpaceModelSpec`, and the data types in `cabineteer.spaces`.
+- Space examples are in `projects/spaces-fixed-drawers`, `projects/spaces-fixed-open`, and `projects/spaces-covered-drawers`.
