@@ -169,3 +169,20 @@ def test_space_project_wall_fit(wall, severity, passed):
     }))[0].text)
     assert result["project_issues"] == issues
     assert result["summary"]["pass"] is passed
+
+
+def test_validation_reuses_complete_shapes(monkeypatch):
+    pytest.importorskip("cadquery")
+    from cabineteer import space_adapter
+    model = project().resolved_space_model()
+    shapes = materialize_model(model)
+    shapes["/carcass/top"] = shapes["/carcass/top"].translate((1000, 0, 0))
+    def unexpected(_model):
+        raise AssertionError("materialization repeated")
+    monkeypatch.setattr(space_adapter, "materialize_model", unexpected)
+    result = validate_model(model, shapes=shapes)
+    assert result["status"] == "failed"
+    assert any(d["code"] == "missing_contact" and "/carcass/top" in d["part_ids"] for d in result["diagnostics"])
+    shapes.pop("/carcass/top")
+    with pytest.raises(ValueError, match="shape IDs"):
+        validate_model(model, shapes=shapes)

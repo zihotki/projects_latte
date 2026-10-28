@@ -81,12 +81,19 @@ def materialize_model(model: ResolvedModel) -> dict:
     return shapes
 
 
-def validate_model(model: ResolvedModel, tolerance: float = 1e-5) -> dict:
-    """Check materialized shapes, declared contacts and solid intersections."""
-    try:
-        shapes = materialize_model(model)
-    except ImportError:
-        return {"status": "unavailable", "diagnostics": []}
+def validate_model(model: ResolvedModel, tolerance: float = 1e-5, shapes: dict | None = None) -> dict:
+    """Check shapes, declared contacts and solid intersections without changing the model.
+
+    Callers that already materialized the model may supply the complete shape map.
+    """
+    if shapes is None:
+        try:
+            shapes = materialize_model(model)
+        except ImportError:
+            return {"status": "unavailable", "diagnostics": []}
+    expected = {part["id"] for part in model.part_plan.parts}
+    if set(shapes) != expected:
+        raise ValueError("shape IDs must match the complete physical part plan")
     diagnostics = []
     for ident, shape in shapes.items():
         if not shape.val().isValid():
