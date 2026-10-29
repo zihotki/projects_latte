@@ -20,12 +20,14 @@ def test_machined_space_report_uses_resolved_records_and_keeps_stock_as_blank(ro
     )
     machined = [part for part in result["parts"] if part["operations"]]
     operation_types = {
-        operation["type"]
-        for part in machined
-        for operation in part["operations"]
+        operation["type"] for part in machined for operation in part["operations"]
     }
     assert operation_types == {
-        "pocket", "rabbet", "bevel", "bore", "mortise",
+        "pocket",
+        "rabbet",
+        "bevel",
+        "bore",
+        "mortise",
     }
     assert all(part["blank_mm"] == part["stock_mm"] for part in machined)
     assert all("finished_mm" not in part for part in machined)
@@ -38,16 +40,19 @@ def test_machined_space_report_uses_resolved_records_and_keeps_stock_as_blank(ro
     side_id = "/cabinet/carcass/side_left"
     back_id = "/cabinet/carcass/back"
     assert bores["user/side-edge-bore"]["face"] == "y-"
-    assert bores["user/side-edge-bore"]["face"][0] != "xyz"[
-        resolved[side_id]["stock"]["thickness_axis"]
-    ]
-    assert bores["user/back-face-bore"]["face"][0] == "xyz"[
-        resolved[back_id]["stock"]["thickness_axis"]
-    ]
+    assert (
+        bores["user/side-edge-bore"]["face"][0]
+        != "xyz"[resolved[side_id]["stock"]["thickness_axis"]]
+    )
+    assert (
+        bores["user/back-face-bore"]["face"][0]
+        == "xyz"[resolved[back_id]["stock"]["thickness_axis"]]
+    )
     assert bores["user/side-edge-bore"]["depth"] == 10
     assert bores["user/back-face-bore"]["depth"] == 6
     assert all(
-        part["local_datum"] == {
+        part["local_datum"]
+        == {
             "origin": "unmachined_stock_min_xyz",
             "face_uv": "remaining_axes_ascending_xyz",
             "depth": "inward_from_selected_face",
@@ -80,9 +85,9 @@ def test_cutting_groups_keep_parts_with_different_cuts_apart():
 
     assert len(groups) == 2
     assert {tuple(group["members"]) for group in groups} == {
-        ("/part-a",), ("/part-b",),
+        ("/part-a",),
+        ("/part-b",),
     }
     assert all(
-        group["grouping_scope"] == "cutting_blank_and_machining"
-        for group in groups
+        group["grouping_scope"] == "cutting_blank_and_machining" for group in groups
     )

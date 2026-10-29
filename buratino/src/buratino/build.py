@@ -274,8 +274,16 @@ def _space_operations_table(parts: list[dict]) -> str:
                 for key, value in operation.items()
                 if key
                 not in {
-                    "id", "part_id", "type", "source", "face", "edge",
-                    "joint_id", "joint_side", "role", "axis",
+                    "id",
+                    "part_id",
+                    "type",
+                    "source",
+                    "face",
+                    "edge",
+                    "joint_id",
+                    "joint_side",
+                    "role",
+                    "axis",
                 }
                 and isinstance(value, int | float)
                 and not isinstance(value, bool)
@@ -312,9 +320,7 @@ def _space_operations_table(parts: list[dict]) -> str:
         "Depth runs inward from the selected face. Dimensions are mm.</p>"
         "<table><thead><tr><th>Part</th><th>Record ID</th><th>Type</th>"
         "<th>Source</th><th>Face, edge, or axis</th><th>Dimensions</th>"
-        "<th>Joint pair</th></tr></thead><tbody>"
-        + "".join(rows)
-        + "</tbody></table>"
+        "<th>Joint pair</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
     )
 
 
