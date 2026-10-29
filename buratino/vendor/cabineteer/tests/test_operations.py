@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 
 from cabineteer.operations import (
     Bevel,
@@ -17,6 +18,7 @@ from cabineteer.project import (
     project_to_dict,
 )
 from cabineteer.spaces import Carcass, Space
+from cabineteer.server import list_tools
 
 
 def part(name, origin, size):
@@ -111,3 +113,59 @@ def test_project_round_trip_and_resolves_updated_operations():
     )
     with pytest.raises(ValueError, match="Space project"):
         CabinetProject("bad", operations=project.operations)
+
+
+def test_validation_errors_identify_input_part_and_field():
+    parts = [
+        part("/a", [0, 0, 0], [20, 100, 100]),
+        part("/b", [20, 0, 0], [20, 100, 100]),
+    ]
+    with pytest.raises(ValueError, match=r"user cut1 part /a: depth:"):
+        resolve_operations(parts, [Pocket("cut1", "/a", "x-", 0, 0, 1, 1, -1)], [])
+    with pytest.raises(ValueError, match=r"user cut2 part /a: face:"):
+        resolve_operations(parts, [Bore("cut2", "/a", "bad", 50, 50, 8, 5)], [])
+    with pytest.raises(ValueError, match=r"joint joint1 part /a: depth_a:"):
+        resolve_operations(
+            parts,
+            [],
+            [
+                DominoJoint(
+                    "joint1", "/a", "x+", "/b", "x-", (20, 50, 50), "y", 30, 8, -1, 10
+                )
+            ],
+        )
+    with pytest.raises(ValueError, match=r"joint joint2 part /b face_b:"):
+        resolve_operations(
+            parts,
+            [],
+            [
+                DominoJoint(
+                    "joint2", "/a", "x+", "/b", "bad", (20, 50, 50), "y", 30, 8, 10, 10
+                )
+            ],
+        )
+
+
+def test_mcp_schemas_expose_all_tagged_inputs_and_fields():
+    tools = {tool.name: tool.input_schema for tool in asyncio.get_event_loop().run_until_complete(list_tools())}
+    for name in ("design_project", "update_project"):
+        props = tools[name]["properties"]
+        operations = props["operations"]["items"]["oneOf"]
+        assert {item["properties"]["type"]["enum"][0] for item in operations} == {
+            "Pocket",
+            "Rabbet",
+            "Bevel",
+            "Bore",
+            "Mortise",
+        }
+        for item in operations:
+            assert set(item["required"]) == set(item["properties"])
+            assert item["additionalProperties"] is False
+        joint = props["joints"]["items"]["oneOf"][0]
+        assert joint["properties"]["type"]["enum"] == ["DominoJoint"]
+        assert set(joint["required"]) == set(joint["properties"])
+        assert (
+            joint["properties"]["centre"]["minItems"]
+            == joint["properties"]["centre"]["maxItems"]
+            == 3
+        )

@@ -110,7 +110,10 @@ def _validate(part, op):
     if transform["axes"] != [[1, 0, 0], [0, 1, 0], [0, 0, 1]]:
         raise ValueError(f"{part['id']}: unsupported transform")
     dims = part["profile"]["size"]
-    n = _face(op.face)
+    try:
+        n = _face(op.face)
+    except ValueError as exc:
+        raise ValueError(f"face: {exc}") from exc
     uv = [i for i in range(3) if i != n]
     for name in (
         "depth",
@@ -148,7 +151,10 @@ def _validate(part, op):
             op.v - dv / 2, dv, dims[uv[1]]
         )
     else:
-        e = _face(op.edge)
+        try:
+            e = _face(op.edge)
+        except ValueError as exc:
+            raise ValueError(f"edge: {exc}") from exc
         if e == n:
             raise ValueError(f"{op.id}: edge must be adjacent to face")
         along = next(i for i in range(3) if i not in (n, e))
@@ -173,7 +179,13 @@ def resolve_operations(parts, operations, joints):
         part = by_id.get(op.part_id)
         if part is None:
             raise ValueError(f"{op.id}: unknown part {op.part_id!r}")
-        _validate(part, op)
+        try:
+            _validate(part, op)
+        except ValueError as exc:
+            detail = str(exc)
+            if source == "joint" and detail.startswith("depth:"):
+                detail = f"depth_{extra['joint_side']}:" + detail[len("depth:") :]
+            raise ValueError(f"{source} {op.id} part {op.part_id}: {detail}") from exc
         data = asdict(op)
         data.update(id=ident, type=type(op).__name__.lower(), source=source, **extra)
         result.append(data)
@@ -216,7 +228,18 @@ def resolve_operations(parts, operations, joints):
             for x in item.centre
         ):
             raise ValueError(f"{item.id}: invalid centre")
-        na, nb = _face(item.face_a), _face(item.face_b)
+        try:
+            na = _face(item.face_a)
+        except ValueError as exc:
+            raise ValueError(
+                f"joint {item.id} part {item.part_a} face_a: {exc}"
+            ) from exc
+        try:
+            nb = _face(item.face_b)
+        except ValueError as exc:
+            raise ValueError(
+                f"joint {item.id} part {item.part_b} face_b: {exc}"
+            ) from exc
         if na != nb or item.face_a[1] == item.face_b[1] or item.axis == item.face_a[0]:
             raise ValueError(f"{item.id}: incompatible joint faces or axis")
         for side in ("a", "b"):

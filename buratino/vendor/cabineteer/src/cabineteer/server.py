@@ -375,6 +375,42 @@ def _worktop_schema() -> dict:
 # Tool: list_hardware
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _machining_schema(*, joints: bool = False, nullable: bool = False) -> dict:
+    """Describe the same tagged inputs accepted by the project decoder."""
+    face = {"type": "string", "enum": ["x-", "x+", "y-", "y+", "z-", "z+"]}
+    text = {"type": "string", "minLength": 1}
+    positive = {"type": "number", "exclusiveMinimum": 0}
+    position = {"type": "number", "minimum": 0}
+    fields = {
+        "id": {"type": "string", "minLength": 1, "pattern": "^[^/]+$"},
+        "part_id": text, "part_a": text, "part_b": text,
+        "face": face, "edge": face, "face_a": face, "face_b": face,
+        "u": position, "v": position, "start": position,
+        "size_u": positive, "size_v": positive, "depth": positive,
+        "length": positive, "width": positive, "diameter": positive,
+        "leg_a": positive, "leg_b": positive, "depth_a": positive, "depth_b": positive,
+        "centre": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+    }
+    definitions = {
+        "Pocket": "id part_id face u v size_u size_v depth",
+        "Rabbet": "id part_id face edge start length width depth",
+        "Bevel": "id part_id face edge start length leg_a leg_b",
+        "Bore": "id part_id face u v diameter depth",
+        "Mortise": "id part_id face u v axis length width depth",
+        "DominoJoint": "id part_a face_a part_b face_b centre axis length width depth_a depth_b",
+    }
+    choices = ["DominoJoint"] if joints else ["Pocket", "Rabbet", "Bevel", "Bore", "Mortise"]
+    alternatives = []
+    for name in choices:
+        names = definitions[name].split()
+        props = {key: fields[key] for key in names if key != "axis"}
+        props["type"] = {"type": "string", "enum": [name]}
+        if "axis" in names:
+            props["axis"] = {"type": "string", "enum": ["x", "y", "z"] if joints else ["u", "v"]}
+        alternatives.append({"type": "object", "properties": props, "required": ["type", *names], "additionalProperties": False})
+    return {"type": ["array", "null"] if nullable else "array", "items": {"oneOf": alternatives}}
+
+
 async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
@@ -2979,8 +3015,8 @@ async def list_tools() -> list[types.Tool]:
                     "space_model": {"type": "object", "description": "Tagged standalone carcass, root and fronts."},
                     "space_cabinets": {"type": "array", "items": {"type": "object"}},
                     "space_modules": {"type": "array", "items": {"type": "object"}},
-                    "operations": {"type": "array", "items": {"type": "object"}},
-                    "joints": {"type": "array", "items": {"type": "object"}},
+                    "operations": _machining_schema(),
+                    "joints": _machining_schema(joints=True),
                     "worktop": _worktop_schema(),
                     "layout": {"type": "object", "description": "Native row/stack layout."},
                     "profile_assembly": {"type": "object", "description": "Native roof, frame, box and face inputs."},
@@ -3026,8 +3062,8 @@ async def list_tools() -> list[types.Tool]:
                     "space_model": {"type": ["object", "null"]},
                     "space_cabinets": {"type": ["array", "null"], "items": {"type": "object"}},
                     "space_modules": {"type": ["array", "null"], "items": {"type": "object"}},
-                    "operations": {"type": ["array", "null"], "items": {"type": "object"}},
-                    "joints": {"type": ["array", "null"], "items": {"type": "object"}},
+                    "operations": _machining_schema(nullable=True),
+                    "joints": _machining_schema(joints=True, nullable=True),
                     "layout": {"type": ["object", "null"]},
                     "profile_assembly": {"type": ["object", "null"]},
                     "notes": {"type": "string"},
