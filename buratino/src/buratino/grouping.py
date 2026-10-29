@@ -4,8 +4,8 @@ import hashlib
 import json
 
 
-def _signature(part: dict) -> tuple:
-    dims = part.get("blank_mm") or part.get("finished_mm", {})
+def machining_signature(part: dict) -> str:
+    """Return the canonical cut plan without per-part identity fields."""
     machining = [
         {
             key: value
@@ -14,12 +14,21 @@ def _signature(part: dict) -> tuple:
         }
         for operation in part.get("operations", [])
     ]
+    return json.dumps(
+        sorted(machining, key=lambda operation: json.dumps(operation, sort_keys=True)),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _signature(part: dict) -> tuple:
+    dims = part.get("blank_mm") or part.get("finished_mm", {})
     return (
         dims["length"],
         dims["width"],
         dims["thickness"],
         part["material"],
-        json.dumps(machining, sort_keys=True, separators=(",", ":")),
+        machining_signature(part),
     )
 
 

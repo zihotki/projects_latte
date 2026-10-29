@@ -3,6 +3,8 @@
 import json
 import math
 
+from .grouping import machining_signature
+
 
 def _projected_geometry(shape, direction):
     """Use the same projected edges and bounds as CadQuery's SVG exporter."""
@@ -285,21 +287,25 @@ def panel_groups(
             identity = component
         else:
             identity = None
-        processing = (identity, tuple(sorted(assigned))) + tuple(
-            part.get(key)
-            for key in (
-                "material",
-                "edge_treatment",
-                "grain_direction",
-                "grain_status",
-                "grain_axis_local",
-                "surface_normal_axis_local",
-                "finished_mm",
-                "blank_mm",
-                "profile",
-                "machining_assumptions",
-                "rear_clearance_mm",
+        processing = (
+            (identity, tuple(sorted(assigned)))
+            + tuple(
+                part.get(key)
+                for key in (
+                    "material",
+                    "edge_treatment",
+                    "grain_direction",
+                    "grain_status",
+                    "grain_axis_local",
+                    "surface_normal_axis_local",
+                    "finished_mm",
+                    "blank_mm",
+                    "profile",
+                    "machining_assumptions",
+                    "rear_clearance_mm",
+                )
             )
+            + (machining_signature(part),)
         )
         for index, (other, other_dimensions, other_processing) in enumerate(
             representatives

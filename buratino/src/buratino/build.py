@@ -685,35 +685,46 @@ def render_documents(
     cut_groups.sort(key=lambda group: (group[1][0]["material"].casefold(), group[0]))
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer)
-    writer.writerow(
-        [
-            "status",
-            "part_code",
-            "quantity",
-            "max_blank_length_mm",
-            "max_blank_width_mm",
-            "blank_thickness_mm",
-            "material",
-            "grain_direction",
-            "grain_status",
-        ]
-    )
+    fields = [
+        "status",
+        "part_code",
+        "quantity",
+        "max_blank_length_mm",
+        "max_blank_width_mm",
+        "blank_thickness_mm",
+        "material",
+        "grain_direction",
+        "grain_status",
+    ]
+    if result.get("space_model"):
+        fields.extend(("part_ids", "operation_record_ids"))
+    writer.writerow(fields)
     for code, members in cut_groups:
         part = members[0]
         blank = part.get("blank_mm") or part.get("finished_mm", {})
-        writer.writerow(
-            [
-                "DRAFT_NOT_FOR_MANUFACTURING",
-                code,
-                sum(member.get("quantity", 1) for member in members),
-                blank["length"],
-                blank["width"],
-                blank["thickness"],
-                part["material"],
-                _grain_values(members, "grain_direction", part_codes),
-                _grain_values(members, "grain_status", part_codes),
-            ]
-        )
+        row = [
+            "DRAFT_NOT_FOR_MANUFACTURING",
+            code,
+            sum(member.get("quantity", 1) for member in members),
+            blank["length"],
+            blank["width"],
+            blank["thickness"],
+            part["material"],
+            _grain_values(members, "grain_direction", part_codes),
+            _grain_values(members, "grain_status", part_codes),
+        ]
+        if result.get("space_model"):
+            row.extend(
+                (
+                    ", ".join(member["id"] for member in members),
+                    ", ".join(
+                        operation["id"]
+                        for member in members
+                        for operation in member.get("operations", [])
+                    ),
+                )
+            )
+        writer.writerow(row)
     (directory / "parts.csv").write_text(buffer.getvalue(), encoding="utf-8")
     if result.get("assembly") and not result.get("space_model"):
         buffer = io.StringIO(newline="")
@@ -943,7 +954,9 @@ def render_geometry(root: Path, directory: Path, calculation):
             }
             for part in calculation.result.get("parts", [])
         ]
-        viewer_data["cutting_groups"] = assembly_viewer.get("cutting_groups", [])
+        viewer_data["cutting_groups"] = calculation.result.get(
+            "cutting_groups", assembly_viewer.get("cutting_groups", [])
+        )
         viewer_data["drawers"] = assembly_viewer.get("drawers", [])
         viewer_data["instances"] = assembly_viewer.get("instances", [])
         viewer_data["cabinets"] = assembly_viewer.get(
