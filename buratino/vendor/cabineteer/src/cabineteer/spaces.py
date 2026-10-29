@@ -14,6 +14,7 @@ from .drawer import DEFAULT_VERTICAL_GAP, DrawerConfig, drawer_part_offsets
 from .door import DoorConfig
 from .hardware import OverlayType, get_slide
 from .joinery import DrawerJoineryStyle
+from .operations import drawer_pockets
 
 
 from .allocation import Fixed, Fr, Natural, allocate_tracks
@@ -298,8 +299,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
                     p = tuple(a+b for a,b in zip(box_origin, offsets[name]))
                     part(cid+"/"+name, "drawer_"+name, p, sz, box.bottom_material if name == "bottom" else box.material, d.bottom_thickness if name == "bottom" else (d.side_thickness if name.startswith("side") else d.front_back_thickness), 2 if name == "bottom" else (0 if name.startswith("side") else 1), owner=cid, motion_group=cid)
                     if name != "bottom":
-                        parts[-1]["operations"].append(dict(type="bottom_dado", inset=d.bottom_dado_inset, depth=d.bottom_dado_depth, width=d.bottom_thickness, side=name))
-                        parts[-1]["operations"].append(dict(type="drawer_corner", style=box.joinery_style, side=name, parameters=asdict(d.joinery) | {"style": box.joinery_style}))
+                        parts[-1]["operations"] = drawer_pockets(parts[-1]["id"], name, sz, d.bottom_dado_inset, d.bottom_thickness, d.bottom_dado_depth, d.joinery)
                 for wall in ("side_L", "side_R", "sub_front", "back"):
                     contact(cid + "/bottom", cid + "/" + wall, "bottom_groove")
                 for side_name in ("side_L", "side_R"):

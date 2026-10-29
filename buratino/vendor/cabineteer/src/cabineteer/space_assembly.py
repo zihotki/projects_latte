@@ -347,6 +347,9 @@ def resolve_space_assembly(project):
                 item["bounds"] = [[a+b for a,b in zip(point, offset)] for point in item["bounds"]]
             if "transform" in item:
                 item["transform"]["translation"] = [a+b for a,b in zip(item["transform"]["translation"], offset)]
+            for op in item.get("operations", []):
+                op["part_id"] = qualify(op["part_id"])
+                op["id"] = f"drawer/{op['part_id']}/{op['role']}"
             if "coverage" in item:
                 item["coverage"] = [item["coverage"][0]+offset[0], item["coverage"][1]+offset[0], item["coverage"][2]+offset[2], item["coverage"][3]+offset[2]]
             if "boundary_policy" in item:
@@ -518,9 +521,15 @@ def resolve_space_assembly(project):
     for contact in contacts:
         signature = "\0".join((contact["part_a"], contact["part_b"], contact["type"]))
         contact["id"] = "contact-" + hashlib.sha256(signature.encode()).hexdigest()[:16]
+    from .operations import resolve_operations
+    operations, joints = getattr(project, "operations", ()), getattr(project, "joints", ())
+    for op in resolve_operations(parts, operations, joints):
+        by_id[op["part_id"]]["operations"].append(op)
+    for part in parts:
+        part["operations"].sort(key=lambda op: op["id"])
     occupied = _part_bounds(parts)
     if occupied and any(occupied["min_"+axis] < structural["min_"+axis] - 1e-6 or occupied["max_"+axis] > structural["max_"+axis] + 1e-6 for axis in "xyz"):
         diagnostics.append(dict(code="occupied_overhang", structural_bounds=structural, occupied_bounds=occupied))
     return ResolvedModel(spaces, dividers, allowances, contents, fronts, PhysicalPartPlan(parts, contacts),
-                         dict(space_model=_input(project.space_model), layout=_input(project.layout), space_cabinets=_input(project.space_cabinets), space_modules=_input(project.space_modules)),
+                         dict(space_model=_input(project.space_model), layout=_input(project.layout), space_cabinets=_input(project.space_cabinets), space_modules=_input(project.space_modules), operations=_input(operations), joints=_input(joints)),
                          placements, allocations, structural, occupied, diagnostics)

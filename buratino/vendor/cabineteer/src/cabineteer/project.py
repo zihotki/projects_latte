@@ -43,6 +43,7 @@ from .layout import (LayoutNode, LayoutLeaf, Frame, Row, Stack, CabinetRef, Boun
 from .spaces import (Carcass, Space, Split, Divider, Fixed, Fr, DrawerBox, Door,
                      AppliedDrawerFront, AppliedFaceboard, AssemblyModule, AssemblyRef,
                      Insets, SpaceCabinetDefinition, Natural, ResolvedModel, resolve_model, _input)
+from .operations import Pocket, Rabbet, Bevel, Bore, Mortise, DominoJoint, OPERATIONS
 from .profiles import (
     ProfileAssembly,
     ProfileAssemblySpec, RoofProfile, ProfiledBox, ProfileFaceSpec,
@@ -262,6 +263,7 @@ def _read_input(value):
         SpaceCabinetDefinition, CabinetRef, Frame, Row, Stack, LayoutLeaf, Bounds3D,
         ProfileAssemblySpec, RoofProfile, ProfiledBox, ProfileFaceSpec,
         ProfileDrawerSpec, ProfileShelfSpec, ProfileLowerDrawerSpec,
+        Pocket, Rabbet, Bevel, Bore, Mortise, DominoJoint,
     )}
     if isinstance(value, list):
         return tuple(_read_input(item) for item in value)
@@ -328,8 +330,14 @@ class CabinetProject:
     space_model: Optional[SpaceModelSpec] = None
     space_cabinets: tuple[SpaceCabinetDefinition, ...] = ()
     space_modules: tuple[AssemblyModule, ...] = ()
+    operations: tuple = ()
+    joints: tuple = ()
 
     def __post_init__(self) -> None:
+        if (self.operations or self.joints) and not (self.space_model is not None or self.space_cabinets or self.space_modules):
+            raise ValueError("operations and joints require a Space project")
+        if not all(isinstance(item, OPERATIONS) for item in self.operations) or not all(isinstance(item, DominoJoint) for item in self.joints):
+            raise ValueError("invalid operation or joint input")
         if self.space_model is not None and (self.cabinets or self.layout is not None
                 or self.profile_assembly is not None or self.worktop is not None
                 or self.shared != SharedDesign()):
@@ -792,11 +800,11 @@ def apply_project_patch(base: dict, patch: dict) -> tuple[dict, list[str]]:
     out = json.loads(json.dumps(base))  # deep copy; payloads are plain JSON
     changes: list[str] = []
 
-    known = {"name", "notes", "wall_width_mm", "worktop", "shared", "cabinets", "space_model", "space_cabinets", "space_modules", "layout", "profile_assembly"}
+    known = {"name", "notes", "wall_width_mm", "worktop", "shared", "cabinets", "space_model", "space_cabinets", "space_modules", "layout", "profile_assembly", "operations", "joints"}
     unknown = set(patch) - known
     if unknown:
         raise ValueError(f"unknown update fields: {sorted(unknown)}")
-    for key in ("space_model", "space_cabinets", "space_modules", "layout", "profile_assembly"):
+    for key in ("space_model", "space_cabinets", "space_modules", "layout", "profile_assembly", "operations", "joints"):
         if key in patch and out.get(key) != patch[key]:
             if patch[key] is None:
                 out.pop(key, None)
@@ -1260,6 +1268,10 @@ def project_to_dict(project: CabinetProject) -> dict:
         out["space_cabinets"] = _encode_input(project.space_cabinets)
     if project.space_modules:
         out["space_modules"] = _encode_input(project.space_modules)
+    if project.operations:
+        out["operations"] = _encode_input(project.operations)
+    if project.joints:
+        out["joints"] = _encode_input(project.joints)
     if project.space_model is not None:
         out["space_model"] = {"carcass": _input(project.space_model.carcass), "root": _input(project.space_model.root), "fronts": _input(project.space_model.fronts)}
     if project.wall_width_mm is not None:
@@ -1283,7 +1295,7 @@ def _validate_project_input(d: dict, *, tool_input: bool = False) -> None:
     version = d.get("input_schema_version", 2 if tool_input else None)
     if type(version) is not int or version != 2:
         raise ValueError("input_schema_version must be 2")
-    allowed = {"input_schema_version", "name", "notes", "shared", "cabinets", "wall_width_mm", "forked_from", "forked_at", "worktop", "layout", "profile_assembly", "space_model", "space_cabinets", "space_modules"}
+    allowed = {"input_schema_version", "name", "notes", "shared", "cabinets", "wall_width_mm", "forked_from", "forked_at", "worktop", "layout", "profile_assembly", "space_model", "space_cabinets", "space_modules", "operations", "joints"}
     if tool_input:
         allowed.add("overwrite")
     unknown = set(d) - allowed
@@ -1326,6 +1338,8 @@ def project_from_dict(d: dict) -> CabinetProject:
         space_model=space_model_from_dict(d["space_model"]) if d.get("space_model") is not None else None,
         space_cabinets=_read_input(d.get("space_cabinets", [])),
         space_modules=_read_input(d.get("space_modules", [])),
+        operations=_read_input(d.get("operations", [])),
+        joints=_read_input(d.get("joints", [])),
     )
 
 
@@ -1428,6 +1442,8 @@ def build_project(payload: dict) -> CabinetProject:
         space_model=space_model_from_dict(payload["space_model"]) if payload.get("space_model") is not None else None,
         space_cabinets=_read_input(payload.get("space_cabinets", [])),
         space_modules=_read_input(payload.get("space_modules", [])),
+        operations=_read_input(payload.get("operations", [])),
+        joints=_read_input(payload.get("joints", [])),
     )
 
 
