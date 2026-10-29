@@ -6,7 +6,9 @@ from cabineteer.project import CabinetProject, SpaceModelSpec
 from cabineteer.spaces import Carcass, DrawerBox, Space
 
 variables = {
-    "observations": ["All dimensions are example design inputs, not site measurements."],
+    "observations": [
+        "All dimensions are example design inputs, not site measurements."
+    ],
     "assumptions": [
         "The 380 mm Hettich Quadro V6 EB20 slide is an illustrative selection.",
         "The resolved mortise dimensions describe one proposed loose-tenon pair.",
@@ -81,8 +83,8 @@ project = CabinetProject(
         Bore(
             id="side-edge-bore",
             part_id="/cabinet/carcass/side_left",
-            face="x-",
-            u=300,
+            face="y-",
+            u=9,
             v=250,
             diameter=5,
             depth=10,

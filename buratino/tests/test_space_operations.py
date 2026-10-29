@@ -29,6 +29,23 @@ def test_machined_space_report_uses_resolved_records_and_keeps_stock_as_blank(ro
     }
     assert all(part["blank_mm"] == part["stock_mm"] for part in machined)
     assert all("finished_mm" not in part for part in machined)
+    bores = {
+        operation["id"]: operation
+        for part in machined
+        for operation in part["operations"]
+        if operation["type"] == "bore"
+    }
+    side_id = "/cabinet/carcass/side_left"
+    back_id = "/cabinet/carcass/back"
+    assert bores["user/side-edge-bore"]["face"] == "y-"
+    assert bores["user/side-edge-bore"]["face"][0] != "xyz"[
+        resolved[side_id]["stock"]["thickness_axis"]
+    ]
+    assert bores["user/back-face-bore"]["face"][0] == "xyz"[
+        resolved[back_id]["stock"]["thickness_axis"]
+    ]
+    assert bores["user/side-edge-bore"]["depth"] == 10
+    assert bores["user/back-face-bore"]["depth"] == 6
     assert all(
         part["local_datum"] == {
             "origin": "unmachined_stock_min_xyz",
