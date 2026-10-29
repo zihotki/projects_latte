@@ -89,7 +89,7 @@ def _table(groups: list[tuple[str, list[dict]]], part_codes: dict[str, str]) -> 
     rows = []
     for code, members in groups:
         part = members[0]
-        dims = part.get("blank_mm", part["finished_mm"])
+        dims = part.get("blank_mm") or part.get("finished_mm", {})
         grain = _grain_values(members, "grain_direction", part_codes)
         status = _grain_values(members, "grain_status", part_codes)
         note = "" if status == "confirmed" else f" ({html.escape(status)})"
@@ -261,6 +261,60 @@ def _space_model_summary(result: dict) -> str:
             if diagnostics
             else ""
         )
+    )
+
+
+def _space_operations_table(parts: list[dict]) -> str:
+    """Render resolved Space cuts as a readable per-part manufacturing table."""
+    rows = []
+    for part in parts:
+        for operation in part.get("operations", []):
+            dimensions = {
+                key: value
+                for key, value in operation.items()
+                if key
+                not in {
+                    "id", "part_id", "type", "source", "face", "edge",
+                    "joint_id", "joint_side", "role", "axis",
+                }
+                and isinstance(value, int | float)
+                and not isinstance(value, bool)
+            }
+            references = [
+                str(operation[key])
+                for key in ("face", "edge", "axis")
+                if operation.get(key) is not None
+            ]
+            pairing = ""
+            if operation.get("joint_id"):
+                pairing = (
+                    f"{operation['joint_id']} ({operation.get('joint_side', '?')})"
+                )
+            dimension_text = ", ".join(
+                f"{key} {value:g} mm" for key, value in dimensions.items()
+            )
+            rows.append(
+                "<tr>"
+                f"<td>{html.escape(part['id'])}</td>"
+                f"<td>{html.escape(str(operation.get('id', '')))}</td>"
+                f"<td>{html.escape(str(operation.get('type', '')).title())}</td>"
+                f"<td>{html.escape(str(operation.get('source', '')))}</td>"
+                f"<td>{html.escape(', '.join(references))}</td>"
+                f"<td>{html.escape(dimension_text)}</td>"
+                f"<td>{html.escape(pairing)}</td></tr>"
+            )
+    if not rows:
+        return ""
+    return (
+        "<h2>Resolved machining operations</h2>"
+        "<p>Coordinates use each part's unmachined stock minimum XYZ corner. "
+        "Face coordinates use the remaining axes in ascending XYZ order. "
+        "Depth runs inward from the selected face. Dimensions are mm.</p>"
+        "<table><thead><tr><th>Part</th><th>Record ID</th><th>Type</th>"
+        "<th>Source</th><th>Face, edge, or axis</th><th>Dimensions</th>"
+        "<th>Joint pair</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table>"
     )
 
 
@@ -640,7 +694,7 @@ def render_documents(
     )
     for code, members in cut_groups:
         part = members[0]
-        blank = part.get("blank_mm", part["finished_mm"])
+        blank = part.get("blank_mm") or part.get("finished_mm", {})
         writer.writerow(
             [
                 "DRAFT_NOT_FOR_MANUFACTURING",
@@ -739,6 +793,7 @@ def render_documents(
             '<a href="parts.csv">Draft cut list</a> · '
             '<a href="result.json">Calculation JSON</a></p>'
             + _table(cut_groups, part_codes)
+            + _space_operations_table(result["parts"])
             + "<h2>Selected hardware</h2>"
             + _hardware_table(result, part_codes, diagnostics=False)
         )
@@ -874,7 +929,11 @@ def render_geometry(root: Path, directory: Path, calculation):
             {
                 **part,
                 **metadata.get(part["id"], {}),
-                "finished_mm": part.get("finished_mm", part.get("stock_mm", {})),
+                **(
+                    {"finished_mm": part["finished_mm"]}
+                    if part.get("finished_mm")
+                    else {}
+                ),
             }
             for part in calculation.result.get("parts", [])
         ]

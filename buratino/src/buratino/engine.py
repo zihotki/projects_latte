@@ -475,12 +475,24 @@ def _calculate_space_model(project: ProjectInputs) -> Calculation:
         part = dict(source)
         stock = part.get("stock_mm") or part.get("stock")
         if isinstance(stock, dict) and {"length", "width", "thickness"} <= set(stock):
-            part["finished_mm"] = dict(stock)
             part["blank_mm"] = dict(stock)
+            if part.get("operations"):
+                part.pop("finished_mm", None)
+                part["finished_status"] = "unverified_after_machining"
+            else:
+                part["finished_mm"] = dict(stock)
         part.setdefault("scene_name", part.get("role", part["id"]))
         part.setdefault("grain_direction", "unknown")
         part.setdefault("grain_status", "unverified")
         part.setdefault("edge_treatment", "unverified")
+        part.setdefault(
+            "local_datum",
+            {
+                "origin": "unmachined_stock_min_xyz",
+                "face_uv": "remaining_axes_ascending_xyz",
+                "depth": "inward_from_selected_face",
+            },
+        )
         parts.append(part)
 
     contents = plan.contents
@@ -578,7 +590,7 @@ def _calculate_space_model(project: ProjectInputs) -> Calculation:
         },
         "space_model": plan_data,
         "space_plan": plan_data,
-        "cutting_groups": records["viewer"].get("cutting_groups", []),
+        "cutting_groups": group_cutting_blanks(parts),
     }
     return Calculation([], result, [], None, plan)
 

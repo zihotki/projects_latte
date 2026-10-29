@@ -86,7 +86,7 @@ def panel_views(assembly, parts: list[dict]) -> dict[str, str]:
         )
         svg = svg[svg.index("<svg") :]
         svg = svg.replace('height="200.0"', 'height="255.0"')
-        blank = part.get("blank_mm", part["finished_mm"])
+        blank = part.get("blank_mm") or part.get("finished_mm", {})
         dim_y, dim_x = top - 13, left - 16
         callouts = (
             f'<g stroke="#333" stroke-width="0.8" fill="none">'

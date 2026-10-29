@@ -21,6 +21,10 @@ It does not define sloped or changing-height clear spaces. Use
 [native profile draft](../projects/real-assembly-native/project.py) for a
 complete example.
 
+Space projects can also define explicit local machining and paired Domino
+mortises. See [Space machining operations](operations.md) and the runnable
+[machined drawer example](../projects/machined-drawer/project.py).
+
 ## Describe clear spaces
 
 Import `CabinetProject` and `SpaceModelSpec` from `cabineteer.project`, and
@@ -119,10 +123,10 @@ Enter furniture dimensions and profile points as project inputs. They are not
 inferred from a room model. There is no room or ceiling snapping and no
 general-purpose constraint solver.
 Rectangular Space models size clear regions; use the profile path for supported
-slopes. The project model has no general user-defined bevel or cutout operation
-language and does not generate CNC toolpaths. It does support selected profile
-trims, edge bevels, and cabinet and drawer joinery features. Preview door and
-drawer poses are illustrative. They do not check collisions during movement.
+slopes. Space machining operations are explicit dimensions on qualified
+physical parts. They do not generate CNC toolpaths or specify machine settings.
+Profile assemblies do not accept these operations. Preview door and drawer
+poses are illustrative. They do not check collisions during movement.
 
 ## Resolve, build, and review
 
