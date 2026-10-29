@@ -132,6 +132,8 @@ def _validate_space_inputs(space, path, *, root=False):
                 raise ValueError(f"{path}/{child.name}: invalid divider role")
             if child.recess is not None:
                 _number(child.recess, f"{path}/{child.name} recess", zero=True)
+            if child.depth is not None:
+                _number(child.depth, f"{path}/{child.name} depth")
 
 
 def _validate_front_references(root, fronts, path):
@@ -192,6 +194,8 @@ def _validate_front_references(root, fronts, path):
                 raise ValueError(f"{path}/front/{front.name}: {exc}") from exc
         if isinstance(front, AppliedFaceboard) and front.boundary_gap is not None:
             _number(front.boundary_gap, path + "/front/" + front.name + " boundary gap", zero=True)
+        if isinstance(front, AppliedDrawerFront) and front.top_reveal is not None:
+            _number(front.top_reveal, path + "/front/" + front.name + " top reveal", zero=True)
         coverage = reference(front.covers, spaces, "coverage")
         if isinstance(front, AppliedDrawerFront):
             attachment = reference(front.attached_to, [ident for ident, _ in drawers], "drawer attachment")

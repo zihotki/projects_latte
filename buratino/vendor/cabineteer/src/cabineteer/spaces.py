@@ -44,6 +44,7 @@ class Divider:
     role: str = "structural"
     material: str = "baltic_birch"
     recess: float | None = None
+    depth: float | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,7 @@ class AppliedDrawerFront:
     attached_to: str
     thickness: float = 18
     material: str = "finished_wood"
+    top_reveal: float | None = None
 
 
 @dataclass(frozen=True)
@@ -367,13 +369,18 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
                     recess = child.recess if child.recess is not None else (3 if child.role == "adjustable" else 0)
                     _number(recess, child_path + " recess", zero=True)
                     if recess >= cs[1]: raise ValueError(f"{child_path}: recess exceeds depth")
-                    co[1] += recess; cs[1] -= recess
+                    available_depth = cs[1] - recess
+                    depth = available_depth if child.depth is None else _number(child.depth, child_path + " depth")
+                    if depth > available_depth: raise ValueError(f"{child_path}: divider depth exceeds available space")
+                    co[1] += recess; cs[1] = depth
                     dividers.append(dict(id=child_path, owner=path, axis=split.axis, role=child.role, origin=co, size=cs, recess=recess))
                     part(child_path, "divider", tuple(co), tuple(cs), child.material, length, axis, owner=path, role=child.role)
                     # The panel spans the parent in the perpendicular direction.
                     ends = ("bottom", "top") if axis == 0 else ("left", "right")
-                    for boundary in (*ends, "back"):
+                    for boundary in ends:
                         contact(child_path, boundaries[boundary], "butt")
+                    if depth == available_depth:
+                        contact(child_path, boundaries["back"], "butt")
                 else:
                     cb = dict(boundaries)
                     low, high = (("left", "right") if axis == 0 else ("bottom", "top"))
@@ -410,6 +417,8 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
             raise ValueError(f"front/{front.name}: invalid hinge side")
         if isinstance(front, AppliedFaceboard) and front.boundary_gap is not None:
             _number(front.boundary_gap, f"front/{front.name} boundary gap", zero=True)
+        if isinstance(front, AppliedDrawerFront) and front.top_reveal is not None:
+            _number(front.top_reveal, f"front/{front.name} top reveal", zero=True)
         region = reference(front.covers, spaces, "coverage")
         attachment = None
         if isinstance(front, AppliedDrawerFront):
@@ -458,6 +467,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
         fid = "/front/" + front.name
         candidate = dict(id=fid, coverage=coverage, plane=0, kind=kind, reveal=carcass.outer_reveal,
                          door_gap=carcass.door_gap, drawer_front_gap=carcass.drawer_front_gap,
+                         top_reveal=getattr(front, "top_reveal", None),
                          boundary_gap=getattr(front, "boundary_gap", None), instance="cabinet")
         selected.append((front, region, attachment, inset, candidate))
     boundaries = resolve_front_boundaries([candidate for _, _, _, inset, candidate in selected if not inset])

@@ -1341,6 +1341,7 @@ def _build_html(
     <div class="toolbar" aria-label="Views">
       <button type="button" data-view="iso">Iso</button><button type="button" data-view="front">Front</button><button type="button" data-view="side">Side</button><button type="button" data-view="top">Top</button>
       <button id="tree-tab" type="button" role="tab" aria-selected="false">Model</button><button id="parts-tab" type="button" role="tab" aria-selected="false">Parts</button><button id="settings-tab" type="button" role="tab" aria-selected="false">Settings</button>
+      <div class="opacity-control"><input type="range" id="panel-opacity" aria-label="Panel opacity" min="0" max="100" value="100" step="1"><output id="panel-opacity-value">100%</output></div>
     </div>
     <div class="toolbar lower-toolbar"><div class="toolbar visibility-actions"><button id="show-all" type="button">Show all</button><button id="isolate-selection" type="button">Isolate selection</button><button id="reset-selection" type="button">Clear selection</button></div><div class="toolbar pose-actions"><button id="drawer-pose-toggle" type="button" aria-pressed="false" hidden>Open drawers</button><button id="door-pose-toggle" type="button" aria-pressed="false" hidden>Open doors</button></div></div>
   </header>
@@ -1348,7 +1349,7 @@ def _build_html(
     <div class="sheet-heading"><button id="sheet-toggle" type="button" aria-expanded="false"><span id="sheet-title">Model</span><span aria-hidden="true">⌃</span></button></div>
     <section id="tree-view" role="tabpanel"><div class="section-heading">Model <span id="group-count"></span></div><p id="model-hint">Select a name; use the eye to hide.</p><div id="visibility-options" role="tree" aria-label="Cabinet parts"></div><details id="viewer-info"><summary>Dimensions and render notes</summary><div id="project-info">{info_html}</div>{caveat_html}</details></section>
     <section id="parts-view" role="tabpanel" hidden><div class="section-heading">Cut list <span id="table-hint"></span></div><div id="table-scroll"><table aria-label="Cabinet parts"><thead><tr><th>Part</th><th>Qty</th><th>Blank mm</th></tr></thead><tbody id="parts-body"></tbody></table></div><div id="selection-caption">Select a part or row.</div></section>
-    <section id="settings-view" hidden><div class="section-heading">Settings</div><div id="finish-ui"><select id="finish-sel" title="Exterior finish"></select><button id="grain-btn" title="Toggle grain orientation">Grain: vertical</button><button id="cutlist-btn" type="button">Generate cutlist request</button><label class="opacity-control">Opacity <input type="range" id="panel-opacity" min="0" max="100" value="100" step="5"><output id="panel-opacity-value">100%</output></label></div></section>
+    <section id="settings-view" hidden><div class="section-heading">Settings</div><div id="finish-ui"><select id="finish-sel" title="Exterior finish"></select><button id="grain-btn" title="Toggle grain orientation">Grain: vertical</button><button id="cutlist-btn" type="button">Generate cutlist request</button></div></section>
     <div id="viewer-message" role="status" hidden></div>
   </aside>
 

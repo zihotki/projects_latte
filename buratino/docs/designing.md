@@ -50,8 +50,10 @@ default, width slack goes on the right and height slack goes at the top. Set
 `Split` makes regions; it does not add stock. Add a `Divider` between spaces
 when the design needs a physical panel. Its thickness uses the split axis. A
 divider can have the `structural` or `adjustable` role; adjustable dividers are
-for height splits. Give each space, divider, content item, and front a unique
-name within its scope.
+for height splits. Set `depth` to make a shorter divider, such as a front rail.
+Its depth starts at the front after any `recess`; omit it for the full remaining
+depth. Give each space, divider, content item, and front a unique name within
+its scope.
 
 ## Add fronts
 
@@ -64,7 +66,8 @@ itself.
   door. The default hinge side is right.
 - Use `AppliedDrawerFront` with both `covers` and `attached_to`. `covers` names
   the space region. `attached_to` names the drawer box, such as
-  `"/root/lower/box-lower"`.
+  `"/root/lower/box-lower"`. Set `top_reveal` to override its exposed top gap;
+  shared seams still use the configured front gap.
 - Use `AppliedFaceboard` on a cabinet definition or module for a fixed face. It
   has no motion group.
 

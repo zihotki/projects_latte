@@ -15,11 +15,14 @@ See [ATTRIBUTIONS.md](../ATTRIBUTIONS.md) for the datasheet and distributor sour
 | `blum_tandem_plus_563f` | Blum Tandem Plus 563F | Undermount | 41 kg | Full | 229–533 |
 | `blum_movento_760h` | Blum Movento 760H | Undermount | 40 kg | Full | 250–600 |
 | `blum_movento_769` | Blum Movento 769 | Undermount | 70 kg | Full | 457–762 |
+| `ferretti_hdsc550v90` | Ferretti HDSC550V90 soft-close | Side-mount | 90 kg | Full | 550 |
 | `accuride_3832` | Accuride 3832 | Side-mount | 45 kg | Full | 250–700 |
 | `salice_futura` | Salice Futura | Undermount | 34 kg | Full | 305–533 |
 | `salice_futura_smove` | Salice Futura Smove (soft-close) | Undermount | 34 kg | Full | 305–533 |
 | `salice_progressa_plus` | Salice Progressa+ | Undermount | 54 kg | Full | 229–762 |
 | `salice_progressa_plus_smove` | Salice Progressa+ Smove (soft-close) | Undermount | 54 kg | Full | 229–762 |
+
+The Ferretti entry models the retailer’s 19.5 mm slide thickness as nominal side clearance. The retailer does not specify clearance tolerances, mounting offsets, drawer width limits, or vertical clearances; zero values in the model do not confirm these. Confirm installation dimensions and load conditions before construction. The retailer lists the product as Ferretti, while its description also mentions Cobra Steel.
 
 A trap worth knowing when ordering Blum: the **H/F suffix is drawer-side thickness, not extension** — 563**H** takes 1/2″ sides, 563**F** takes 3/4″ sides; both are full extension. (The 550H is the ¾-extension budget line.)
 

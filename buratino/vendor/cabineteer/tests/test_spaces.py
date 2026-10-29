@@ -31,6 +31,25 @@ def test_budget_and_nested_dividers():
     assert {d['id'] for d in r.dividers} == {'/root/lower/inner', '/root/outer'}
 
 
+def test_short_divider_is_a_front_rail_without_back_contact():
+    r = model([Space('lower', Fr()), Divider('rail', depth=50), Space('upper', Fr())])
+    rail = next(p for p in r.part_plan.parts if p['id'] == '/root/rail')
+    assert rail['origin'][1] == 0
+    assert rail['size'] == [564, 50, 18]
+    pairs = {frozenset((c['part_a'], c['part_b'])) for c in r.part_plan.contacts}
+    assert frozenset(('/root/rail', '/carcass/side_left')) in pairs
+    assert frozenset(('/root/rail', '/carcass/side_right')) in pairs
+    assert frozenset(('/root/rail', '/carcass/back')) not in pairs
+    recessed = model([Space('lower', Fr()), Divider('rail', recess=7, depth=50), Space('upper', Fr())])
+    assert recessed.dividers[0]['origin'][1] == 7
+
+
+@pytest.mark.parametrize('depth', [0, -1, float('nan'), float('inf'), 545])
+def test_invalid_divider_depth(depth):
+    with pytest.raises(ValueError, match='depth'):
+        model([Space('lower', Fr()), Divider('rail', depth=depth), Space('upper', Fr())])
+
+
 def test_remainders_and_edges():
     r = model([Space('a', Fr()), Space('b', Fr()), Space('c', Fr())], 200, 'bottom')
     assert heights(r) == [66, 66, 66]
@@ -58,6 +77,27 @@ def test_drawer_fit_and_front_relationships():
     assert heights(r) == [291,291,318]
     with pytest.raises(ValueError, match='outside coverage'):
         model(children, fronts=[AppliedDrawerFront('bad', 'a', 'box_b')])
+
+
+def test_drawer_top_reveal_changes_only_exposed_edge():
+    children = [Space('lower', Fr(), content=DrawerBox('lower-box', 30, 270)),
+                Divider('rail', depth=50),
+                Space('upper', Fr(), content=DrawerBox('upper-box', 30, 270))]
+    fronts = [AppliedDrawerFront('lower-front', 'lower', 'lower-box', top_reveal=9),
+              AppliedDrawerFront('upper-front', 'upper', 'upper-box', top_reveal=3)]
+    result = model(children, height=643, fronts=fronts)
+    lower, upper = result.fronts
+    assert lower['size'][2] == upper['size'][2] == 336
+    assert lower['origin'][2] == 2
+    assert upper['origin'][2] - lower['origin'][2] - lower['size'][2] == 2
+    assert upper['origin'][2] + upper['size'][2] == 676
+
+
+@pytest.mark.parametrize('top_reveal', [-1, float('nan'), float('inf')])
+def test_invalid_drawer_top_reveal(top_reveal):
+    with pytest.raises(ValueError, match='top reveal'):
+        model([Space('drawer', Fr(), content=DrawerBox('box', 30, 270))],
+              fronts=[AppliedDrawerFront('front', 'drawer', 'box', top_reveal=top_reveal)])
 
 
 def test_unequal_fronts_and_roundtrip():

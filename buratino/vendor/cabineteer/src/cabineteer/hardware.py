@@ -771,6 +771,33 @@ ACCURIDE_3832 = DrawerSlideSpec(
 )
 
 
+# ── Ferretti HDSC550V90 ─────────────────────────────────────────────────────
+
+FERRETTI_HDSC550V90 = DrawerSlideSpec(
+    # Retailer dimensions: 19.5 mm thick, 53 mm high, 550 mm long.
+    # Clearance tolerances, mounting offsets and width limits are not supplied;
+    # the values below model the nominal thickness and do not verify fit.
+    name="Ferretti Heavy Duty Softclose 550 mm",
+    manufacturer="Ferretti",
+    slide_type=SlideType.SIDE_MOUNT,
+    mount_location=SlideMountLocation.SIDE,
+    min_side_clearance=19.5,
+    max_side_clearance=19.5,
+    nominal_side_clearance=19.5,
+    min_top_clearance=0,
+    min_bottom_clearance=0,
+    available_lengths=(550,),
+    max_load_kg=90,
+    min_drawer_height=0,
+    max_drawer_width=0,
+    rear_bracket_inset=0,
+    front_bracket_inset=0,
+    part_numbers={550: "HDSC550V90"},
+    sold_as_pair=True,
+    sources=("https://www.meubelbeslagcenter.nl/heavy-duty-softclose-ladegeleiders-550mm-zijmontage",),
+)
+
+
 # ── Salice Futura ─────────────────────────────────────────────────────────────
 
 SALICE_FUTURA = DrawerSlideSpec(
@@ -1064,6 +1091,7 @@ SLIDES: dict[str, DrawerSlideSpec] = {
     "blum_movento_769":       BLUM_MOVENTO_769,
     # Accuride
     "accuride_3832":          ACCURIDE_3832,
+    "ferretti_hdsc550v90":    FERRETTI_HDSC550V90,
     # Salice Futura
     "salice_futura":          SALICE_FUTURA,
     "salice_futura_smove":    SALICE_FUTURA_SMOVE,

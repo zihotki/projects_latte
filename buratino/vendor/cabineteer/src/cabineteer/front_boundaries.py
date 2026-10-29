@@ -45,6 +45,8 @@ def resolve_front_boundaries(fronts: list[dict]) -> dict[str, tuple[float, float
                 matches[edge].append((peer, gap, other["id"]))
         for edge, found in enumerate(matches):
             inset = face["reveal"]
+            if edge == 3 and face.get("top_reveal") is not None:
+                inset = face["top_reveal"]
             if found:
                 coord, gap, name = found[0]
                 for next_coord, next_gap, next_name in found[1:]:

@@ -8,6 +8,7 @@ Hardware dimensions, placement rules, and part numbers in this project are deriv
 - **Blum Tandem Plus 563H** — Blum 563H official datasheet © 2016; catalog index via cabinetdoor.store and d2.blum.com; CabinetParts.com confirmed SKUs (18″ = 563H4570B, 21″ = 563H5330B).
 - **Blum Movento 760H** — Blum Movento brochure "The Evolution of Motion" (2016/2024); distributor SKU tables via [mcfaddens.com](https://mcfaddens.com) and [hwt-pro.com](https://hwt-pro.com); Amazon listings.
 - **Blum Movento 769** — Blum 769 catalog page © 2019; CabinetParts and Indian River Cabinet Supply SKU listings; [rokhardware.com](https://rokhardware.com) spec page. Confirmed SKUs: 769.4570S (18″), 769.5330S (21″), 769.6100S (24″).
+- **Ferretti HDSC550V90** — [Meubelbeslag Center product listing](https://www.meubelbeslagcenter.nl/heavy-duty-softclose-ladegeleiders-550mm-zijmontage); side mounting, nominal dimensions, 90 kg rating, full extension, and set SKU. The listing does not specify installation tolerances or load conditions.
 - **Accuride 3832** — [Accuride International](https://www.accuride.com) product page and distributor listings.
 - **Salice Futura** — Salice Futura catalog D0CASG010ENG; [wwhardware.com](https://wwhardware.com) specs. Confirmed SKUs via CabinetParts and woodworkerexpress.
 - **Salice Progressa+** — Salice PROGRESSA catalog D0CASAA36USA; [cabinetparts.com](https://cabinetparts.com) SKU SHG5U6S533XXF6 (21″ confirmed).
