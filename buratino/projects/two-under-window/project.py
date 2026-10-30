@@ -67,7 +67,7 @@ _drawer = {
     "bottom_thickness": 12,
     "bottom_dado_depth": 6,
     "bottom_dado_inset": 13,
-    "corner_joinery": DominoJoinery(end_offsets=(60, 60)),
+    "corner_joinery": DominoJoinery(end_offsets=(60, 60), spacing=90),
     "material": "plywood",
     "bottom_material": "plywood",
 }

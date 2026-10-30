@@ -26,7 +26,7 @@ def test_opt_in_recipe_depth_assignment_and_resize():
     assert not cuts(resolve_model(Carcass(600, 700, 560), Space('inside')))
     recipe = DominoJoinery(face_depth=10, end_depth=26, end_offsets=(70, 74), spacing=100)
     model = resolve_model(Carcass(600, 700, 560, joinery=recipe), Space('inside'))
-    assert {op['u'] for op in cuts(model)} == {70, 152, 234, 316, 398, 480}
+    assert {op['u'] for op in cuts(model)} == {70, 173, 275, 378, 480}
     for part in model.part_plan.parts:
         for op in part['operations']:
             expected = 10 if op['face'][0] == 'xyz'[part['stock']['thickness_axis']] else 26
@@ -48,12 +48,12 @@ def test_short_rail_fallback_disable_override_and_adjustable():
     assert len(rail['operations']) == 2
     assert {op['u'] for op in rail['operations']} == {25}
     for divider in (Divider('rail', joinery=None), Divider('rail', role='adjustable')):
-        assert len(cuts(host(root=divider_root(divider)).resolved_space_model())) == 48
+        assert len(cuts(host(root=divider_root(divider)).resolved_space_model())) == 40
     with pytest.raises(ValueError, match="adjustable divider cannot have fixed joinery"):
         host(root=divider_root(Divider("shelf", role="adjustable", joinery=DominoJoinery()))).resolved_space_model()
     explicit = Divider('rail', joinery=DominoJoinery(end_offsets=(30, 40)))
     overridden = host(carcass=Carcass(600, 700, 560), root=divider_root(explicit)).resolved_space_model()
-    assert len(cuts(overridden)) == 24
+    assert len(cuts(overridden)) == 20
 
 
 def test_divider_to_divider_and_bare_host_boundaries_are_excluded():
@@ -66,11 +66,11 @@ def test_divider_to_divider_and_bare_host_boundaries_are_excluded():
     assert all('/carcass/' in contact['part_a'] or '/carcass/' in contact['part_b'] for contact in owned)
     module = AssemblyModule('insert', divider_root(Divider('rail', joinery=DominoJoinery())), Fr(), Fr(), Fr())
     model = host(root=Space('inside', content=AssemblyRef('nested', 'insert')), space_modules=(module,)).resolved_space_model()
-    assert len(cuts(model)) == 48
+    assert len(cuts(model)) == 40
 
 
 def test_drawer_corners_and_unsupported_geometry():
-    recipe = DominoJoinery(end_offsets=(60, 60))
+    recipe = DominoJoinery(end_offsets=(60, 60), spacing=90)
     model = host(carcass=Carcass(600, 700, 560), root=Space('inside', content=DrawerBox(
         'drawer', 30, height=270, corner_joinery=recipe))).resolved_space_model()
     assert len(cuts(model)) == 24
@@ -83,10 +83,10 @@ def test_two_instances_and_nested_drawer_keep_unique_local_operations():
     definition = SpaceCabinetDefinition('unit', Carcass(600, 700, 560, joinery=DominoJoinery()), Space('inside'))
     project = CabinetProject(name='row', layout=Row('run', (CabinetRef('a', 'unit'), CabinetRef('b', 'unit'))), space_cabinets=(definition,))
     model = project.resolved_space_assembly()
-    assert len(cuts(model)) == 96
-    assert len({op['id'] for op in cuts(model)}) == 96
+    assert len(cuts(model)) == 80
+    assert len({op['id'] for op in cuts(model)}) == 80
     assert all(contact['part_a'].split('/')[2] == contact['part_b'].split('/')[2] for contact in model.part_plan.contacts)
-    drawer_root = Space('insert', content=DrawerBox('drawer', 30, height=270, corner_joinery=DominoJoinery(end_offsets=(60, 60))))
+    drawer_root = Space('insert', content=DrawerBox('drawer', 30, height=270, corner_joinery=DominoJoinery(end_offsets=(60, 60), spacing=90)))
     module = AssemblyModule('insert', drawer_root, Fr(), Fr(), Fr())
     model = host(root=Space('inside', content=AssemblyRef('nested', 'insert', Insets(left=10, front=20))), space_modules=(module,)).resolved_space_model()
     drawer = [op for op in cuts(model) if '/nested/' in op['part_id']]

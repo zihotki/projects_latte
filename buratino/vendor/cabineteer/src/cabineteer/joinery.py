@@ -139,7 +139,7 @@ def component_domino_rows(parts, contacts, explicit=()):
         ratio = span / recipe.spacing
         if not math.isfinite(ratio) or ratio > MAX_DOMINOS_PER_CONTACT:
             raise ValueError(f"{label}: spacing requests more than {MAX_DOMINOS_PER_CONTACT} Dominoes")
-        count = max(1, math.ceil(ratio))
+        count = max(1, math.floor(ratio))
         half = recipe.slot_length / 2
         if count == 1:
             positions = (span / 2,)

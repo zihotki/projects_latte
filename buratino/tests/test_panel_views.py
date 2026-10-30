@@ -461,3 +461,36 @@ def test_groove_leaders_follow_screen_order_and_keep_their_values(mirrored, rota
     expected_width_x = 70 if width_mid < inset_mid else 250
     assert labels["G1 width: 12 mm"] == expected_width_x
     assert labels["G1 inset: 13 mm"] == 320 - expected_width_x
+
+
+@pytest.mark.parametrize("face", ["x+", "y-"])
+def test_mortises_have_strong_cad_outlines_without_extra_layouts(face):
+    from cabineteer.space_adapter import materialize_box_part
+
+    part = _grooved_space_part()
+    part["operations"] = [
+        {
+            "id": "mortise",
+            "type": "mortise",
+            "face": face,
+            "u": 60 if face == "x+" else 9,
+            "v": 60,
+            "axis": "v",
+            "length": 20,
+            "width": 6,
+            "depth": 12 if face == "x+" else 28,
+        }
+    ]
+    assembly = cq.Assembly(name="root")
+    assembly.add(materialize_box_part(part), name=part["role"])
+    view = panel_views(assembly, [part])[part["id"]]
+    root = ElementTree.fromstring(view)
+    ns = {"s": "http://www.w3.org/2000/svg"}
+    outline = root.find('.//s:g[@class="machining-outline"]', ns)
+    assert outline is not None
+    assert outline.attrib["stroke"] == "#75400d"
+    assert outline.attrib["stroke-dasharray"] == "none"
+    assert len(outline.findall("s:path", ns)) > 0
+    assert root.attrib["viewBox"] == "0 0 360 255"
+    assert "PANEL EDGE" not in view and "PANEL FACE" not in view
+    assert "stock-face layout" not in view.lower()

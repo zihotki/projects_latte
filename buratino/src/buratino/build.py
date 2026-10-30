@@ -133,8 +133,7 @@ def _page(title: str, content: str) -> str:
         ".panel-drawing figcaption{padding:0 16px;font-size:14px;width:100%;"
         "box-sizing:border-box}"
         ".panel-drawing svg{display:block;width:100%;max-width:600px;height:auto}"
-        ".panel-drawing svg rect:not(.stock-face):not(.mortise-rim)"
-        "{fill:#fff;stroke:#333}"
+        ".panel-drawing svg rect{fill:#fff;stroke:#333}"
         ".panel-dimensions{font-weight:600;font-size:13px;"
         "margin:4px 8px 8px;text-align:center}"
         "@media print{body{margin:0}}"
@@ -660,12 +659,7 @@ def render_documents(
         quantity = sum(member.get("quantity", 1) for member in members)
         count = f" × {quantity}" if quantity > 1 else ""
         blank = part.get("blank_mm") or part.get("finished_mm", {})
-        notes = machining_notes(
-            part,
-            mortise_layout_available=bool(
-                view and 'class="mortise-stock-layout"' in view
-            ),
-        )
+        notes = machining_notes(part)
         caption = (
             "<ul class='machining-dimensions'>"
             + "".join(f"<li>{html.escape(note)}</li>" for note in notes)

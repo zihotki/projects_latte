@@ -99,7 +99,7 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
         else:
             assert part["material"] == "plywood"
     joints = result["joints"]
-    assert len(joints) == 100
+    assert len(joints) == 92
     assert all(len(joint["mortises"]) == 2 for joint in joints)
     geometry = sorted(
         (
@@ -115,7 +115,7 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
         for joint in joints
         for mortise in joint["mortises"]
     )
-    assert len(geometry) == 200
+    assert len(geometry) == 184
     cuts = [
         op
         for p in parts.values()
@@ -133,7 +133,7 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
             # These x-face mortises have local v = Z. The groove ends at 25.
             assert op["v"] - op["length"] / 2 > 25
     assert (
-        next(h for h in result["hardware"] if h["type"] == "domino")["quantity"] == 100
+        next(h for h in result["hardware"] if h["type"] == "domino")["quantity"] == 92
     )
     assert len(result["cutting_groups"]) == 11
     for provider in ("zagenzagen", "opmaatzagen"):
@@ -150,7 +150,7 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
         assert actual == expected
     render_documents(tmp_path, result)
     assembly = (tmp_path / "assembly.html").read_text()
-    assert "6 × 40 mm; × 100" in assembly
+    assert "6 × 40 mm; × 92" in assembly
     assert "20 × 6 mm slots" in assembly
     assert "12/28 mm depths" in assembly
 
