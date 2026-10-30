@@ -40,6 +40,8 @@ let partRoots = new Map();
 let visibilityControls = new Map();
 let groupByPartId = new Map();
 let panelOpacity = 1;
+let activeSheetTab = null;
+let selectedSheetTab = 'tree-tab';
 
 function setMessage(message, isError = false) {
   ui.message.textContent = message;
@@ -71,7 +73,7 @@ function selectGroup(group) {
   selectedGroup = group?.id ?? null;
   selectedPartIds = new Set(group?.members ?? []);
   selectedLabel = group?.label ?? null;
-  if (group) document.getElementById('parts-tab')?.click();
+  if (group) selectSheetTab('parts-tab');
   for (const row of ui.table.querySelectorAll('tr')) {
     const active = row.dataset.groupId === selectedGroup;
     row.classList.toggle('selected', active);
@@ -1199,22 +1201,40 @@ async function start() {
 for (const button of document.querySelectorAll('[data-view]')) {
   button.addEventListener('click', () => viewer && setStandardView(button.dataset.view));
 }
-function selectSheetTab(tab) {
+function setSheetOpen(open) {
+  document.body.classList.toggle('sheet-open', open);
+  document.getElementById('sheet-toggle').setAttribute('aria-expanded', String(open));
+}
+
+function selectSheetTab(tab, toggleCurrent = false) {
   const panes = { 'tree-tab': 'tree-view', 'parts-tab': 'parts-view', 'settings-tab': 'settings-view' };
+  if (!panes[tab]) return;
+  const sheetOpen = document.body.classList.contains('sheet-open');
+  if (toggleCurrent && sheetOpen && activeSheetTab === tab) {
+    setSheetOpen(false);
+    activeSheetTab = null;
+    for (const buttonId of Object.keys(panes)) {
+      document.getElementById(buttonId).setAttribute('aria-selected', 'false');
+    }
+    return;
+  }
+
+  activeSheetTab = tab;
+  selectedSheetTab = tab;
   for (const [buttonId, paneId] of Object.entries(panes)) {
     document.getElementById(buttonId).setAttribute('aria-selected', String(buttonId === tab));
     document.getElementById(paneId).hidden = buttonId !== tab;
   }
   document.getElementById('sheet-title').textContent = { 'tree-tab': 'Model', 'parts-tab': 'Parts', 'settings-tab': 'Settings' }[tab];
-  document.body.classList.add('sheet-open');
-  document.getElementById('sheet-toggle').setAttribute('aria-expanded', 'true');
+  setSheetOpen(true);
 }
 for (const tab of ['tree-tab', 'parts-tab', 'settings-tab']) {
-  document.getElementById(tab)?.addEventListener('click', () => selectSheetTab(tab));
+  document.getElementById(tab)?.addEventListener('click', () => selectSheetTab(tab, true));
 }
-document.getElementById('sheet-toggle')?.addEventListener('click', event => {
-  const open = document.body.classList.toggle('sheet-open');
-  event.currentTarget.setAttribute('aria-expanded', String(open));
+document.getElementById('sheet-toggle')?.addEventListener('click', () => {
+  const open = !document.body.classList.contains('sheet-open');
+  if (open) selectSheetTab(selectedSheetTab);
+  else setSheetOpen(false);
 });
 ui.focusSelection?.addEventListener('click', () => {
   focusOrShowAllSelection();
