@@ -67,9 +67,18 @@ def test_machined_space_report_uses_resolved_records_and_keeps_stock_as_blank(ro
     )
 
     table = _space_operations_table(result["parts"])
+    groove = next(
+        operation
+        for part in machined
+        for operation in part["operations"]
+        if operation.get("input_type") == "groove"
+    )
     assert "Resolved machining operations" in table
     assert "joint/side-to-back/a" in table
     assert "user/side-edge-bore" in table
+    assert ">Groove<" in table
+    assert "offset 320 mm" in table
+    assert f"groove_length {groove['groove']['length']:g} mm" in table
     assert "unmachined stock minimum XYZ corner" in table
     assert "Depth runs inward" in table
 

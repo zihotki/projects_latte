@@ -385,7 +385,7 @@ def _machining_schema(*, joints: bool = False, nullable: bool = False) -> dict:
         "id": {"type": "string", "minLength": 1, "pattern": "^[^/]+$"},
         "part_id": text, "part_a": text, "part_b": text,
         "face": face, "edge": face, "face_a": face, "face_b": face,
-        "u": position, "v": position, "start": position,
+        "u": position, "v": position, "start": position, "offset": position,
         "size_u": positive, "size_v": positive, "depth": positive,
         "length": positive, "width": positive, "diameter": positive,
         "leg_a": positive, "leg_b": positive, "depth_a": positive, "depth_b": positive,
@@ -393,13 +393,14 @@ def _machining_schema(*, joints: bool = False, nullable: bool = False) -> dict:
     }
     definitions = {
         "Pocket": "id part_id face u v size_u size_v depth",
-        "Rabbet": "id part_id face edge start length width depth",
-        "Bevel": "id part_id face edge start length leg_a leg_b",
+        "Rabbet": "id part_id face edge width depth start length",
+        "Bevel": "id part_id face edge leg_a leg_b start length",
+        "Groove": "id part_id face edge offset width depth start length",
         "Bore": "id part_id face u v diameter depth",
         "Mortise": "id part_id face u v axis length width depth",
         "DominoJoint": "id part_a face_a part_b face_b centre axis length width depth_a depth_b",
     }
-    choices = ["DominoJoint"] if joints else ["Pocket", "Rabbet", "Bevel", "Bore", "Mortise"]
+    choices = ["DominoJoint"] if joints else ["Pocket", "Rabbet", "Bevel", "Groove", "Bore", "Mortise"]
     alternatives = []
     for name in choices:
         names = definitions[name].split()
@@ -407,7 +408,10 @@ def _machining_schema(*, joints: bool = False, nullable: bool = False) -> dict:
         props["type"] = {"type": "string", "enum": [name]}
         if "axis" in names:
             props["axis"] = {"type": "string", "enum": ["x", "y", "z"] if joints else ["u", "v"]}
-        alternatives.append({"type": "object", "properties": props, "required": ["type", *names], "additionalProperties": False})
+        required = ["type", *(key for key in names if not (name in ("Rabbet", "Bevel", "Groove") and key in ("start", "length")))]
+        if "length" in props and name in ("Rabbet", "Bevel", "Groove"):
+            props["length"] = {"type": ["number", "null"], "exclusiveMinimum": 0}
+        alternatives.append({"type": "object", "properties": props, "required": required, "additionalProperties": False})
     return {"type": ["array", "null"] if nullable else "array", "items": {"oneOf": alternatives}}
 
 

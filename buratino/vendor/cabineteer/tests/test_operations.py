@@ -1,10 +1,12 @@
 import pytest
 import asyncio
+from dataclasses import replace
 
 from cabineteer.operations import (
     Bevel,
     Bore,
     DominoJoint,
+    Groove,
     Mortise,
     Pocket,
     Rabbet,
@@ -76,8 +78,8 @@ def test_joint_resolves_one_centre_to_both_parts():
 def test_edge_and_mortise_bounds_and_duplicate_ids():
     parts = [part("/a", [0, 0, 0], [20, 100, 100])]
     cuts = [
-        Rabbet("r", "/a", "x+", "y-", 0, 100, 5, 4),
-        Bevel("v", "/a", "x+", "z+", 10, 50, 5, 4),
+        Rabbet("r", "/a", "x+", "y-", 5, 4, start=0, length=100),
+        Bevel("v", "/a", "x+", "z+", 5, 4, start=10, length=50),
         Mortise("m", "/a", "x+", 50, 50, "v", 30, 8, 10),
     ]
     assert [r["type"] for r in resolve_operations(parts, cuts, [])] == [
@@ -86,7 +88,7 @@ def test_edge_and_mortise_bounds_and_duplicate_ids():
         "bevel",
     ]
     with pytest.raises(ValueError, match="adjacent"):
-        resolve_operations(parts, [Rabbet("r", "/a", "x+", "x-", 0, 10, 5, 4)], [])
+        resolve_operations(parts, [Rabbet("r", "/a", "x+", "x-", 5, 4, length=10)], [])
     with pytest.raises(ValueError, match="duplicate"):
         resolve_operations(parts, [cuts[0], cuts[0]], [])
     with pytest.raises(ValueError, match="dimensions"):
@@ -147,7 +149,10 @@ def test_validation_errors_identify_input_part_and_field():
 
 
 def test_mcp_schemas_expose_all_tagged_inputs_and_fields():
-    tools = {tool.name: tool.input_schema for tool in asyncio.get_event_loop().run_until_complete(list_tools())}
+    tools = {
+        tool.name: tool.input_schema
+        for tool in asyncio.get_event_loop().run_until_complete(list_tools())
+    }
     for name in ("design_project", "update_project"):
         props = tools[name]["properties"]
         operations = props["operations"]["items"]["oneOf"]
@@ -155,11 +160,16 @@ def test_mcp_schemas_expose_all_tagged_inputs_and_fields():
             "Pocket",
             "Rabbet",
             "Bevel",
+            "Groove",
             "Bore",
             "Mortise",
         }
         for item in operations:
-            assert set(item["required"]) == set(item["properties"])
+            tag = item["properties"]["type"]["enum"][0]
+            optional = (
+                {"start", "length"} if tag in {"Rabbet", "Bevel", "Groove"} else set()
+            )
+            assert set(item["required"]) == set(item["properties"]) - optional
             assert item["additionalProperties"] is False
         joint = props["joints"]["items"]["oneOf"][0]
         assert joint["properties"]["type"]["enum"] == ["DominoJoint"]
@@ -168,4 +178,135 @@ def test_mcp_schemas_expose_all_tagged_inputs_and_fields():
             joint["properties"]["centre"]["minItems"]
             == joint["properties"]["centre"]["maxItems"]
             == 3
+        )
+
+
+def test_edge_spans_follow_current_stock_and_validate_bounds():
+    parts = [part("/a", [0, 0, 0], [20, 100, 100])]
+    cuts = [
+        Rabbet("r", "/a", "x+", "z-", 5, 4, start=12),
+        Bevel("b", "/a", "x+", "z+", 5, 4, start=20),
+    ]
+    records = resolve_operations(parts, cuts, [])
+    assert [(r["start"], r["length"]) for r in records] == [(20, 80), (12, 88)]
+    assert cuts[0].length is None
+    resized = part("/a", [0, 0, 0], [20, 120, 100])
+    assert resolve_operations([resized], [cuts[0]], [])[0]["length"] == 108
+    with pytest.raises(ValueError, match="length must be positive"):
+        resolve_operations(
+            parts, [Rabbet("zero", "/a", "x+", "z-", 5, 4, start=100)], []
+        )
+    with pytest.raises(ValueError, match="exceeds stock"):
+        resolve_operations(
+            parts, [Bevel("overrun", "/a", "x+", "z+", 5, 4, start=80, length=21)], []
+        )
+
+
+@pytest.mark.parametrize(
+    "face,edge,offset,expected",
+    [
+        ("x+", "z-", 20, ("pocket", 0, 20, 100, 6, 100)),
+        ("x+", "z+", 20, ("pocket", 0, 74, 100, 6, 100)),
+        ("x-", "y-", 20, ("pocket", 20, 0, 6, 100, 100)),
+        ("y-", "x+", 5, ("pocket", 9, 0, 6, 100, 100)),
+        ("y+", "x-", 5, ("pocket", 5, 0, 6, 100, 100)),
+        ("z+", "x+", 5, ("pocket", 9, 0, 6, 100, 100)),
+        ("z-", "y+", 5, ("pocket", 0, 89, 20, 6, 20)),
+    ],
+)
+def test_groove_resolves_to_pocket_at_named_edge(face, edge, offset, expected):
+    parts = [part("/a", [0, 0, 0], [20, 100, 100])]
+    groove = Groove("g", "/a", face, edge, offset, 6, 3)
+    record = resolve_operations(parts, [groove], [])[0]
+    assert record["type"] == expected[0]
+    assert (
+        record["u"],
+        record["v"],
+        record["size_u"],
+        record["size_v"],
+        record["groove"]["length"],
+    ) == expected[1:]
+    assert record["groove"]["edge"] == edge
+    assert record["groove"]["offset"] == offset
+
+
+def test_project_round_trip_preserves_automatic_edge_intent_and_groove_schema():
+    project = CabinetProject(
+        "edge-cuts",
+        space_model=SpaceModelSpec(Carcass(600, 700, 500), Space("root")),
+        operations=(
+            Rabbet("r", "/cabinet/carcass/side_left", "x+", "z-", 6, 3),
+            Groove("g", "/cabinet/carcass/side_left", "x+", "z-", 320, 6, 2),
+        ),
+    )
+    payload = project_to_dict(project)
+    assert payload["operations"][0]["length"] is None
+    restored = project_from_dict(payload)
+    assert restored.operations == project.operations
+    original_parts = restored.resolved_space_model().part_plan.parts
+    side = next(
+        part for part in original_parts if part["id"] == "/cabinet/carcass/side_left"
+    )
+    original_span = next(
+        op["length"] for op in side["operations"] if op["type"] == "rabbet"
+    )
+    resized = replace(
+        restored,
+        space_model=replace(
+            restored.space_model,
+            carcass=replace(restored.space_model.carcass, depth=600),
+        ),
+    )
+    resized_side = next(
+        part
+        for part in resized.resolved_space_model().part_plan.parts
+        if part["id"] == "/cabinet/carcass/side_left"
+    )
+    resized_span = next(
+        op["length"] for op in resized_side["operations"] if op["type"] == "rabbet"
+    )
+    assert resized_span == original_span + 100
+    tool_schemas = {
+        tool.name: tool.input_schema
+        for tool in asyncio.get_event_loop().run_until_complete(list_tools())
+    }
+    groove_schema = next(
+        item
+        for item in tool_schemas["design_project"]["properties"]["operations"]["items"][
+            "oneOf"
+        ]
+        if item["properties"]["type"]["enum"] == ["Groove"]
+    )
+    assert (
+        "start" not in groove_schema["required"]
+        and "length" not in groove_schema["required"]
+    )
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        Rabbet("bad", "/a", "x+", "z-", 5, 3, start="bad"),
+        Bevel("bad", "/a", "x+", "z-", 5, 3, start=float("nan")),
+        Groove("bad", "/a", "x+", "z-", "bad", 5, 3),
+    ],
+)
+def test_invalid_edge_fields_are_rejected_before_span_math(operation):
+    with pytest.raises(ValueError):
+        resolve_operations([part("/a", [0, 0, 0], [20, 100, 100])], [operation], [])
+
+
+def test_nonbox_edge_cuts_are_rejected_before_dimension_access():
+    profile = part("/a", [0, 0, 0], [20, 100, 100])
+    profile["profile"]["type"] = "profiled"
+    with pytest.raises(ValueError, match="only box profiles"):
+        resolve_operations([profile], [Groove("g", "/a", "x+", "z-", 20, 6, 3)], [])
+
+
+def test_stopped_mortise_length_cannot_be_null():
+    with pytest.raises(ValueError, match="length: expected positive"):
+        resolve_operations(
+            [part("/a", [0, 0, 0], [20, 100, 100])],
+            [Mortise("m", "/a", "x+", 50, 50, "u", None, 8, 5)],
+            [],
         )

@@ -15,7 +15,7 @@ Save this as `project.py` and run it with the locked Buratino Python runtime.
 The pocket uses the local stock frame of the cabinet's left side.
 
 ```python
-from cabineteer.operations import Pocket
+from cabineteer.operations import Groove, Pocket
 from cabineteer.project import CabinetProject, SpaceModelSpec
 from cabineteer.spaces import Carcass, Space
 
@@ -36,6 +36,11 @@ project = CabinetProject(
             face="x-",
             u=20, v=80, size_u=40, size_v=18, depth=6,
         ),
+        Groove(
+            id="lower-side-groove",
+            part_id="/cabinet/carcass/side_left",
+            face="x+", edge="z-", offset=80, width=6, depth=3,
+        ),
     ),
 )
 
@@ -49,16 +54,18 @@ change that path.
 
 ## Inputs
 
-All inputs are frozen data classes in `cabineteer.operations`. Put explicit
-dimensions in each input. Faces are `x-`, `x+`, `y-`, `y+`, `z-`, or `z+`.
+All inputs are frozen data classes in `cabineteer.operations`. Provide explicit
+cut dimensions. An edge span can follow its named edge to the end. Faces are
+`x-`, `x+`, `y-`, `y+`, `z-`, or `z+`.
 Face coordinates `(u, v)` use the remaining local axes in ascending XYZ order.
 The local origin is the minimum XYZ corner of the unmachined blank. Depth is
 positive inward from the selected face.
 
 ```python
 Pocket(id, part_id, face, u, v, size_u, size_v, depth)
-Rabbet(id, part_id, face, edge, start, length, width, depth)
-Bevel(id, part_id, face, edge, start, length, leg_a, leg_b)
+Rabbet(id, part_id, face, edge, width, depth, start=0, length=None)
+Bevel(id, part_id, face, edge, leg_a, leg_b, start=0, length=None)
+Groove(id, part_id, face, edge, offset, width, depth, start=0, length=None)
 Bore(id, part_id, face, u, v, diameter, depth)
 Mortise(id, part_id, face, u, v, axis, length, width, depth)
 DominoJoint(
@@ -69,7 +76,13 @@ DominoJoint(
 
 `Pocket` removes a rectangular prism. `Rabbet` names an adjacent edge; width
 and depth enter from their named faces. `Bevel` sweeps a right triangle along
-the edge. `Bore` is a round hole normal to a face. `Mortise` is an obround
+the edge. Their `start` defaults to zero. An omitted or null `length` follows
+the edge to its end; set a length for a stopped cut. The resolver recalculates
+automatic spans when stock size changes. `Groove` runs parallel to its named
+edge. Its `offset` measures inward from that edge to the near groove boundary.
+It also follows the edge end when `length` is omitted or null. The resolved
+groove uses the canonical pocket record. `Bore` is a round hole normal to a
+face. `Mortise` is an obround
 slot; its overall length must be at least its width. A `DominoJoint` describes
 one paired joint with one world-space centre, one world-space axis, common
 length and width, and explicit depth for each part. The resolver creates one

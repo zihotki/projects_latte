@@ -1,7 +1,7 @@
 """A maple drawer cabinet with explicit, CAD-independent machining records."""
 
 from cabineteer.hettich_eb20 import EB20_SLIDE_KEYS
-from cabineteer.operations import Bevel, Bore, DominoJoint, Pocket, Rabbet
+from cabineteer.operations import Bevel, Bore, DominoJoint, Groove, Pocket, Rabbet
 from cabineteer.project import CabinetProject, SpaceModelSpec
 from cabineteer.spaces import Carcass, DrawerBox, Space
 
@@ -65,8 +65,6 @@ project = CabinetProject(
             part_id="/cabinet/carcass/side_left",
             face="x+",
             edge="y+",
-            start=100,
-            length=200,
             width=6,
             depth=4,
         ),
@@ -75,10 +73,17 @@ project = CabinetProject(
             part_id="/cabinet/carcass/side_right",
             face="x+",
             edge="z+",
-            start=50,
-            length=160,
             leg_a=6,
             leg_b=4,
+        ),
+        Groove(
+            id="inner-side-groove",
+            part_id="/cabinet/carcass/side_left",
+            face="x+",
+            edge="z-",
+            offset=320,
+            width=6,
+            depth=2,
         ),
         Bore(
             id="side-edge-bore",

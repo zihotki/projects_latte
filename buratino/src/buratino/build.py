@@ -277,6 +277,8 @@ def _space_operations_table(parts: list[dict]) -> str:
                     "id",
                     "part_id",
                     "type",
+                    "input_type",
+                    "groove",
                     "source",
                     "face",
                     "edge",
@@ -288,11 +290,20 @@ def _space_operations_table(parts: list[dict]) -> str:
                 and isinstance(value, int | float)
                 and not isinstance(value, bool)
             }
+            if operation.get("input_type") == "groove":
+                groove = operation["groove"]
+                dimensions.update(
+                    offset=groove["offset"],
+                    groove_start=groove["start"],
+                    groove_length=groove["length"],
+                )
             references = [
                 str(operation[key])
                 for key in ("face", "edge", "axis")
                 if operation.get(key) is not None
             ]
+            if operation.get("input_type") == "groove":
+                references.append(str(operation["groove"]["edge"]))
             pairing = ""
             if operation.get("joint_id"):
                 pairing = (
@@ -301,11 +312,12 @@ def _space_operations_table(parts: list[dict]) -> str:
             dimension_text = ", ".join(
                 f"{key} {value:g} mm" for key, value in dimensions.items()
             )
+            operation_type = operation.get("input_type", operation.get("type", ""))
             rows.append(
                 "<tr>"
                 f"<td>{html.escape(part['id'])}</td>"
                 f"<td>{html.escape(str(operation.get('id', '')))}</td>"
-                f"<td>{html.escape(str(operation.get('type', '')).title())}</td>"
+                f"<td>{html.escape(str(operation_type).title())}</td>"
                 f"<td>{html.escape(str(operation.get('source', '')))}</td>"
                 f"<td>{html.escape(', '.join(references))}</td>"
                 f"<td>{html.escape(dimension_text)}</td>"

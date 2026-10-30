@@ -43,7 +43,7 @@ from .layout import (LayoutNode, LayoutLeaf, Frame, Row, Stack, CabinetRef, Boun
 from .spaces import (Carcass, Space, Split, Divider, Fixed, Fr, DrawerBox, Door,
                      AppliedDrawerFront, AppliedFaceboard, AssemblyModule, AssemblyRef,
                      Insets, SpaceCabinetDefinition, Natural, ResolvedModel, resolve_model, _input)
-from .operations import Pocket, Rabbet, Bevel, Bore, Mortise, DominoJoint, OPERATIONS
+from .operations import Pocket, Rabbet, Bevel, Groove, Bore, Mortise, DominoJoint, OPERATIONS
 from .profiles import (
     ProfileAssembly,
     ProfileAssemblySpec, RoofProfile, ProfiledBox, ProfileFaceSpec,
@@ -263,7 +263,7 @@ def _read_input(value):
         SpaceCabinetDefinition, CabinetRef, Frame, Row, Stack, LayoutLeaf, Bounds3D,
         ProfileAssemblySpec, RoofProfile, ProfiledBox, ProfileFaceSpec,
         ProfileDrawerSpec, ProfileShelfSpec, ProfileLowerDrawerSpec,
-        Pocket, Rabbet, Bevel, Bore, Mortise, DominoJoint,
+        Pocket, Rabbet, Bevel, Groove, Bore, Mortise, DominoJoint,
     )}
     if isinstance(value, list):
         return tuple(_read_input(item) for item in value)

@@ -1,6 +1,6 @@
 """CAD-independent subtractive cuts in unmachined part coordinates."""
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import math
 
 TOLERANCE = 1e-6
@@ -24,10 +24,10 @@ class Rabbet:
     part_id: str
     face: str
     edge: str
-    start: float
-    length: float
     width: float
     depth: float
+    start: float = 0
+    length: float | None = None
 
 
 @dataclass(frozen=True)
@@ -36,10 +36,23 @@ class Bevel:
     part_id: str
     face: str
     edge: str
-    start: float
-    length: float
     leg_a: float
     leg_b: float
+    start: float = 0
+    length: float | None = None
+
+
+@dataclass(frozen=True)
+class Groove:
+    id: str
+    part_id: str
+    face: str
+    edge: str
+    offset: float
+    width: float
+    depth: float
+    start: float = 0
+    length: float | None = None
 
 
 @dataclass(frozen=True)
@@ -81,7 +94,7 @@ class DominoJoint:
     depth_b: float
 
 
-OPERATIONS = (Pocket, Rabbet, Bevel, Bore, Mortise)
+OPERATIONS = (Pocket, Rabbet, Bevel, Groove, Bore, Mortise)
 
 
 def _number(value, label, *, positive=False):
@@ -103,33 +116,44 @@ def _face(face):
     return "xyz".index(face[0])
 
 
-def _validate(part, op):
+def _validate_input_fields(part, op):
     if part.get("profile", {}).get("type") != "box":
         raise ValueError(f"{part['id']}: only box profiles are supported")
     transform = part["transform"]
     if transform["axes"] != [[1, 0, 0], [0, 1, 0], [0, 0, 1]]:
         raise ValueError(f"{part['id']}: unsupported transform")
+    for name in ("depth", "size_u", "size_v", "diameter", "width", "leg_a", "leg_b"):
+        if hasattr(op, name):
+            _number(getattr(op, name), name, positive=True)
+    for name in ("u", "v", "start"):
+        if hasattr(op, name):
+            _number(getattr(op, name), name)
+    if hasattr(op, "length"):
+        if op.length is None and not isinstance(op, (Rabbet, Bevel, Groove)):
+            raise ValueError("length: expected positive finite number")
+        if op.length is not None:
+            _number(op.length, "length", positive=True)
+    if isinstance(op, Groove):
+        _number(op.offset, "offset")
+    try:
+        _face(op.face)
+    except ValueError as exc:
+        raise ValueError(f"face: {exc}") from exc
+    if hasattr(op, "edge"):
+        try:
+            _face(op.edge)
+        except ValueError as exc:
+            raise ValueError(f"edge: {exc}") from exc
+
+
+def _validate(part, op):
+    _validate_input_fields(part, op)
     dims = part["profile"]["size"]
     try:
         n = _face(op.face)
     except ValueError as exc:
         raise ValueError(f"face: {exc}") from exc
     uv = [i for i in range(3) if i != n]
-    for name in (
-        "depth",
-        "size_u",
-        "size_v",
-        "diameter",
-        "length",
-        "width",
-        "leg_a",
-        "leg_b",
-    ):
-        if hasattr(op, name):
-            _number(getattr(op, name), name, positive=True)
-    for name in ("u", "v", "start"):
-        if hasattr(op, name):
-            _number(getattr(op, name), name)
 
     def fits(start, span, bound):
         return start >= -TOLERANCE and start + span <= bound + TOLERANCE
@@ -167,6 +191,50 @@ def _validate(part, op):
         raise ValueError(f"{op.id}: cut exceeds stock")
 
 
+def _resolve_edge_span(part, op):
+    """Resolve an automatic edge span against the current stock dimensions."""
+    normal_axis = _face(op.face)
+    edge_axis = _face(op.edge)
+    if normal_axis == edge_axis:
+        return op
+    along_axis = next(i for i in range(3) if i not in (normal_axis, edge_axis))
+    start = op.start
+    length = (
+        part["profile"]["size"][along_axis] - start if op.length is None else op.length
+    )
+    if length <= 0:
+        raise ValueError(f"{op.id}: length must be positive and fit the remaining edge")
+    return replace(op, length=length)
+
+
+def _groove_pocket(part, op):
+    """Map an edge groove input to the existing face-pocket representation."""
+    normal_axis = _face(op.face)
+    edge_axis = _face(op.edge)
+    if normal_axis == edge_axis:
+        return None
+    along_axis = next(i for i in range(3) if i not in (normal_axis, edge_axis))
+    dims = part["profile"]["size"]
+    length = dims[along_axis] - op.start if op.length is None else op.length
+    if length <= 0:
+        raise ValueError(f"{op.id}: length must be positive and fit the remaining edge")
+    uv_axes = [i for i in range(3) if i != normal_axis]
+    edge_extent = dims[edge_axis]
+    low = op.offset if op.edge[1] == "-" else edge_extent - op.offset - op.width
+    positions = {along_axis: op.start, edge_axis: low}
+    spans = {along_axis: length, edge_axis: op.width}
+    return Pocket(
+        op.id,
+        op.part_id,
+        op.face,
+        positions[uv_axes[0]],
+        positions[uv_axes[1]],
+        spans[uv_axes[0]],
+        spans[uv_axes[1]],
+        op.depth,
+    )
+
+
 def resolve_operations(parts, operations, joints):
     """Return validated cuts; XYZ is stock-local, with depth inward from face."""
     by_id = {p["id"]: p for p in parts}
@@ -175,19 +243,47 @@ def resolve_operations(parts, operations, joints):
     ids = set()
     result = []
 
-    def add(op, source, ident, **extra):
+    def add(op, source, ident, *, input_op=None, **extra):
         part = by_id.get(op.part_id)
         if part is None:
             raise ValueError(f"{op.id}: unknown part {op.part_id!r}")
+        input_op = op if input_op is None else input_op
         try:
+            _validate_input_fields(part, input_op)
+            if isinstance(op, (Rabbet, Bevel)):
+                op = _resolve_edge_span(part, op)
+            elif isinstance(op, Groove):
+                op = _groove_pocket(part, op)
+                if op is None:
+                    raise ValueError(f"{input_op.id}: edge must be adjacent to face")
             _validate(part, op)
         except ValueError as exc:
             detail = str(exc)
             if source == "joint" and detail.startswith("depth:"):
                 detail = f"depth_{extra['joint_side']}:" + detail[len("depth:") :]
-            raise ValueError(f"{source} {op.id} part {op.part_id}: {detail}") from exc
+            raise ValueError(
+                f"{source} {input_op.id} part {input_op.part_id}: {detail}"
+            ) from exc
         data = asdict(op)
         data.update(id=ident, type=type(op).__name__.lower(), source=source, **extra)
+        if isinstance(input_op, Groove):
+            along_axis = next(
+                i
+                for i in range(3)
+                if i not in (_face(input_op.face), _face(input_op.edge))
+            )
+            data["groove"] = {
+                "edge": input_op.edge,
+                "offset": input_op.offset,
+                "width": input_op.width,
+                "start": input_op.start,
+                "length": (
+                    input_op.length
+                    if input_op.length is not None
+                    else part["profile"]["size"][along_axis] - input_op.start
+                ),
+            }
+            data["input_type"] = "groove"
         result.append(data)
 
     for item in (*operations, *joints):
