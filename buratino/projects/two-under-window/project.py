@@ -28,7 +28,7 @@ variables = {
         "Drawer fronts have 2 mm reveals and a 3 mm top reveal; confirm handles.",
         "A 50 mm deep, 18 mm thick rail spans the cabinet front between drawers; "
         "Domino joints are modeled at both ends; confirm support.",
-        "Drawer bottoms use 12 mm plywood in 6 mm deep grooves with a 13 mm "
+        "Drawer bottoms use 12 mm plywood in 8 mm deep grooves with a 13 mm "
         "bottom inset.",
         "Drawer boxes are 544 mm deep, leaving 10 mm behind in the 554 mm clear body. "
         "The 500 mm runner travel leaves the rear 44 mm inside at full travel.",
@@ -65,7 +65,7 @@ _drawer = {
     "side_thickness": 18,
     "front_back_thickness": 18,
     "bottom_thickness": 12,
-    "bottom_dado_depth": 6,
+    "bottom_dado_depth": 8,
     "bottom_dado_inset": 13,
     "corner_joinery": DominoJoinery(end_offsets=(60, 60), spacing=90),
     "material": "plywood",

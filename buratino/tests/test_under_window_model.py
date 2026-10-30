@@ -18,7 +18,7 @@ _PROVIDER_CSV_SHA256 = {
         "e11d656ef37bc3f65ffe385fe1ea72521164d0908e81c70fcc52312d55717f64"
     ),
     "zagenzagen-plywood-panel-12mm-58d0115cf732-001.csv": (
-        "f96ca5a425f64a19f081857f41c655e3d5128acfc8da7f7e8ef239704729cc14"
+        "ba40f3f842d98c5b694457f0e314cf52b07cccb0b0bade9e1a9cd6205cd07886"
     ),
     "zagenzagen-plywood-panel-18mm-109afb8af209-001.csv": (
         "244e52435159161e2de00b61d697cdbaaba8495e836b4217e436dc13b6f88732"
@@ -27,7 +27,7 @@ _PROVIDER_CSV_SHA256 = {
         "8abc4b1e18ba239cf8c5e0fb4cfc42979f493c58392973c9bdae131ec5bb65e6"
     ),
     "opmaatzagen-plywood-panel-12mm-58d0115cf732-001.csv": (
-        "1f8c1d6099202a610b6aca5d4d56aa022177f3b059d8fc42a607edb9791a5d7c"
+        "d33882407552b22b72052821633042756c83c0b8fedf0b32e637cb81e84fb261"
     ),
     "opmaatzagen-plywood-panel-18mm-109afb8af209-001.csv": (
         "40564d43e955822f2d549e243f78a89a2f051f6d6ee86e82359cb1d043cdf6d2"
@@ -93,7 +93,13 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
     parts = {p["id"]: p for p in result["parts"]}
     for part in parts.values():
         if "/box-" in part["id"] and part["id"].endswith("/bottom"):
-            assert part["profile"]["size"] == [949, 520, 12]
+            assert part["profile"]["size"] == [953, 524, 12]
+        elif "/box-" in part["id"]:
+            grooves = [
+                op for op in part["operations"] if op.get("role") == "bottom_groove"
+            ]
+            assert len(grooves) == 1 and grooves[0]["depth"] == 8
+            assert part["material"] == "plywood"
         elif "/carcass/" in part["id"] or part["id"].endswith("/front-rail"):
             assert part["material"] == "melamine"
         else:
