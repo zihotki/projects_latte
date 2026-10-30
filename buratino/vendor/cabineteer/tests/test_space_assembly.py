@@ -6,7 +6,17 @@ from cabineteer.space_assembly import resolve_space_assembly
 from cabineteer.layout import CabinetRef, Row
 from cabineteer.space_adapter import space_model_records
 from cabineteer.spaces import (AssemblyModule, AssemblyRef, Carcass, Divider, Door,
-                               Fixed, Fr, Insets, Space, SpaceCabinetDefinition, Split)
+                               DrawerBox, Fixed, Fr, Insets, Space, SpaceCabinetDefinition, Split,
+                               resolve_model)
+
+
+def assert_box_aliases(part):
+    dimensions = part["stock"]["dimensions"]
+    origin = part["transform"]["translation"]
+    assert part["size"] == dimensions
+    assert part["profile"]["size"] == dimensions
+    assert part["origin"] == origin
+    assert part["bounds"] == [origin, [a+b for a,b in zip(origin, dimensions)]]
 
 
 def project(*, layout=None, host=None, cabinets=(), modules=()):
@@ -23,6 +33,53 @@ def test_adjacent_cabinets_keep_instance_ids_and_front_seam():
     records = space_model_records(plan)
     assert {p["id"] for p in records["parts"]} == {p["id"] for p in plan.part_plan.parts}
     assert recipe.carcass.width == Fr()
+    for part in plan.part_plan.parts:
+        assert_box_aliases(part)
+    fronts = [p for p in plan.part_plan.parts if p["kind"] == "door"]
+    assert len(fronts) == 2
+    assert [p["stock"]["dimensions"][0] for p in fronts] == [717, 717]
+
+
+def test_nested_offset_keeps_box_aliases_and_local_drawer_operations():
+    module_root = Space("insert", content=DrawerBox("drawer", 30))
+    local = resolve_model(Carcass(400, 400, 400), module_root, _bare=True)
+    local_side = next(p for p in local.part_plan.parts if p["id"].endswith("/side_L"))
+    module = AssemblyModule("drawer_module", module_root, Fr(), Fr(), Fr())
+    host = SimpleNamespace(
+        carcass=Carcass(500, 500, 500),
+        root=Space("inside", content=AssemblyRef(
+            "nested", "drawer_module", Insets(left=17, front=23, bottom=31))),
+        fronts=(),
+    )
+    plan = resolve_space_assembly(project(host=host, modules=(module,)))
+    nested_side = next(p for p in plan.part_plan.parts if p["id"].endswith("/side_L"))
+
+    # The host carcass adds its 18 mm side datum on X and Z, then each inset
+    # adds once to the nested module placement.
+    assert nested_side["transform"]["translation"] == [local_side["transform"]["translation"][0] + 35,
+                                                          local_side["transform"]["translation"][1] + 23,
+                                                          local_side["transform"]["translation"][2] + 49]
+    assert_box_aliases(nested_side)
+    local_coordinates = [
+        (operation["face"], operation["u"], operation["v"], operation["depth"])
+        for operation in local_side["operations"]
+    ]
+    nested_coordinates = [
+        (operation["face"], operation["u"], operation["v"], operation["depth"])
+        for operation in nested_side["operations"]
+    ]
+    assert nested_coordinates == local_coordinates
+
+
+def test_box_part_records_do_not_share_mutable_aliases():
+    from cabineteer.space_parts import box_part
+
+    first = box_part("a", "frame", [18, 40, 100], [1, 2, 3], "wood", 18, 0)
+    second = box_part("b", "frame", [18, 40, 100], [1, 2, 3], "wood", 18, 0)
+    for field in ("size", "origin", "bounds", "profile", "stock", "transform"):
+        assert first[field] is not second[field]
+    assert first["size"] is not first["stock"]["dimensions"]
+    assert first["size"] is not first["profile"]["size"]
 
 
 def test_nested_bare_modules_and_host_door():

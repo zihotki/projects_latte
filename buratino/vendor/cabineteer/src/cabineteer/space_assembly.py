@@ -14,6 +14,7 @@ from .layout import CabinetRef, Frame, Row, Stack, resolve_layout
 from .spaces import (AppliedDrawerFront, AppliedFaceboard, AssemblyRef, Carcass,
                      Divider, Door, DrawerBox, Insets, PhysicalPartPlan, ResolvedModel, Space, Split, _input, _integer,
                      _name, _number, resolve_model)
+from .space_parts import box_part, check_box_part, update_box_part
 
 
 def _bounds(origin, size):
@@ -341,12 +342,17 @@ def resolve_space_assembly(project):
                     item[key] = qualify(item[key])
             if "boundaries" in item:
                 item["boundaries"] = {k: qualify(v) for k, v in item["boundaries"].items()}
-            if "origin" in item:
-                item["origin"] = [a+b for a,b in zip(item["origin"], offset)]
-            if "bounds" in item:
-                item["bounds"] = [[a+b for a,b in zip(point, offset)] for point in item["bounds"]]
-            if "transform" in item:
-                item["transform"]["translation"] = [a+b for a,b in zip(item["transform"]["translation"], offset)]
+            stock = item.get("stock")
+            transform = item.get("transform")
+            if isinstance(stock, dict) and "dimensions" in stock and isinstance(transform, dict) and "translation" in transform:
+                update_box_part(item, translation=[a+b for a,b in zip(transform["translation"], offset)])
+            else:
+                if "origin" in item:
+                    item["origin"] = [a+b for a,b in zip(item["origin"], offset)]
+                if "bounds" in item:
+                    item["bounds"] = [[a+b for a,b in zip(point, offset)] for point in item["bounds"]]
+                if "transform" in item:
+                    item["transform"]["translation"] = [a+b for a,b in zip(item["transform"]["translation"], offset)]
             for op in item.get("operations", []):
                 op["part_id"] = qualify(op["part_id"])
                 op["id"] = f"drawer/{op['part_id']}/{op['role']}"
@@ -476,7 +482,7 @@ def resolve_space_assembly(project):
                     pos = [a+b for a,b in zip(placement.origin_mm, rail.origin_mm)]
                     sz = [rail.width_mm, rail.depth_mm, rail.height_mm]
                     axis = 1 if rail.name in ("front", "back") else 0
-                    part = dict(id=path+"/"+rail.name, kind="frame", origin=pos, size=sz, bounds=[pos, [a+b for a,b in zip(pos,sz)]], material=node.material, thickness=node.stock_mm, profile=dict(type="box", size=sz), stock=dict(dimensions=sz, thickness=node.stock_mm, thickness_axis=axis), transform=dict(translation=pos, axes=[[1,0,0],[0,1,0],[0,0,1]]), operations=[])
+                    part = box_part(path+"/"+rail.name, "frame", sz, pos, node.material, node.stock_mm, axis)
                     if host and any(a < b-1e-6 or c > d+1e-6 for a,b,c,d in zip(part["bounds"][0], host[0], part["bounds"][1], host[1])):
                         raise ValueError(f"{part['id']}: part protrudes outside host clear space")
                     parts.append(part)
@@ -505,12 +511,11 @@ def resolve_space_assembly(project):
         if face["inset"]: continue
         x0, x1, z0, z1 = resolved_fronts[face["id"]]
         part = by_id[face["id"]]
-        part["origin"][0], part["origin"][2] = x0, z0
-        part["size"][0], part["size"][2] = x1-x0, z1-z0
-        part["bounds"] = [list(part["origin"]), [a+b for a,b in zip(part["origin"],part["size"])]]
-        part["transform"]["translation"] = list(part["origin"])
-        part["profile"]["size"] = list(part["size"])
-        part["stock"]["dimensions"] = list(part["size"])
+        translation = list(part["transform"]["translation"])
+        dimensions = list(part["stock"]["dimensions"])
+        translation[0], translation[2] = x0, z0
+        dimensions[0], dimensions[2] = x1-x0, z1-z0
+        update_box_part(part, translation=translation, dimensions=dimensions)
         face["origin"], face["size"] = list(part["origin"]), list(part["size"])
         host = part_hosts.get(part["id"])
         if host and any(a < b-1e-6 or c > d+1e-6 for a,b,c,d in zip(part["bounds"][0], host[0], part["bounds"][1], host[1])):
@@ -531,6 +536,9 @@ def resolve_space_assembly(project):
     resolve_edge_bands(parts, getattr(project, "edge_banding", ()))
     from .part_grain import resolve_part_grain
     resolve_part_grain(parts, getattr(project, "part_grain", ()))
+    invalid = [part["id"] for part in parts if not check_box_part(part)]
+    if invalid:
+        raise ValueError(f"inconsistent Space physical part geometry: {', '.join(invalid)}")
     occupied = _part_bounds(parts)
     if occupied and any(occupied["min_"+axis] < structural["min_"+axis] - 1e-6 or occupied["max_"+axis] > structural["max_"+axis] + 1e-6 for axis in "xyz"):
         diagnostics.append(dict(code="occupied_overhang", structural_bounds=structural, occupied_bounds=occupied))

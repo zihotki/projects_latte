@@ -1643,6 +1643,9 @@ new GLTFLoader().parse(b64ToBuffer(GLB_B64), '', (gltf) => {{
   // parsing is honoured instead of reverted.
   if (currentFinishKey) setShowFinish(currentFinishKey);
   window.cabineteerViewer.model = model;
+  // The single GLB scene root is CadQuery's CAD-to-GLTF basis node.
+  // Keep it explicit for stock-local overlays; model is moved to the floor below.
+  window.cabineteerViewer.cadRoot = model.children.length === 1 ? model.children[0] : null;
   scene.add(model);
 
   // Sit model on grid and centre camera

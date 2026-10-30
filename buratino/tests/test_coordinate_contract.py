@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import math
 import struct
+import subprocess
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -145,9 +147,10 @@ def _cad_bounds(shape):
     )
 
 
-def test_nested_space_report_cad_and_glb_share_stock_frame(root, tmp_path):
+@pytest.mark.parametrize("cut_kind", ["pocket", "groove", "rabbet"])
+def test_nested_space_report_cad_and_glb_share_stock_frame(root, tmp_path, cut_kind):
     from cabineteer.edge_banding import EdgeBand
-    from cabineteer.operations import Pocket
+    from cabineteer.operations import Groove, Pocket, Rabbet
     from cabineteer.part_grain import PartGrain
 
     project = load_project(root / "projects/space-nested-inserts")
@@ -172,19 +175,27 @@ def test_nested_space_report_cad_and_glb_share_stock_frame(root, tmp_path):
     assert dimensions[1] > 30 and dimensions[2] > 30
 
     pocket_width = 12
-    pocket = Pocket(
-        "coordinate-check",
-        target_id,
-        "x+",
-        (dimensions[1] - pocket_width) / 2,
-        (dimensions[2] - pocket_width) / 2,
-        pocket_width,
-        pocket_width,
-        2,
-    )
+    cuts = {
+        "pocket": Pocket(
+            "coordinate-check",
+            target_id,
+            "x+",
+            (dimensions[1] - pocket_width) / 2,
+            (dimensions[2] - pocket_width) / 2,
+            pocket_width,
+            pocket_width,
+            2,
+        ),
+        "groove": Groove(
+            "coordinate-check", target_id, "x+", "z-", 20, 6, 2, start=15, length=30
+        ),
+        "rabbet": Rabbet(
+            "coordinate-check", target_id, "x+", "y-", 8, 2, start=15, length=30
+        ),
+    }
     native = replace(
         project.native_project,
-        operations=(pocket,),
+        operations=(cuts[cut_kind],),
         edge_banding=(EdgeBand("front-edge", target_id, "y-"),),
         part_grain=(PartGrain("grain", target_id, "z"),),
     )
@@ -232,6 +243,22 @@ def test_nested_space_report_cad_and_glb_share_stock_frame(root, tmp_path):
             if all(abs(point[normal_axis] - plane) < 0.02 for point in triangle):
                 face_area += magnitude / 2
         assert face_area > 1, f"missing broad grain face at {plane} mm"
+
+    metadata = tmp_path / "part.json"
+    metadata.write_text(json.dumps(record), encoding="utf-8")
+    viewer_tests = Path(__file__).parents[1] / "vendor/cabineteer/tests"
+    subprocess.run(
+        [
+            "node",
+            "--no-warnings",
+            "--experimental-loader",
+            str(viewer_tests / "three_test_loader.mjs"),
+            str(viewer_tests / "test_viewer_stock_boundary.mjs"),
+            str(output),
+            str(metadata),
+        ],
+        check=True,
+    )
 
 
 @pytest.mark.parametrize("part_id", ["upper.side_left", "roof.cap.slope"])

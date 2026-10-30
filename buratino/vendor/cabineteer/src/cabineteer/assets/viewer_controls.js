@@ -556,77 +556,48 @@ function createProfileGrainMark(role, part, meshes, partNode) {
   if (!axisNames.includes(grainAxis) || !axisNames.includes(normalAxis) || grainAxis === normalAxis) {
     return null;
   }
-
-  partNode.updateWorldMatrix(true, false);
-  const worldToPart = partNode.matrixWorld.clone().invert();
-  const expectedNormal = new THREE.Vector3();
-  expectedNormal[normalAxis] = 1;
-  const mainFaceRange = profileMainFaceRange(part, expectedNormal);
-  if (!mainFaceRange) return null;
-
+  const frame = stockFrameTriangles(part, meshes, partNode);
+  if (!frame) return null;
   const grainDirection = new THREE.Vector3();
   grainDirection[grainAxis] = 1;
   const surfaces = [];
 
-  for (const mesh of meshes) {
-    if (!mesh.geometry) continue;
-    mesh.updateWorldMatrix(true, false);
-    const geometry = mesh.geometry;
-    const positions = geometry.attributes.position;
-    if (!positions) continue;
-    const relative = worldToPart.clone().multiply(mesh.matrixWorld);
-    const index = geometry.index;
-    const vertexCount = index ? index.count : positions.count;
-    for (let triangle = 0; triangle < Math.floor(vertexCount / 3); triangle += 1) {
-      const vertices = [];
-      for (let corner = 0; corner < 3; corner += 1) {
-        const item = triangle * 3 + corner;
-        const vertexIndex = index ? index.getX(item) : item;
-        vertices.push(new THREE.Vector3().fromBufferAttribute(positions, vertexIndex).applyMatrix4(relative));
-      }
-      const faceNormal = vertices[1].clone().sub(vertices[0])
-        .cross(vertices[2].clone().sub(vertices[0])).normalize();
-      const normalAlignment = faceNormal.dot(expectedNormal);
-      if (!isOuterProfileFace(
-        normalAlignment,
-        expectedNormal.dot(vertices[0]),
-        mainFaceRange.min,
-        mainFaceRange.max,
-      )) continue;
-      const surfaceGrain = grainDirection.clone()
-        .addScaledVector(faceNormal, -grainDirection.dot(faceNormal));
-      if (surfaceGrain.lengthSq() < 1e-10) continue;
-      surfaceGrain.normalize();
-      const surfaceAcross = faceNormal.clone().cross(surfaceGrain).normalize();
-      const plane = faceNormal.dot(vertices[0]);
-      let surface = surfaces.find(item => item.normal.dot(faceNormal) > 0.9999 &&
-        Math.abs(item.plane - plane) < 0.02);
-      if (!surface) {
-        surface = {
-          normal: faceNormal,
-          grain: surfaceGrain,
-          across: surfaceAcross,
-          plane,
-          triangles: [],
-          acrossMin: Infinity,
-          acrossMax: -Infinity,
-          grainMin: Infinity,
-          grainMax: -Infinity,
-        };
-        surfaces.push(surface);
-      }
-      const projectedTriangle = vertices.map(vertex => ({
-        grain: vertex.dot(surface.grain),
-        across: vertex.dot(surface.across),
-      }));
-      for (const point of projectedTriangle) {
-        surface.acrossMin = Math.min(surface.acrossMin, point.across);
-        surface.acrossMax = Math.max(surface.acrossMax, point.across);
-        surface.grainMin = Math.min(surface.grainMin, point.grain);
-        surface.grainMax = Math.max(surface.grainMax, point.grain);
-      }
-      surface.triangles.push(projectedTriangle);
+  for (const {vertices, normal: faceNormal} of selectStockMainFaceTriangles(
+    frame.triangles, normalAxis, frame.size,
+  )) {
+    const surfaceGrain = grainDirection.clone()
+      .addScaledVector(faceNormal, -grainDirection.dot(faceNormal));
+    if (surfaceGrain.lengthSq() < 1e-10) continue;
+    surfaceGrain.normalize();
+    const surfaceAcross = faceNormal.clone().cross(surfaceGrain).normalize();
+    const plane = faceNormal.dot(vertices[0]);
+    let surface = surfaces.find(item => item.normal.dot(faceNormal) > 0.9999 &&
+      Math.abs(item.plane - plane) < 0.02);
+    if (!surface) {
+      surface = {
+        normal: faceNormal,
+        grain: surfaceGrain,
+        across: surfaceAcross,
+        plane,
+        triangles: [],
+        acrossMin: Infinity,
+        acrossMax: -Infinity,
+        grainMin: Infinity,
+        grainMax: -Infinity,
+      };
+      surfaces.push(surface);
     }
+    const projectedTriangle = vertices.map(vertex => ({
+      grain: vertex.dot(surface.grain),
+      across: vertex.dot(surface.across),
+    }));
+    for (const point of projectedTriangle) {
+      surface.acrossMin = Math.min(surface.acrossMin, point.across);
+      surface.acrossMax = Math.max(surface.acrossMax, point.across);
+      surface.grainMin = Math.min(surface.grainMin, point.grain);
+      surface.grainMax = Math.max(surface.grainMax, point.grain);
+    }
+    surface.triangles.push(projectedTriangle);
   }
 
   function mergeIntervals(intervals) {
@@ -703,26 +674,57 @@ function createProfileGrainMark(role, part, meshes, partNode) {
     arrowVertices.push(pointOnFace(surface, start, centerAcross), tip, tip, left, tip, right);
   }
 
-  return createGrainMarkGroup(role, partNode, hatchVertices, arrowVertices);
+  const inPart = points => points.map(point => point.clone().applyMatrix4(frame.stockToPart));
+  return createGrainMarkGroup(role, partNode, inPart(hatchVertices), inPart(arrowVertices));
 }
 
-function profileMainFaceRange(part, expectedNormal) {
-  const axis = part.surface_normal_axis_local;
-  const axisIndex = ['x', 'y', 'z'].indexOf(axis);
+function stockFrameTriangles(part, meshes, partNode) {
+  const {THREE, cadRoot} = viewer;
   const dimensions = part.stock?.dimensions;
-  if (axisIndex < 0 || !Array.isArray(dimensions) || dimensions.length !== 3 ||
-      !Number.isFinite(dimensions[axisIndex]) || dimensions[axisIndex] <= 0 ||
-      Math.abs(expectedNormal[axis] - 1) > 1e-7) return null;
-  const origin = part.transform?.translation ?? part.origin ?? [0, 0, 0];
-  const originProjection = origin[0] * expectedNormal.x +
-    origin[1] * expectedNormal.y + origin[2] * expectedNormal.z;
-  return {min: originProjection, max: originProjection + dimensions[axisIndex]};
+  const origin = part.transform?.translation;
+  const axes = part.transform?.axes;
+  if (!cadRoot || !Array.isArray(dimensions) || dimensions.length !== 3 ||
+      dimensions.some(value => !Number.isFinite(value) || value <= 0) ||
+      !Array.isArray(origin) || origin.length !== 3 ||
+      origin.some(value => !Number.isFinite(value)) ||
+      !Array.isArray(axes) || axes.length !== 3 ||
+      axes.some((basis, i) => !Array.isArray(basis) || basis.length !== 3 ||
+        basis.some((value, j) => value !== (i === j ? 1 : 0)))) return null;
+  cadRoot.updateWorldMatrix(true, false);
+  partNode.updateWorldMatrix(true, false);
+  const stockToCad = new THREE.Matrix4().makeTranslation(...origin);
+  const cadToStock = stockToCad.clone().invert().multiply(cadRoot.matrixWorld.clone().invert());
+  const stockToPart = partNode.matrixWorld.clone().invert()
+    .multiply(cadRoot.matrixWorld).multiply(stockToCad);
+  const triangles = [];
+  for (const mesh of meshes) {
+    const geometry = mesh.geometry;
+    const positions = geometry?.attributes.position;
+    if (!positions) continue;
+    mesh.updateWorldMatrix(true, false);
+    const toStock = cadToStock.clone().multiply(mesh.matrixWorld);
+    const index = geometry.index;
+    const count = index ? index.count : positions.count;
+    for (let item = 0; item + 2 < count; item += 3) {
+      const vertices = [0, 1, 2].map(corner => new THREE.Vector3()
+        .fromBufferAttribute(positions, index ? index.getX(item + corner) : item + corner)
+        .applyMatrix4(toStock));
+      const normal = vertices[1].clone().sub(vertices[0])
+        .cross(vertices[2].clone().sub(vertices[0])).normalize();
+      triangles.push({vertices, normal});
+    }
+  }
+  return {triangles, size: dimensions, stockToPart};
 }
 
-function isOuterProfileFace(normalAlignment, plane, minPlane, maxPlane) {
-  if (Math.abs(normalAlignment) < 0.9999) return false;
-  const outerPlane = normalAlignment > 0 ? maxPlane : minPlane;
-  return Math.abs(plane - outerPlane) < 0.02;
+function selectStockMainFaceTriangles(triangles, normalAxis, size) {
+  const axis = ['x', 'y', 'z'].indexOf(normalAxis);
+  if (axis < 0) return [];
+  return triangles.filter(({vertices, normal}) => {
+    if (Math.abs(normal[normalAxis]) < 0.9999) return false;
+    const plane = normal[normalAxis] > 0 ? size[axis] : 0;
+    return vertices.every(vertex => Math.abs(vertex[normalAxis] - plane) < 0.02);
+  });
 }
 
 function createGrainMarkGroup(role, partNode, hatchVertices, arrowVertices) {
@@ -760,9 +762,7 @@ function createGrainMark(role, meshes) {
   const part = result.parts.find(item => item.role === role);
   if (!part || !meshes.length || part.grain_axis_local == null) return null;
   const {THREE} = viewer;
-  let partNode = meshes[0];
-  while (partNode.parent && partNode.name !== role) partNode = partNode.parent;
-  if (partNode.name !== role) partNode = meshes[0].parent;
+  const partNode = partRoots.get(role) ?? meshes[0].parent;
   if (!partNode) return null;
   if (part.profile) return createProfileGrainMark(role, part, meshes, partNode);
   partNode.updateWorldMatrix(true, false);

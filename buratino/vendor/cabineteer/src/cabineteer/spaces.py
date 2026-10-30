@@ -15,6 +15,7 @@ from .door import DoorConfig
 from .hardware import OverlayType, get_slide
 from .joinery import DrawerJoineryStyle
 from .operations import drawer_pockets
+from .space_parts import box_part
 
 
 from .allocation import Fixed, Fr, Natural, allocate_tracks
@@ -235,7 +236,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
         part_ids.add(id)
         if any(v <= 0 for v in size):
             raise ValueError(f"{id}: invalid part dimensions {size}")
-        parts.append(dict(id=id, kind=kind, origin=list(origin), size=list(size), bounds=[list(origin), [a+b for a,b in zip(origin,size)]], material=material, thickness=thickness, profile={"type": "box", "size": list(size)}, stock={"dimensions": list(size), "thickness": thickness, "thickness_axis": thickness_axis}, transform={"translation": list(origin), "axes": [[1,0,0],[0,1,0],[0,0,1]]}, operations=[], **extra))
+        parts.append(box_part(id, kind, size, origin, material, thickness, thickness_axis, **extra))
 
     if not _bare:
         # Existing panel dimension helpers are the source of butt carcass stock.

@@ -55,6 +55,15 @@ origin = transform.translation
 bounds = [origin, origin + size]
 ```
 
+`stock.dimensions` and `transform.translation` are the authoritative values.
+The internal [Space part helper](../vendor/cabineteer/src/cabineteer/space_parts.py)
+derives `size`, `origin`, `profile.size`, and `bounds` from them. Part creation,
+nested placement, frame rails, and front seam resizing use that helper.
+The Space assembly resolver checks that the published values agree before it
+returns the plan. Update geometry through the helper; do not update the
+derived fields separately. Machining records remain stock-local and are not
+shifted with these world-coordinate fields.
+
 Nested cabinets and modules compose **translations only**. Each host origin,
 layout offset, and inset contributes once. `Row` advances along X; `Stack`
 advances along Z. A structural envelope sets the layout datum. Occupied bounds
@@ -155,12 +164,31 @@ This changes the basis, not the dimensions. The current viewer uses the same
 numeric millimetre values. Apply the basis conversion once. A different
 consumer must check units and node transforms at its import boundary.
 
-For Space grain marks, the viewer transforms mesh vertices into the named
-part node frame with `inverse(part.matrixWorld) * mesh.matrixWorld`. For a
-Space part with profile data, it clips triangles to the original stock main
-faces. Inset groove and rebate floors do not receive grain marks. For
-world-placed Space meshes, coordinates in the part frame still include CAD
-placement. Keep the stock datum when deriving face planes.
+For Space grain marks, one adapter converts exported mesh triangles into
+stock-local XYZ. The GLB loader exposes its CAD root explicitly. Let `T` be
+the stock translation matrix and `C` the CAD root's world matrix. With column
+vectors, the conversion is:
+
+```text
+mesh_to_stock = inverse(T) * inverse(C) * mesh.matrixWorld
+stock_to_part = inverse(part.matrixWorld) * C * T
+```
+
+The rightmost matrix applies first. The adapter reads the complete node
+chain, so placement can be in the vertices or a node transform. `inverse(C)`
+also removes the viewer's basis and display placement once. No finished-mesh
+bounds are used to recover the original stock datum.
+
+Face selection then uses only stock-local triangles and dimensions. Main
+faces are at zero and the stock thickness-axis size. Inset groove, pocket,
+and rebate floors do not receive grain marks. Generated marks are converted
+back to the part node once with `stock_to_part`, then remain attached to that
+node for opening poses. The adapter does not mutate manufacturing records.
+
+This adapter handles current translation-only Space box profiles. General
+`CabinetConfig` records without Space stock data retain their existing grain
+display path. Native profile report grain remains unknown; its L/W/T frame
+does not imply an authored grain direction.
 
 CAD assigns edge-band colors to surviving faces on the declared stock planes.
 It matches each face normal and center to the plane; the viewer does not infer
@@ -194,8 +222,8 @@ These implementation checks define the supported cases:
 | Nested placement uses translations and insets once | [Space assemblies](../vendor/cabineteer/tests/test_space_assembly.py), [CAD placements](../vendor/cabineteer/tests/test_space_assembly_cad.py) |
 | Cuts use the stock datum and positive inward depth | [Operation validation](../vendor/cabineteer/tests/test_operations.py), [CAD cuts on six faces](../vendor/cabineteer/tests/test_space_operations_cad.py) |
 | Profile frames reconstruct placed panel geometry | [Profiles](../vendor/cabineteer/tests/test_profiles.py), [profile consumers](../vendor/cabineteer/tests/test_profile_consumers.py) |
-| Grain axes retain stock meaning | [Part grain](../vendor/cabineteer/tests/test_space_part_grain.py), [main-face plane regression](../vendor/cabineteer/tests/test_viewer_profile_grain.js) |
-| Fresh exports retain placement, units, and the one root basis conversion | [Coordinate integration tests](../tests/test_coordinate_contract.py) |
+| Grain axes retain stock meaning | [Part grain](../vendor/cabineteer/tests/test_space_part_grain.py) |
+| Fresh exports retain placement, units, stock face selection, and the one root basis conversion | [Coordinate integration tests](../tests/test_coordinate_contract.py), [production viewer boundary check](../vendor/cabineteer/tests/test_viewer_stock_boundary.mjs) |
 
 These checks do not establish support for Space rotations or mirrors.
 
@@ -203,8 +231,14 @@ Run the export boundary checks in the locked runtime:
 
 ```sh
 ./buratino/bin/buratino test tests/test_coordinate_contract.py
-node buratino/vendor/cabineteer/tests/test_viewer_profile_grain.js
 ```
+
+The Space export cases call the production viewer adapter and face selector
+through Three.js and GLTFLoader in Node. They need Node and the locked viewer
+assets installed by `buratino setup`. The cases use a pocket, groove, and
+rebate on an offset part, with edge banding that splits its meshes. They check
+both main faces, rejection of inset floors, unchanged manufacturing metadata,
+and marks moving with the part.
 
 Before changing a coordinate boundary, check a nonzero placement and unequal
 dimensions. A symmetric box at the origin can hide an axis swap or a double
@@ -216,8 +250,6 @@ When you add a geometry representation, define its frame at the producer and
 add the corresponding consumer conversion. Do not infer its origin from the
 shape's current minimum corner, dimensions, or part name.
 
-The viewer grain regression must keep both original main faces where they
-survive and reject inset machining faces. A helper test alone cannot establish
-that the CAD exporter and viewer use the same frame. Pixel checks are still
-useful for overlay appearance and open poses; numeric bounds checks do not
-prove those visual details.
+Keep the original main faces where they survive and reject inset machining
+faces. Pixel checks remain useful for overlay appearance and the full door
+and drawer controls; triangle checks do not prove those visual details.
