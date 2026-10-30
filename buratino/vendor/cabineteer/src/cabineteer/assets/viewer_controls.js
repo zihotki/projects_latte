@@ -60,6 +60,12 @@ function grainLabel(part) {
     : 'Grain direction unknown';
 }
 
+function groupGrainLabel(group) {
+  if (group?.grain_direction === 'length') return 'Grain follows blank length';
+  if (group?.grain_direction === 'width') return 'Grain follows blank width';
+  return grainLabel(group);
+}
+
 function selectGroup(group) {
   selectedGroup = group?.id ?? null;
   selectedPartIds = new Set(group?.members ?? []);
@@ -77,7 +83,7 @@ function selectGroup(group) {
     ?.map(member => `${member.label}${member.profile ? ` · ${profileLabel(member.profile)}` : ''}`)
     .filter(Boolean);
   ui.caption.textContent = selected
-    ? `${selected.label} · ${selected.quantity} ${selected.quantity === 1 ? 'panel' : 'panels'} · ${selected.material} · ${selected.edge_treatment ?? 'Edge treatment unverified'} · ${grainLabel(selected)} · Blank dimensions only; profile is not a machining instruction${memberProfiles?.length ? ` · Members: ${[...new Set(memberProfiles)].join('; ')}` : ''}`
+    ? `${selected.label} · ${selected.quantity} ${selected.quantity === 1 ? 'panel' : 'panels'} · ${selected.material} · ${selected.edge_treatment ?? 'Edge treatment unverified'} · ${groupGrainLabel(selected)} · Blank dimensions only; profile is not a machining instruction${memberProfiles?.length ? ` · Members: ${[...new Set(memberProfiles)].join('; ')}` : ''}`
     : selectedLabel ? `${selectedLabel} selected.` : 'Select a part or row.';
 }
 
@@ -146,7 +152,7 @@ function renderTable() {
     const profileLabels = details
       .filter(member => member.profile)
       .map(member => `${member.label}: ${profileLabel(member.profile)}`);
-    row.title = `${group.label} · ${group.quantity} ${group.quantity === 1 ? 'panel' : 'panels'} · ${group.material} · ${grainLabel(group)}${profileLabels.length ? ` · ${[...new Set(profileLabels)].join('; ')}` : ''} · Profile machining unverified`;
+    row.title = `${group.label} · ${group.quantity} ${group.quantity === 1 ? 'panel' : 'panels'} · ${group.material} · ${groupGrainLabel(group)}${profileLabels.length ? ` · ${[...new Set(profileLabels)].join('; ')}` : ''} · Profile machining unverified`;
     const dims = group.blank_mm ?? group.finished_mm;
     const nameCell = document.createElement('td');
     nameCell.className = 'part-name';

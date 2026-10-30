@@ -3,6 +3,8 @@
 import hashlib
 import json
 
+from cabineteer.part_grain import grain_direction_for_stock
+
 
 def machining_signature(part: dict) -> str:
     """Return the canonical cut plan without per-part identity fields."""
@@ -23,13 +25,21 @@ def machining_signature(part: dict) -> str:
 
 def _signature(part: dict) -> tuple:
     dims = part.get("blank_mm") or part.get("finished_mm", {})
-    return (
+    signature = (
         dims["length"],
         dims["width"],
         dims["thickness"],
         part["material"],
         machining_signature(part),
     )
+    stock = part.get("stock")
+    if isinstance(stock, dict) and stock.get("thickness_axis") in (0, 1, 2):
+        return signature + (
+            "grain",
+            grain_direction_for_stock(part),
+            part.get("grain_status", "unverified"),
+        )
+    return signature
 
 
 def _group_id(signature: tuple) -> str:
@@ -81,7 +91,12 @@ def _label(parts: list[dict]) -> str:
 
 
 def _common(parts: list[dict], key: str) -> str:
-    values = {part.get(key, "unknown") for part in parts}
+    values = {
+        grain_direction_for_stock(part)
+        if key == "grain_direction"
+        else part.get(key, "unknown")
+        for part in parts
+    }
     return next(iter(values)) if len(values) == 1 else "mixed"
 
 
@@ -122,7 +137,11 @@ def group_cutting_blanks(parts: list[dict]) -> list[dict]:
                 "edge_treatment",
             ):
                 if key in part:
-                    detail[key] = part[key]
+                    detail[key] = (
+                        grain_direction_for_stock(part)
+                        if key == "grain_direction"
+                        else part[key]
+                    )
             member_details.append(detail)
         group = {
             "id": _group_id(signature),

@@ -7,6 +7,7 @@ import hashlib
 import json
 
 from .spaces import ResolvedModel
+from .part_grain import grain_direction_for_stock
 
 
 def space_model_records(model: ResolvedModel, cabinet_id: str = "cabinet") -> dict:
@@ -41,19 +42,19 @@ def space_model_records(model: ResolvedModel, cabinet_id: str = "cabinet") -> di
         if item["kind"] == "door":
             item.update(hinge_side=item.get("hinge_side", "right"),
                         preview_pose="illustrative_only")
+        item["grain_direction"] = grain_direction_for_stock(item)
         if motion in drawer_ids:
             item["instance_id"] = motion
         parts.append(item)
         key = (
             item["material"],
             *stock.values(),
-            item.get("grain_axis_local") or "",
+            item["grain_direction"],
             item.get("grain_status", "unverified"),
         )
         groups.setdefault(key, []).append(item)
     cutting_groups = [dict(id="space-group-" + hashlib.sha256(json.dumps(key, separators=(",", ":")).encode()).hexdigest()[:16], label=members[0]["label"],
         quantity=len(members), material=members[0]["material"],
-        grain_axis_local=members[0].get("grain_axis_local"),
         grain_direction=members[0].get("grain_direction", "unknown"),
         grain_status=members[0].get("grain_status", "unverified"),
         members=[p["id"] for p in members], blank_mm=members[0]["stock_mm"])

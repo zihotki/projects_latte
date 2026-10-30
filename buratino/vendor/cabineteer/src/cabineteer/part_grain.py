@@ -7,6 +7,38 @@ from dataclasses import dataclass
 _AXES = {"x", "y", "z", "none"}
 
 
+def grain_direction_for_stock(part: dict) -> str:
+    """Map authored local grain to the reported blank length or width.
+
+    The longest planar stock dimension is reported as blank length. For a
+    square panel, the first planar local axis in X/Y/Z order is the stable
+    length tie-breaker.
+    """
+    if part.get("grain_status") == "nondirectional":
+        return "none"
+    axis = part.get("grain_axis_local")
+    stock = part.get("stock")
+    if axis in {"x", "y", "z"} and isinstance(stock, dict):
+        dimensions = stock.get("dimensions")
+        thickness_axis = stock.get("thickness_axis")
+        if (
+            isinstance(dimensions, list | tuple)
+            and len(dimensions) == 3
+            and thickness_axis in (0, 1, 2)
+        ):
+            planar_axes = [index for index in range(3) if index != thickness_axis]
+            ordered_axes = sorted(
+                planar_axes, key=lambda index: (-float(dimensions[index]), index)
+            )
+            grain_index = "xyz".index(axis)
+            if grain_index == ordered_axes[0]:
+                return "length"
+            if grain_index == ordered_axes[1]:
+                return "width"
+    direction = part.get("grain_direction", "unknown")
+    return direction if direction in {"length", "width", "none"} else "unknown"
+
+
 @dataclass(frozen=True)
 class PartGrain:
     """Record stock-local grain intent for one exact resolved part."""

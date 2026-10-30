@@ -2,7 +2,7 @@ import asyncio
 import json
 
 import pytest
-from cabineteer.part_grain import PartGrain
+from cabineteer.part_grain import PartGrain, grain_direction_for_stock
 from cabineteer.project import (
     CabinetProject,
     SpaceModelSpec,
@@ -12,7 +12,7 @@ from cabineteer.project import (
     project_to_dict,
 )
 from cabineteer.space_adapter import space_model_records
-from cabineteer.spaces import Carcass, Space
+from cabineteer.spaces import Carcass, PhysicalPartPlan, ResolvedModel, Space
 
 
 def _project(part_grain=()):
@@ -91,14 +91,83 @@ def test_grain_intent_separates_same_blank_groups_and_records_csv_fields():
     back = parts["/cabinet/carcass/back"]
     assert top["transform"]["axes"] == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
     assert top["grain_axis_local"] == "x"
-    assert top["grain_direction"] == "x"
+    assert top["grain_direction"] == "width"
     assert top["grain_status"] == "confirmed"
     assert bottom["grain_axis_local"] == "y"
+    assert bottom["grain_direction"] == "length"
     assert back["grain_direction"] == "none"
     groups = records["viewer"]["cutting_groups"]
     top_group = next(group for group in groups if top["id"] in group["members"])
     bottom_group = next(group for group in groups if bottom["id"] in group["members"])
     assert top_group["id"] != bottom_group["id"]
+
+
+def test_stock_local_grain_normalizes_to_reported_blank_axes_for_both_groupers():
+    def part(part_id, dimensions, axis=None, direction="unknown", status="unverified"):
+        return {
+            "id": part_id,
+            "kind": "panel",
+            "role": part_id,
+            "origin": [0, 0, 0],
+            "size": list(dimensions),
+            "bounds": [[0, 0, 0], list(dimensions)],
+            "material": "maple",
+            "thickness": dimensions[2],
+            "stock": {
+                "dimensions": list(dimensions),
+                "thickness": dimensions[2],
+                "thickness_axis": 2,
+            },
+            "profile": {"type": "box", "size": list(dimensions)},
+            "transform": {
+                "translation": [0, 0, 0],
+                "axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            },
+            "operations": [],
+            "grain_axis_local": axis,
+            "grain_direction": direction,
+            "grain_status": status,
+        }
+
+    source_parts = [
+        part("long-x", (200, 100, 18), "x", "x", "confirmed"),
+        part("rotated-y", (100, 200, 18), "y", "y", "confirmed"),
+        part("short-x", (100, 200, 18), "x", "x", "confirmed"),
+        part("square-x", (100, 100, 18), "x", "x", "confirmed"),
+        part("square-y", (100, 100, 18), "y", "y", "confirmed"),
+        part("none", (100, 100, 18), None, "none", "nondirectional"),
+        part("unknown", (100, 100, 18)),
+    ]
+    assert grain_direction_for_stock(source_parts[0]) == "length"
+    assert grain_direction_for_stock(source_parts[1]) == "length"
+    assert grain_direction_for_stock(source_parts[2]) == "width"
+    assert grain_direction_for_stock(source_parts[3]) == "length"
+    assert grain_direction_for_stock(source_parts[4]) == "width"
+    assert grain_direction_for_stock(source_parts[5]) == "none"
+    assert grain_direction_for_stock(source_parts[6]) == "unknown"
+
+    model = ResolvedModel(
+        spaces=[], dividers=[], allowances=[], contents=[], fronts=[],
+        part_plan=PhysicalPartPlan(source_parts), inputs={},
+    )
+    records = space_model_records(model)
+    viewer_groups = records["viewer"]["cutting_groups"]
+    compatible = next(group for group in viewer_groups if "long-x" in group["members"])
+    assert compatible["members"] == ["long-x", "rotated-y"]
+    assert compatible["grain_direction"] == "length"
+    assert "grain_axis_local" not in compatible
+    assert len(viewer_groups) == 6
+
+    from buratino.grouping import group_cutting_blanks
+
+    cutlist_parts = [
+        {**item, "blank_mm": dict(item["stock_mm"])} for item in records["parts"]
+    ]
+    cutlist_groups = group_cutting_blanks(cutlist_parts)
+    compatible = next(group for group in cutlist_groups if "long-x" in group["members"])
+    assert compatible["members"] == ["long-x", "rotated-y"]
+    assert compatible["grain_direction"] == "length"
+    assert len(cutlist_groups) == 6
 
 
 @pytest.mark.parametrize("records, message", [
