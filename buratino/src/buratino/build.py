@@ -1078,10 +1078,21 @@ def build_project(root: Path, path: Path) -> dict:
             )
         from .panel_views import panel_groups, panel_views
 
+        panel_assembly = assembly
+        if calculation.space_model is not None:
+            import cadquery as cq
+
+            panel_assembly = cq.Assembly(name="physical_space_parts")
+            for part in calculation.result["parts"]:
+                panel_assembly.add(
+                    calculation.space_shapes[part["id"]], name=part["role"]
+                )
         groups = panel_groups(
-            assembly, calculation.result["parts"], calculation.result["joints"]
+            panel_assembly,
+            calculation.result["parts"],
+            calculation.result["joints"],
         )
-        views = panel_views(assembly, [group[0] for group in groups])
+        views = panel_views(panel_assembly, [group[0] for group in groups])
         render_documents(
             stage,
             calculation.result,

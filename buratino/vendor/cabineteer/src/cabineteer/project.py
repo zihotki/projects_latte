@@ -44,6 +44,7 @@ from .spaces import (Carcass, Space, Split, Divider, Fixed, Fr, DrawerBox, Door,
                      AppliedDrawerFront, AppliedFaceboard, AssemblyModule, AssemblyRef,
                      Insets, SpaceCabinetDefinition, Natural, ResolvedModel, resolve_model, _input)
 from .operations import Pocket, Rabbet, Bevel, Groove, Bore, Mortise, DominoJoint, OPERATIONS
+from .edge_banding import EdgeBand
 from .profiles import (
     ProfileAssembly,
     ProfileAssemblySpec, RoofProfile, ProfiledBox, ProfileFaceSpec,
@@ -264,6 +265,7 @@ def _read_input(value):
         ProfileAssemblySpec, RoofProfile, ProfiledBox, ProfileFaceSpec,
         ProfileDrawerSpec, ProfileShelfSpec, ProfileLowerDrawerSpec,
         Pocket, Rabbet, Bevel, Groove, Bore, Mortise, DominoJoint,
+        EdgeBand,
     )}
     if isinstance(value, list):
         return tuple(_read_input(item) for item in value)
@@ -332,12 +334,17 @@ class CabinetProject:
     space_modules: tuple[AssemblyModule, ...] = ()
     operations: tuple = ()
     joints: tuple = ()
+    edge_banding: tuple[EdgeBand, ...] = ()
 
     def __post_init__(self) -> None:
-        if (self.operations or self.joints) and not (self.space_model is not None or self.space_cabinets or self.space_modules):
-            raise ValueError("operations and joints require a Space project")
+        if not isinstance(self.edge_banding, (list, tuple)):
+            raise ValueError("edge_banding must be a list of EdgeBand inputs")
+        if (self.operations or self.joints or self.edge_banding) and not (self.space_model is not None or self.space_cabinets or self.space_modules):
+            raise ValueError("operations, joints and edge_banding require a Space project")
         if not all(isinstance(item, OPERATIONS) for item in self.operations) or not all(isinstance(item, DominoJoint) for item in self.joints):
             raise ValueError("invalid operation or joint input")
+        if not all(isinstance(item, EdgeBand) for item in self.edge_banding):
+            raise ValueError("edge_banding must contain EdgeBand inputs")
         if self.space_model is not None and (self.cabinets or self.layout is not None
                 or self.profile_assembly is not None or self.worktop is not None
                 or self.shared != SharedDesign()):
@@ -800,11 +807,11 @@ def apply_project_patch(base: dict, patch: dict) -> tuple[dict, list[str]]:
     out = json.loads(json.dumps(base))  # deep copy; payloads are plain JSON
     changes: list[str] = []
 
-    known = {"name", "notes", "wall_width_mm", "worktop", "shared", "cabinets", "space_model", "space_cabinets", "space_modules", "layout", "profile_assembly", "operations", "joints"}
+    known = {"name", "notes", "wall_width_mm", "worktop", "shared", "cabinets", "space_model", "space_cabinets", "space_modules", "layout", "profile_assembly", "operations", "joints", "edge_banding"}
     unknown = set(patch) - known
     if unknown:
         raise ValueError(f"unknown update fields: {sorted(unknown)}")
-    for key in ("space_model", "space_cabinets", "space_modules", "layout", "profile_assembly", "operations", "joints"):
+    for key in ("space_model", "space_cabinets", "space_modules", "layout", "profile_assembly", "operations", "joints", "edge_banding"):
         if key in patch and out.get(key) != patch[key]:
             if patch[key] is None:
                 out.pop(key, None)
@@ -1272,6 +1279,8 @@ def project_to_dict(project: CabinetProject) -> dict:
         out["operations"] = _encode_input(project.operations)
     if project.joints:
         out["joints"] = _encode_input(project.joints)
+    if project.edge_banding:
+        out["edge_banding"] = _encode_input(project.edge_banding)
     if project.space_model is not None:
         out["space_model"] = {"carcass": _input(project.space_model.carcass), "root": _input(project.space_model.root), "fronts": _input(project.space_model.fronts)}
     if project.wall_width_mm is not None:
@@ -1295,7 +1304,7 @@ def _validate_project_input(d: dict, *, tool_input: bool = False) -> None:
     version = d.get("input_schema_version", 2 if tool_input else None)
     if type(version) is not int or version != 2:
         raise ValueError("input_schema_version must be 2")
-    allowed = {"input_schema_version", "name", "notes", "shared", "cabinets", "wall_width_mm", "forked_from", "forked_at", "worktop", "layout", "profile_assembly", "space_model", "space_cabinets", "space_modules", "operations", "joints"}
+    allowed = {"input_schema_version", "name", "notes", "shared", "cabinets", "wall_width_mm", "forked_from", "forked_at", "worktop", "layout", "profile_assembly", "space_model", "space_cabinets", "space_modules", "operations", "joints", "edge_banding"}
     if tool_input:
         allowed.add("overwrite")
     unknown = set(d) - allowed
@@ -1340,6 +1349,7 @@ def project_from_dict(d: dict) -> CabinetProject:
         space_modules=_read_input(d.get("space_modules", [])),
         operations=_read_input(d.get("operations", [])),
         joints=_read_input(d.get("joints", [])),
+        edge_banding=_read_input(d.get("edge_banding", [])),
     )
 
 
@@ -1444,6 +1454,7 @@ def build_project(payload: dict) -> CabinetProject:
         space_modules=_read_input(payload.get("space_modules", [])),
         operations=_read_input(payload.get("operations", [])),
         joints=_read_input(payload.get("joints", [])),
+        edge_banding=_read_input(payload.get("edge_banding", [])),
     )
 
 

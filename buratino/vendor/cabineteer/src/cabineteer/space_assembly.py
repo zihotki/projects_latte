@@ -527,9 +527,11 @@ def resolve_space_assembly(project):
         by_id[op["part_id"]]["operations"].append(op)
     for part in parts:
         part["operations"].sort(key=lambda op: op["id"])
+    from .edge_banding import resolve_edge_bands
+    resolve_edge_bands(parts, getattr(project, "edge_banding", ()))
     occupied = _part_bounds(parts)
     if occupied and any(occupied["min_"+axis] < structural["min_"+axis] - 1e-6 or occupied["max_"+axis] > structural["max_"+axis] + 1e-6 for axis in "xyz"):
         diagnostics.append(dict(code="occupied_overhang", structural_bounds=structural, occupied_bounds=occupied))
     return ResolvedModel(spaces, dividers, allowances, contents, fronts, PhysicalPartPlan(parts, contacts),
-                         dict(space_model=_input(project.space_model), layout=_input(project.layout), space_cabinets=_input(project.space_cabinets), space_modules=_input(project.space_modules), operations=_input(operations), joints=_input(joints)),
+                         dict(space_model=_input(project.space_model), layout=_input(project.layout), space_cabinets=_input(project.space_cabinets), space_modules=_input(project.space_modules), operations=_input(operations), joints=_input(joints), edge_banding=_input(getattr(project, "edge_banding", ()))),
                          placements, allocations, structural, occupied, diagnostics)

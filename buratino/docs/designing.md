@@ -22,8 +22,10 @@ It does not define sloped or changing-height clear spaces. Use
 complete example.
 
 Space projects can also define explicit local machining and paired Domino
-mortises. See [Space machining operations](operations.md) and the runnable
-[machined drawer example](../projects/machined-drawer/project.py).
+mortises, and full-edge display color bands. Bands select narrow stock faces,
+have zero thickness, and leave the solid and cut list unchanged. See
+[Space machining and edge banding](operations.md) and the runnable [machined
+drawer example](../projects/machined-drawer/project.py).
 
 ## Describe clear spaces
 
@@ -127,6 +129,8 @@ slopes. Space machining operations are explicit dimensions on qualified
 physical parts. They do not generate CNC toolpaths or specify machine settings.
 Profile assemblies do not accept these operations. Preview door and drawer
 poses are illustrative. They do not check collisions during movement.
+Profile assemblies and legacy cabinet projects do not accept Space edge
+banding.
 
 ## Resolve, build, and review
 

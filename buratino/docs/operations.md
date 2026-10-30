@@ -9,6 +9,17 @@ The resolver records each cut on its part. CAD and the manufacturing report
 use these same records. They describe geometry in millimetres. They do not set
 cutters, machine settings, feed rates, or toolpaths.
 
+Space projects may also set `edge_banding=(EdgeBand(...), ...)` on the
+top-level project. Each `EdgeBand` needs a unique `id`, an exact qualified
+`part_id`, one stock face selector (`x-`, `x+`, `y-`, `y+`, `z-`, or `z+`), and
+an optional six-digit `#RRGGBB` display color. It selects a narrow face whose
+normal is not the stock thickness axis. It colors the full edge length and has
+zero thickness. No edge-band dimension or material is inferred. The resolver
+rejects unknown parts and duplicate part/edge selections. The viewer reports
+an error if machining removes the selected edge face completely. It colors only
+surviving finished faces on the original stock plane. This display input does not change the solid or
+the cut list, BOM, or CSV fields.
+
 ## Small runnable project
 
 Save this as `project.py` and run it with the locked Buratino Python runtime.
@@ -16,7 +27,7 @@ The pocket uses the local stock frame of the cabinet's left side.
 
 ```python
 from cabineteer.operations import Groove, Pocket
-from cabineteer.project import CabinetProject, SpaceModelSpec
+from cabineteer.project import CabinetProject, EdgeBand, SpaceModelSpec
 from cabineteer.spaces import Carcass, Space
 
 project = CabinetProject(
@@ -40,6 +51,14 @@ project = CabinetProject(
             id="lower-side-groove",
             part_id="/cabinet/carcass/side_left",
             face="x+", edge="z-", offset=80, width=6, depth=3,
+        ),
+    ),
+    edge_banding=(
+        EdgeBand(
+            id="front-left-side-band",
+            part_id="/cabinet/carcass/side_left",
+            edge="y-",
+            color="#b78b5b",
         ),
     ),
 )

@@ -3021,6 +3021,7 @@ async def list_tools() -> list[types.Tool]:
                     "space_modules": {"type": "array", "items": {"type": "object"}},
                     "operations": _machining_schema(),
                     "joints": _machining_schema(joints=True),
+                    "edge_banding": {"type": "array", "items": {"type": "object", "description": "Tagged EdgeBand with id, exact part_id, edge selector and optional #RRGGBB color."}},
                     "worktop": _worktop_schema(),
                     "layout": {"type": "object", "description": "Native row/stack layout."},
                     "profile_assembly": {"type": "object", "description": "Native roof, frame, box and face inputs."},
@@ -3068,6 +3069,7 @@ async def list_tools() -> list[types.Tool]:
                     "space_modules": {"type": ["array", "null"], "items": {"type": "object"}},
                     "operations": _machining_schema(nullable=True),
                     "joints": _machining_schema(joints=True, nullable=True),
+                    "edge_banding": {"type": ["array", "null"], "items": {"type": "object", "description": "Tagged EdgeBand with id, exact part_id, edge selector and optional #RRGGBB color. Replaces the full block; null clears it."}},
                     "layout": {"type": ["object", "null"]},
                     "profile_assembly": {"type": ["object", "null"]},
                     "notes": {"type": "string"},
@@ -6879,6 +6881,7 @@ async def _tool_visualize_project(args: dict) -> list[types.TextContent]:
     project = _project_from_args(args)
     if project.is_space_assembly:
         from .space_adapter import materialize_model, space_model_records
+        from .edge_banding import make_view_assembly
         _safe_stem(project.name, kind="project name")
         model = project.resolved_space_assembly()
         records = space_model_records(model)
@@ -6888,9 +6891,7 @@ async def _tool_visualize_project(args: dict) -> list[types.TextContent]:
             return _ok({"project": project.name, "records": records,
                         "visualization_status": "cad_unavailable", "reason": str(exc)})
         shapes = materialize_model(model)
-        assembly = cq.Assembly(name=project.name)
-        for ident, shape in shapes.items():
-            assembly.add(shape, name=ident)
+        assembly = make_view_assembly(model, shapes, project.name)
         bounds = model.structural_bounds
         dimensions = {"width": bounds["max_x"] - bounds["min_x"],
                       "height": bounds["max_z"] - bounds["min_z"],

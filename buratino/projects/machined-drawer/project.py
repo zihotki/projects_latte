@@ -2,7 +2,7 @@
 
 from cabineteer.hettich_eb20 import EB20_SLIDE_KEYS
 from cabineteer.operations import Bevel, Bore, DominoJoint, Groove, Pocket, Rabbet
-from cabineteer.project import CabinetProject, SpaceModelSpec
+from cabineteer.project import CabinetProject, EdgeBand, SpaceModelSpec
 from cabineteer.spaces import Carcass, DrawerBox, Space
 
 variables = {
@@ -117,6 +117,13 @@ project = CabinetProject(
             width=8,
             depth_a=4,
             depth_b=4,
+        ),
+    ),
+    edge_banding=(
+        EdgeBand(
+            id="front-left-side-band",
+            part_id="/cabinet/carcass/side_left",
+            edge="y-",
         ),
     ),
 )

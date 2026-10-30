@@ -1829,18 +1829,15 @@ def make_geometry(calculation: Calculation):
 
     assembly = cq.Assembly(name="base_cabinet")
     if calculation.space_model is not None:
+        from cabineteer.edge_banding import make_view_assembly
         from cabineteer.space_adapter import materialize_model
 
         shapes = materialize_model(calculation.space_model)
         calculation.space_shapes = shapes
+        assembly = make_view_assembly(calculation.space_model, shapes, "base_cabinet")
         geometry = []
         for part in calculation.result["parts"]:
             ident = part["id"]
-            assembly.add(
-                shapes[ident],
-                name=part["role"],
-                color=cq.Color(0.91, 0.92, 0.90, 1),
-            )
             from cabineteer.cabinet import PartInfo
 
             thickness = part.get("stock_mm", {}).get("thickness", 0)
