@@ -45,7 +45,7 @@ from .spaces import (Carcass, Space, Split, Divider, Fixed, Fr, DrawerBox, Door,
                      Insets, SpaceCabinetDefinition, Natural, ResolvedModel, resolve_model, _input)
 from .operations import Pocket, Rabbet, Bevel, Groove, Bore, Mortise, DominoJoint, OPERATIONS
 from .edge_banding import EdgeBand
-from .part_grain import PartGrain
+from .part_grain import GrainRule, PartGrain
 from .profiles import (
     ProfileAssembly,
     ProfileAssemblySpec, RoofProfile, ProfiledBox, ProfileFaceSpec,
@@ -266,7 +266,7 @@ def _read_input(value):
         ProfileAssemblySpec, RoofProfile, ProfiledBox, ProfileFaceSpec,
         ProfileDrawerSpec, ProfileShelfSpec, ProfileLowerDrawerSpec,
         Pocket, Rabbet, Bevel, Groove, Bore, Mortise, DominoJoint,
-        EdgeBand, PartGrain,
+        EdgeBand, PartGrain, GrainRule,
     )}
     if isinstance(value, list):
         return tuple(_read_input(item) for item in value)
@@ -336,21 +336,26 @@ class CabinetProject:
     operations: tuple = ()
     joints: tuple = ()
     edge_banding: tuple[EdgeBand, ...] = ()
-    part_grain: tuple[PartGrain, ...] = ()
+    part_grain: tuple[PartGrain | GrainRule, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.edge_banding, (list, tuple)):
             raise ValueError("edge_banding must be a list of EdgeBand inputs")
-        if (self.operations or self.joints or self.edge_banding or self.part_grain) and not (self.space_model is not None or self.space_cabinets or self.space_modules):
-            raise ValueError("operations, joints, edge_banding and part_grain require a Space project")
+        if (self.operations or self.joints or self.edge_banding) and not (self.space_model is not None or self.space_cabinets or self.space_modules):
+            raise ValueError("operations, joints and edge_banding require a Space project")
+        if self.part_grain and not (
+            self.space_model is not None or self.space_cabinets or self.space_modules
+            or self.profile_assembly is not None
+        ):
+            raise ValueError("part_grain requires a Space or profile assembly project")
         if not all(isinstance(item, OPERATIONS) for item in self.operations) or not all(isinstance(item, DominoJoint) for item in self.joints):
             raise ValueError("invalid operation or joint input")
         if not all(isinstance(item, EdgeBand) for item in self.edge_banding):
             raise ValueError("edge_banding must contain EdgeBand inputs")
         if not isinstance(self.part_grain, (list, tuple)):
             raise ValueError("part_grain must be a list of PartGrain inputs")
-        if not all(isinstance(item, PartGrain) for item in self.part_grain):
-            raise ValueError("part_grain must contain PartGrain inputs")
+        if not all(isinstance(item, (PartGrain, GrainRule)) for item in self.part_grain):
+            raise ValueError("part_grain must contain PartGrain or GrainRule inputs")
         if self.space_model is not None and (self.cabinets or self.layout is not None
                 or self.profile_assembly is not None or self.worktop is not None
                 or self.shared != SharedDesign()):
@@ -465,7 +470,9 @@ class CabinetProject:
             }
             for item in spec.upper_drawers
         )
-        return ProfileAssembly(result.layout, parts, hardware=hardware)
+        return ProfileAssembly(
+            result.layout, parts, hardware=hardware, part_grain=tuple(self.part_grain)
+        )
 
 
 def _merge(

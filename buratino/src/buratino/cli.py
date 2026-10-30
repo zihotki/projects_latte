@@ -8,13 +8,23 @@ from pathlib import Path
 from .build import build_project
 from .cut_service_export import export_cutlist
 from .environment import doctor, root_dir
-from .preview import preview_server
+from .preview import (
+    catalog_projects,
+    ensure_current_build,
+    preview_catalog_server,
+    preview_server,
+)
 from .project import InputError
 
 
 def project_path(root: Path, value: str) -> Path:
-    candidate = (root / value).resolve()
-    if not candidate.is_relative_to(root / "projects"):
+    projects = (root / "projects").resolve()
+    candidate = (
+        (projects / value).resolve()
+        if "/" not in value and "\\" not in value
+        else (root / value).resolve()
+    )
+    if candidate == projects or not candidate.is_relative_to(projects):
         raise InputError(
             "invalid_project_path", "Project must be inside buratino/projects."
         )
@@ -31,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
         "--json", action="store_true", help="Print the full build result as JSON"
     )
     preview = commands.add_parser("preview", help="Serve the last draft on loopback")
-    preview.add_argument("project", help="Project path relative to buratino/")
+    preview.add_argument("project", nargs="?", help="Project path or short name")
     preview.add_argument("--port", type=int, default=0)
     cutlist = commands.add_parser(
         "export-cutlist", help="Export a validated build for a cutting service"
@@ -52,6 +62,23 @@ def main(argv: list[str] | None = None) -> int:
             result = doctor(root)
             print(json.dumps(result, indent=2))
             return 0 if result["ok"] else 1
+        if args.command == "preview" and args.project is None:
+            for entry in catalog_projects(root):
+                if entry["kind"] == "design":
+                    ensure_current_build(root, Path(entry["path"]))
+            with preview_catalog_server(root, args.port) as server:
+                print(
+                    json.dumps(
+                        {
+                            "status": "catalog",
+                            "url": f"http://127.0.0.1:{server.server_port}/",
+                            "message": "Press Ctrl-C to stop.",
+                        }
+                    ),
+                    flush=True,
+                )
+                server.serve_forever()
+            return 0
         path = project_path(root, args.project)
         if args.command == "build":
             result = build_project(root, path)
@@ -84,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Provider product selection required: {product_selection}")
                 print(f"Output: {result['directory']}")
             return 0 if result["status"] == "complete" else 2
+        ensure_current_build(root, path)
         with preview_server(path, args.port) as server:
             print(
                 json.dumps(
@@ -92,8 +120,7 @@ def main(argv: list[str] | None = None) -> int:
                         "manufacturing_ready": False,
                         "url": f"http://127.0.0.1:{server.server_port}/preview.html",
                         "message": (
-                            "Press Ctrl-C to stop. "
-                            "Rebuild explicitly after input changes."
+                            "Press Ctrl-C to stop. Restart preview after input changes."
                         ),
                     }
                 ),

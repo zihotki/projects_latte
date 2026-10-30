@@ -1,7 +1,7 @@
 """Two plywood cabinets with two side-mounted drawers each."""
 
 from cabineteer.layout import CabinetRef, Row
-from cabineteer.project import CabinetProject
+from cabineteer.project import CabinetProject, GrainRule
 from cabineteer.spaces import (
     AppliedDrawerFront,
     Carcass,
@@ -33,6 +33,8 @@ variables = {
         "tolerances, mounting, load conditions and drawer width with the supplier.",
         "The model does not check whether the cabinets fit under the window "
         "or support the intended load.",
+        "Grain directions are design choices for the shown plywood parts, "
+        "not measurements of purchased sheets. Confirm the cutting layout.",
     ],
 }
 calculated = {}
@@ -107,5 +109,20 @@ project = CabinetProject(
         gap_mm=0,
         size_x=Fixed(2096),
         size_z=Fixed(679),
+    ),
+    part_grain=tuple(
+        GrainRule(pattern, pattern, axis)
+        for pattern, axis in (
+            ("/cabinet-row/*/carcass/side_*", "z"),
+            ("/cabinet-row/*/carcass/top", "x"),
+            ("/cabinet-row/*/carcass/bottom", "x"),
+            ("/cabinet-row/*/carcass/back", "z"),
+            ("/cabinet-row/*/root/*/box-*/side_*", "y"),
+            ("/cabinet-row/*/root/*/box-*/sub_front", "x"),
+            ("/cabinet-row/*/root/*/box-*/back", "x"),
+            ("/cabinet-row/*/root/*/box-*/bottom", "x"),
+            ("/cabinet-row/*/root/front-rail", "x"),
+            ("/cabinet-row/*/front/*", "z"),
+        )
     ),
 )

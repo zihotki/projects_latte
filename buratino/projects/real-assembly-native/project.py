@@ -11,7 +11,7 @@ from cabineteer.profiles import (
     ProfileShelfSpec,
     RoofProfile,
 )
-from cabineteer.project import CabinetProject, ProjectCabinet
+from cabineteer.project import CabinetProject, GrainRule, ProjectCabinet
 from cabineteer.spaces import Fixed
 
 variables = {
@@ -38,6 +38,8 @@ variables = {
         "Hardware, joinery, wall restraint, frames, and shelf supports are unverified.",
         "One shared upper carcass and an applied back are draft choices.",
         "Rear drawer relief and runner mounting are not specified for machining.",
+        "Grain directions are design choices for these panels, not measured "
+        "sheet directions. Confirm the cutting layout before ordering stock.",
     ],
 }
 calculated = {}
@@ -180,4 +182,25 @@ project = CabinetProject(
     (ProjectCabinet("left-drawers", lower), ProjectCabinet("right-drawers", lower)),
     layout=layout,
     profile_assembly=profile,
+    part_grain=tuple(
+        GrainRule(pattern, pattern, axis)
+        for pattern, axis in (
+            ("*-drawers.carcass.side_*", "x"),
+            ("*-drawers.carcass.top", "x"),
+            ("*-drawers.carcass.bottom", "x"),
+            ("*-drawers.carcass.back", "y"),
+            ("upper.side_*", "x"),
+            ("upper.divider.*", "x"),
+            ("upper.bottom", "x"),
+            ("upper.back", "y"),
+            ("upper.roof.cap.*", "x"),
+            ("frame.*", "x"),
+            ("*.drawer.side_*", "x"),
+            ("*.drawer.inner_*", "x"),
+            ("*.drawer.bottom", "x"),
+            ("*.drawer_front", "y"),
+            ("upper.section-*.door", "y"),
+            ("upper.section-*.shelf.*", "x"),
+        )
+    ),
 )

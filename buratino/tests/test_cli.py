@@ -36,3 +36,79 @@ def test_build_output_modes(root, monkeypatch, capsys):
 
     assert cli.main(["build", "projects/simple-cabinet", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == result
+
+
+def test_short_project_names_resolve_to_project_folders(root):
+    assert (
+        cli.project_path(root, "two-under-window") == root / "projects/two-under-window"
+    )
+    assert (
+        cli.project_path(root, "projects/two-under-window")
+        == root / "projects/two-under-window"
+    )
+
+
+def test_short_project_names_cannot_escape_projects(root):
+    from buratino.project import InputError
+
+    try:
+        cli.project_path(root, "../outside")
+    except InputError as exc:
+        assert exc.code == "invalid_project_path"
+    else:
+        raise AssertionError("Expected path validation to reject traversal")
+
+
+def test_explicit_preview_refreshes_then_starts_server(root, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "root_dir", lambda: root)
+    calls = []
+    monkeypatch.setattr(
+        cli, "ensure_current_build", lambda base, path: calls.append(path)
+    )
+
+    class Server:
+        server_port = 1234
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "preview_server", lambda path, port: Server())
+    assert cli.main(["preview", "two-under-window"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["url"] == "http://127.0.0.1:1234/preview.html"
+    assert calls == [root / "projects/two-under-window"]
+
+
+def test_default_preview_refreshes_only_tagged_designs(root, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "root_dir", lambda: root)
+    calls = []
+    monkeypatch.setattr(
+        cli, "ensure_current_build", lambda base, path: calls.append(path)
+    )
+
+    class Server:
+        server_port = 4321
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "preview_catalog_server", lambda base, port: Server())
+    assert cli.main(["preview"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["url"] == "http://127.0.0.1:4321/"
+    assert calls == [
+        root / "projects/real-assembly-native",
+        root / "projects/two-under-window",
+    ]

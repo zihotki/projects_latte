@@ -33,7 +33,9 @@ def _signature(part: dict) -> tuple:
         machining_signature(part),
     )
     stock = part.get("stock")
-    if isinstance(stock, dict) and stock.get("thickness_axis") in (0, 1, 2):
+    if (
+        isinstance(stock, dict) and stock.get("thickness_axis") in (0, 1, 2)
+    ) or isinstance(part.get("local_frame"), dict):
         return signature + (
             "grain",
             grain_direction_for_stock(part),

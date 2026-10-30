@@ -390,8 +390,6 @@ def _calculate_native_assembly(project: ProjectInputs) -> Calculation:
             role=record["id"],
             finished_mm=record["stock_mm"],
             blank_mm=record["stock_mm"],
-            grain_direction="unknown",
-            grain_status="unverified",
             edge_treatment="unverified",
         )
         parts.append(part)

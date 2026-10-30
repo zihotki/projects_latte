@@ -164,9 +164,9 @@ This changes the basis, not the dimensions. The current viewer uses the same
 numeric millimetre values. Apply the basis conversion once. A different
 consumer must check units and node transforms at its import boundary.
 
-For Space grain marks, one adapter converts exported mesh triangles into
-stock-local XYZ. The GLB loader exposes its CAD root explicitly. Let `T` be
-the stock translation matrix and `C` the CAD root's world matrix. With column
+For Space and native grain marks, one adapter converts exported mesh triangles
+into stock-local XYZ. The GLB loader exposes its CAD root explicitly. Let `T`
+be the stock-to-CAD matrix and `C` the CAD root's world matrix. With column
 vectors, the conversion is:
 
 ```text
@@ -185,10 +185,12 @@ and rebate floors do not receive grain marks. Generated marks are converted
 back to the part node once with `stock_to_part`, then remain attached to that
 node for opening poses. The adapter does not mutate manufacturing records.
 
-This adapter handles current translation-only Space box profiles. General
-`CabinetConfig` records without Space stock data retain their existing grain
-display path. Native profile report grain remains unknown; its L/W/T frame
-does not imply an authored grain direction.
+Space box profiles use a stock translation in `T`. Native profile parts use the
+recorded `local_frame` axes as the three columns of `T` and its origin as the
+translation. Their local X/Y/Z axes are stock length/width/thickness. The
+sloped cap's local X axis follows the slope. Only authored grain creates marks;
+an undeclared native part stays unknown. General `CabinetConfig` records without
+Space stock data keep their existing grain display path.
 
 CAD assigns edge-band colors to surviving faces on the declared stock planes.
 It matches each face normal and center to the plane; the viewer does not infer

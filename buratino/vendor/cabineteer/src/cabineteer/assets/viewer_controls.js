@@ -680,19 +680,28 @@ function createProfileGrainMark(role, part, meshes, partNode) {
 
 function stockFrameTriangles(part, meshes, partNode) {
   const {THREE, cadRoot} = viewer;
-  const dimensions = part.stock?.dimensions;
-  const origin = part.transform?.translation;
-  const axes = part.transform?.axes;
+  const native = part.local_frame;
+  const dimensions = native
+    ? ['length', 'width', 'thickness'].map(key => part.stock_mm?.[key])
+    : part.stock?.dimensions;
+  const origin = native ? native.origin_mm : part.transform?.translation;
+  const axes = native
+    ? [native.length_axis, native.width_axis, native.thickness_axis]
+    : part.transform?.axes;
   if (!cadRoot || !Array.isArray(dimensions) || dimensions.length !== 3 ||
       dimensions.some(value => !Number.isFinite(value) || value <= 0) ||
       !Array.isArray(origin) || origin.length !== 3 ||
       origin.some(value => !Number.isFinite(value)) ||
       !Array.isArray(axes) || axes.length !== 3 ||
-      axes.some((basis, i) => !Array.isArray(basis) || basis.length !== 3 ||
-        basis.some((value, j) => value !== (i === j ? 1 : 0)))) return null;
+      axes.some(basis => !Array.isArray(basis) || basis.length !== 3 ||
+        basis.some(value => !Number.isFinite(value)))) return null;
+  if (!native && axes.some((basis, i) => basis.some((value, j) =>
+    value !== (i === j ? 1 : 0)))) return null;
   cadRoot.updateWorldMatrix(true, false);
   partNode.updateWorldMatrix(true, false);
-  const stockToCad = new THREE.Matrix4().makeTranslation(...origin);
+  const stockToCad = new THREE.Matrix4().makeBasis(
+    ...axes.map(axis => new THREE.Vector3(...axis)),
+  ).setPosition(...origin);
   const cadToStock = stockToCad.clone().invert().multiply(cadRoot.matrixWorld.clone().invert());
   const stockToPart = partNode.matrixWorld.clone().invert()
     .multiply(cadRoot.matrixWorld).multiply(stockToCad);
@@ -764,7 +773,9 @@ function createGrainMark(role, meshes) {
   const {THREE} = viewer;
   const partNode = partRoots.get(role) ?? meshes[0].parent;
   if (!partNode) return null;
-  if (part.profile) return createProfileGrainMark(role, part, meshes, partNode);
+  if (part.profile || part.local_frame) {
+    return createProfileGrainMark(role, part, meshes, partNode);
+  }
   partNode.updateWorldMatrix(true, false);
   const worldToPart = partNode.matrixWorld.clone().invert();
   const bounds = new THREE.Box3();

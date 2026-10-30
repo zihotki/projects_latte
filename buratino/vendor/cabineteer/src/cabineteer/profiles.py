@@ -327,6 +327,7 @@ class ProfileAssembly:
     parts: tuple[ProfilePart | NativeCarcassPart, ...]
     hardware_status: str = "unverified"
     hardware: tuple[dict, ...] = ()
+    part_grain: tuple = ()
 
 
 def _layout_with_profile_heights(
@@ -1898,18 +1899,30 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
             )
         viewer_parts[part.id] = viewer
         parts.append(record)
+    from .part_grain import grain_direction_for_stock, resolve_part_grain
+
+    resolve_part_grain(parts, assembly.part_grain)
+    for part in parts:
+        viewer_parts[part["id"]].update(
+            grain_axis_local=part["grain_axis_local"],
+            grain_direction=grain_direction_for_stock(part),
+            grain_status=part["grain_status"],
+            surface_normal_axis_local=part["surface_normal_axis_local"],
+        )
     groups_by_signature = {}
     for part in parts:
         signature = (
             part["material"],
             tuple(part["stock_mm"][key] for key in ("length", "width", "thickness")),
+            grain_direction_for_stock(part),
+            part["grain_status"],
         )
         groups_by_signature.setdefault(signature, []).append(part)
     cutting_groups = []
     for index, (signature, members) in enumerate(
         sorted(groups_by_signature.items()), 1
     ):
-        material, dimensions = signature
+        material, dimensions, grain_direction, grain_status = signature
         label = members[0]["component"].replace("_", " ").title()
         cutting_groups.append(
             {
@@ -1917,6 +1930,8 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
                 "label": label,
                 "quantity": sum(member["quantity"] for member in members),
                 "material": material,
+                "grain_direction": grain_direction,
+                "grain_status": grain_status,
                 "members": [member["id"] for member in members],
                 "blank_mm": dict(
                     zip(("length", "width", "thickness"), dimensions, strict=True)

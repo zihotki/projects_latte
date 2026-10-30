@@ -30,6 +30,15 @@ Import `PartGrain` from `cabineteer.part_grain`. The **Grain marks** control in
 the main toolbar shows these saved directions. Finish controls change the display;
 they do not edit `part_grain`.
 
+Space and native profile assemblies can use `GrainRule(id, pattern, axis)` for
+several parts. `pattern` matches the full resolved part ID with shell style `*`
+and `?` wildcards. Each rule must match at least one part. Rules run in order;
+later rules win. Exact `PartGrain` inputs run last and override rules. Duplicate
+exact inputs are invalid. Parts with no matching input keep unknown grain.
+For native profile assemblies, stock local `x`, `y`, and `z` mean length, width,
+and thickness. `z` is invalid for directional grain. These are design inputs;
+confirm actual sheet grain before cutting.
+
 See the [coordinate contract](coordinates.md) for stock axes, placement, face
 coordinates, and the conversion to viewer coordinates.
 
