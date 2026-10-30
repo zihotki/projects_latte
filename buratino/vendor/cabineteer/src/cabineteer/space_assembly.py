@@ -9,7 +9,7 @@ from dataclasses import asdict, replace
 from .allocation import Fixed, Fr, Natural
 from .front_boundaries import resolve_front_boundaries
 from .hardware import get_hinge, get_slide
-from .joinery import DrawerJoineryStyle
+from .joinery import DominoJoinery, DrawerJoineryStyle, component_domino_rows, validate_domino_joinery
 from .layout import CabinetRef, Frame, Row, Stack, resolve_layout
 from .spaces import (AppliedDrawerFront, AppliedFaceboard, AssemblyRef, Carcass,
                      Divider, Door, DrawerBox, Insets, PhysicalPartPlan, ResolvedModel, Space, Split, _input, _integer,
@@ -50,6 +50,7 @@ def _validate_size_request(value, path, *, natural=False, integer=False):
 def _validate_carcass(carcass, path):
     if not isinstance(carcass, Carcass):
         raise ValueError(f"{path}: expected Carcass")
+    validate_domino_joinery(carcass.joinery, path + ".joinery")
     for axis in ("width", "height"):
         _validate_size_request(getattr(carcass, axis), f"{path}.{axis}")
     _number(carcass.depth, path + ".depth")
@@ -87,6 +88,9 @@ def _validate_space_inputs(space, path, *, root=False):
             _integer(getattr(content.insets, edge), f"{path}/{content.name} inset {edge}", zero=True)
     elif isinstance(content, DrawerBox):
         _name(content.name, path)
+        validate_domino_joinery(content.corner_joinery, path + ".corner_joinery")
+        if content.corner_joinery is not None and content.joinery_style != "butt":
+            raise ValueError(f"{path}: corner_joinery requires butt drawer geometry")
         label = f"{path}/{content.name}"
         _number(content.bottom_clearance, label + " bottom_clearance", zero=True)
         if content.height != "fit":
@@ -128,6 +132,9 @@ def _validate_space_inputs(space, path, *, root=False):
         if isinstance(child, Divider):
             if not isinstance(children[index-1], Space) or not isinstance(children[index+1], Space):
                 raise ValueError(f"{path}/{child.name}: divider must separate spaces")
+            validate_domino_joinery(child.joinery, f"{path}/{child.name}.joinery", inherit=True)
+            if child.role == "adjustable" and isinstance(child.joinery, DominoJoinery):
+                raise ValueError(f"{path}/{child.name}: adjustable divider cannot have fixed joinery")
             _integer(child.thickness, f"{path}/{child.name} thickness")
             if child.role not in ("structural", "adjustable") or (child.role == "adjustable" and split.axis != "height"):
                 raise ValueError(f"{path}/{child.name}: invalid divider role")
@@ -444,7 +451,7 @@ def resolve_space_assembly(project):
                 allocations.append(dict(path=path, axis=axis, bounds=wrapper_bounds, used_span=used, slack=budget-used, scope="module_wrapper"))
             if isinstance(root, Space):
                 shell = Carcass(width=size[0], depth=size[1], height=size[2], **content["front_policy"])
-                add_model(resolve_model(shell, root, module.fronts, _bare=True), path, origin, host, (host, content["boundaries"]))
+                add_model(resolve_model(shell, root, module.fronts, _bare=True, _defer_joinery=True), path, origin, host, (host, content["boundaries"]))
             else:
                 layout(root, path, origin, size, host)
         finally:
@@ -458,7 +465,7 @@ def resolve_space_assembly(project):
         try:
             carcass = replace(definition.carcass, width=size[0], depth=size[1], height=size[2])
             placements.append(dict(id=path, kind="cabinet", definition=definition.name, origin=list(origin), size=list(size), structural_bounds=_bounds(origin, size)))
-            add_model(resolve_model(carcass, definition.root, definition.fronts), path, origin, host)
+            add_model(resolve_model(carcass, definition.root, definition.fronts, _defer_joinery=True), path, origin, host)
         finally:
             active.pop()
 
@@ -496,7 +503,7 @@ def resolve_space_assembly(project):
         spec = project.space_model
         dims = (spec.carcass.width, spec.carcass.depth, spec.carcass.height)
         placements.append(dict(id="/cabinet", kind="cabinet", definition=None, origin=[0,0,0], size=list(dims), structural_bounds=_bounds((0,0,0), dims)))
-        add_model(resolve_model(spec.carcass, spec.root, spec.fronts), "/cabinet", (0,0,0))
+        add_model(resolve_model(spec.carcass, spec.root, spec.fronts, _defer_joinery=True), "/cabinet", (0,0,0))
         structural = _bounds((0,0,0), dims)
     else:
         if project.layout is None:
@@ -528,7 +535,8 @@ def resolve_space_assembly(project):
         contact["id"] = "contact-" + hashlib.sha256(signature.encode()).hexdigest()[:16]
     from .operations import resolve_operations
     operations, joints = getattr(project, "operations", ()), getattr(project, "joints", ())
-    for op in resolve_operations(parts, operations, joints):
+    generated = component_domino_rows(parts, contacts, joints)
+    for op in resolve_operations(parts, operations, (*joints, *generated)):
         by_id[op["part_id"]]["operations"].append(op)
     for part in parts:
         part["operations"].sort(key=lambda op: op["id"])

@@ -375,6 +375,45 @@ def _worktop_schema() -> dict:
 # Tool: list_hardware
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _domino_joinery_schema(*, inherit=False):
+    """Tagged physical recipe accepted by the Space input decoder."""
+    positive = {"type": "number", "exclusiveMinimum": 0}
+    choices = [{"type": "null"}, {
+        "type": "object",
+        "properties": {
+            "type": {"const": "DominoJoinery"},
+            **{name: {**positive, "default": default} for name, default in (
+                ("slot_length", 20), ("slot_width", 6), ("face_depth", 12), ("end_depth", 28))},
+            "end_offsets": {"type": "array", "items": {"type": "number", "minimum": 0},
+                            "minItems": 2, "maxItems": 2, "default": [50, 50]},
+        },
+        "required": ["type"], "additionalProperties": False,
+    }]
+    if inherit:
+        choices.append({"const": "inherit"})
+    return {"oneOf": choices}
+
+
+def _space_model_schema(*, nullable=False):
+    recipe = _domino_joinery_schema()
+    return {
+        "type": ["object", "null"] if nullable else "object",
+        "description": "Tagged carcass, root Space and fronts. Carcass.joinery opts into owned Domino contacts. DrawerBox.corner_joinery accepts the same recipe; Divider.joinery accepts a recipe, null, or 'inherit' (default). Only structural divider-to-carcass contacts inherit.",
+        "properties": {
+            "carcass": {"type": "object", "properties": {"joinery": recipe}},
+            "root": {"type": "object", "properties": {
+                "content": {"type": ["object", "null"], "properties": {"corner_joinery": recipe}},
+                "split": {"type": ["object", "null"], "properties": {
+                    "children": {"type": "array", "items": {"type": "object", "properties": {
+                        "joinery": _domino_joinery_schema(inherit=True),
+                    }}}
+                }},
+            }},
+            "fronts": {"type": "array", "items": {"type": "object"}},
+        },
+    }
+
+
 def _machining_schema(*, joints: bool = False, nullable: bool = False) -> dict:
     """Describe the same tagged inputs accepted by the project decoder."""
     face = {"type": "string", "enum": ["x-", "x+", "y-", "y+", "z-", "z+"]}
@@ -3019,9 +3058,9 @@ async def list_tools() -> list[types.Tool]:
                         },
                     },
                     "input_schema_version": {"type": "integer", "enum": [2], "default": 2},
-                    "space_model": {"type": "object", "description": "Tagged standalone carcass, root and fronts."},
-                    "space_cabinets": {"type": "array", "items": {"type": "object"}},
-                    "space_modules": {"type": "array", "items": {"type": "object"}},
+                    "space_model": _space_model_schema(),
+                    "space_cabinets": {"type": "array", "items": _space_model_schema()},
+                    "space_modules": {"type": "array", "items": {"type": "object", "properties": {"root": _space_model_schema()["properties"]["root"]}}},
                     "operations": _machining_schema(),
                     "joints": _machining_schema(joints=True),
                     "edge_banding": {"type": "array", "items": {"type": "object", "description": "Tagged EdgeBand with id, exact part_id, edge selector and optional #RRGGBB color."}},
@@ -3068,9 +3107,9 @@ async def list_tools() -> list[types.Tool]:
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Saved project to update (see list_projects)."},
-                    "space_model": {"type": ["object", "null"]},
-                    "space_cabinets": {"type": ["array", "null"], "items": {"type": "object"}},
-                    "space_modules": {"type": ["array", "null"], "items": {"type": "object"}},
+                    "space_model": _space_model_schema(nullable=True),
+                    "space_cabinets": {"type": ["array", "null"], "items": _space_model_schema()},
+                    "space_modules": {"type": ["array", "null"], "items": {"type": "object", "properties": {"root": _space_model_schema()["properties"]["root"]}}},
                     "operations": _machining_schema(nullable=True),
                     "joints": _machining_schema(joints=True, nullable=True),
                     "edge_banding": {"type": ["array", "null"], "items": {"type": "object", "description": "Tagged EdgeBand with id, exact part_id, edge selector and optional #RRGGBB color. Replaces the full block; null clears it."}},

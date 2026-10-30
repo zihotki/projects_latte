@@ -140,6 +140,17 @@ For example, `positions=(70, 480), axis="y"` places two pairs along the contact
 face depth. Each pair has the stable ID `<row id>-<position>`. Both slots must
 fit their parts; the row does not select contact faces or joint dimensions.
 
+For regular Space construction, use `DominoJoinery` from
+`cabineteer.joinery`. Set `Carcass.joinery` for its side-to-top and
+side-to-bottom contacts. `DrawerBox.corner_joinery` joins drawer sides to the
+front and back. Structural `Divider.joinery` defaults to `'inherit'` at owned
+local contacts with its carcass. It does not infer joints between dividers or
+between a bare module and its host; declare those contacts with `DominoJoint`
+or `DominoRow`. Dividers with `role="adjustable"` do not inherit. A project
+joint on a pair already owned by a component recipe is rejected; set that
+recipe to `None` before declaring a custom pair. Recipes select slot dimensions,
+depths, and end offsets; the resolver selects the owned contacts and placement.
+
 Every footprint and depth must fit the unmachined stock. A joint needs
 coincident contact faces and a registered pair. The resolver rejects unknown
 or ambiguous part IDs, duplicate IDs, non-box profiles, invalid dimensions,

@@ -34,6 +34,7 @@ from .joinery import (
     CarcassJoinery,
     DrawerJoineryStyle,
     DominoSpec,
+    DominoJoinery,
     PocketScrewSpec,
     BiscuitSpec,
     DowelSpec,
@@ -266,7 +267,7 @@ def _read_input(value):
         ProfileAssemblySpec, RoofProfile, ProfiledBox, ProfileFaceSpec,
         ProfileDrawerSpec, ProfileShelfSpec, ProfileLowerDrawerSpec,
         Pocket, Rabbet, Bevel, Groove, Bore, Mortise, DominoJoint, DominoRow,
-        EdgeBand, PartGrain, GrainRule,
+        EdgeBand, PartGrain, GrainRule, DominoJoinery,
     )}
     if isinstance(value, list):
         return tuple(_read_input(item) for item in value)

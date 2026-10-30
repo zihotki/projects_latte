@@ -70,6 +70,83 @@ import math
 from dataclasses import dataclass
 from enum import Enum
 
+@dataclass(frozen=True)
+class DominoJoinery:
+    """Modeled Domino recipe for owned Space component contacts (mm)."""
+
+    slot_length: float = 20
+    slot_width: float = 6
+    face_depth: float = 12
+    end_depth: float = 28
+    end_offsets: tuple[float, float] = (50, 50)
+
+    def __post_init__(self):
+        for name in ("slot_length", "slot_width", "face_depth", "end_depth"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"DominoJoinery.{name}: expected a positive finite number")
+        if self.slot_length < self.slot_width:
+            raise ValueError("DominoJoinery: slot_length must be at least slot_width")
+        if not isinstance(self.end_offsets, (tuple, list)) or len(self.end_offsets) != 2:
+            raise ValueError("DominoJoinery.end_offsets: expected two nonnegative finite numbers")
+        for value in self.end_offsets:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError("DominoJoinery.end_offsets: expected two nonnegative finite numbers")
+        object.__setattr__(self, "end_offsets", tuple(self.end_offsets))
+
+
+def validate_domino_joinery(value, label, *, inherit=False):
+    if value is None or isinstance(value, DominoJoinery) or (inherit and value == "inherit"):
+        return
+    raise ValueError(f"{label}: expected DominoJoinery, None" + (" or 'inherit'" if inherit else ""))
+
+
+def component_domino_rows(parts, contacts, explicit=()):
+    """Create rows only for contacts marked by their construction owner."""
+    from hashlib import sha256
+    from .operations import DominoRow
+
+    by_id = {part["id"]: part for part in parts}
+    explicit_pairs = {frozenset((joint.part_a, joint.part_b)) for joint in explicit}
+    rows = []
+    owned = set()
+    for contact in contacts:
+        recipe = contact.get("joinery")
+        if recipe is None:
+            continue
+        recipe = DominoJoinery(**{key: value for key, value in recipe.items() if key != "type"})
+        pair = (contact["part_a"], contact["part_b"])
+        key = frozenset(pair)
+        label = "component contact " + " <-> ".join(pair)
+        if key in explicit_pairs or key in owned:
+            raise ValueError(f"{label}: conflicting joint ownership; disable the component recipe before adding explicit joints")
+        owned.add(key)
+        a, b = (by_id[ident] for ident in pair)
+        low = [max(a["bounds"][0][i], b["bounds"][0][i]) for i in range(3)]
+        high = [min(a["bounds"][1][i], b["bounds"][1][i]) for i in range(3)]
+        normal = next((i for i in range(3) if abs(high[i] - low[i]) < 1e-6 and all(high[j] - low[j] > 1e-6 for j in range(3) if j != i)), None)
+        if normal is None:
+            raise ValueError(f"{label}: expected opposed stock faces")
+        axis = max((i for i in range(3) if i != normal), key=lambda i: high[i] - low[i])
+        cross = next(i for i in range(3) if i not in (normal, axis))
+        span = high[axis] - low[axis]
+        if span < recipe.slot_length or high[cross] - low[cross] < recipe.slot_width:
+            raise ValueError(f"{label}: slot does not fit contact")
+        start, end = recipe.end_offsets[0], span - recipe.end_offsets[1]
+        half = recipe.slot_length / 2
+        positions = (start, end) if start >= half and end <= span - half and end - start > recipe.slot_length else (span / 2,)
+        faces, depths = [], []
+        for part in (a, b):
+            faces.append("xyz"[normal] + ("+" if abs(part["bounds"][1][normal] - low[normal]) < 1e-6 else "-"))
+            depth = recipe.face_depth if part["stock"]["thickness_axis"] == normal else recipe.end_depth
+            if depth >= part["stock"]["dimensions"][normal] - 1e-6:
+                raise ValueError(f"{label}: blind mortise depth {depth:g} exceeds stock fit for {part['id']}")
+            depths.append(depth)
+        ident = "component-" + sha256("\0".join(pair).encode()).hexdigest()[:20]
+        rows.append(DominoRow(ident, pair[0], faces[0], pair[1], faces[1], positions, "xyz"[axis], recipe.slot_length, recipe.slot_width, *depths))
+    return rows
+
+
 cq = None  # Loaded only when geometry is requested.
 
 

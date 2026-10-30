@@ -1,7 +1,7 @@
 """Two melamine cabinets with two side-mounted drawers each."""
 
+from cabineteer.joinery import DominoJoinery
 from cabineteer.layout import CabinetRef, Row
-from cabineteer.operations import DominoRow
 from cabineteer.project import CabinetProject, GrainRule
 from cabineteer.spaces import (
     AppliedDrawerFront,
@@ -67,6 +67,7 @@ _drawer = {
     "bottom_thickness": 12,
     "bottom_dado_depth": 6,
     "bottom_dado_inset": 13,
+    "corner_joinery": DominoJoinery(end_offsets=(60, 60)),
     "material": "plywood",
     "bottom_material": "plywood",
 }
@@ -83,6 +84,7 @@ cabinet = SpaceCabinetDefinition(
         back_thickness=18,
         material="melamine",
         back_material="melamine",
+        joinery=DominoJoinery(end_offsets=(70, 74)),
     ),
     root=Space(
         "root",
@@ -115,52 +117,9 @@ cabinet = SpaceCabinetDefinition(
 )
 
 
-# Explicit contact pairs; offsets start at the common face overlap minimum.
-def _joint_rows():
-    for instance in ("left", "right"):
-        prefix = f"/cabinet-row/{instance}"
-        for side, face, end_face in (("left", "x+", "x-"), ("right", "x-", "x+")):
-            for panel, positions in (
-                ("carcass/bottom", (70, 480)),
-                ("carcass/top", (70, 480)),
-                ("root/front-rail", (25,)),
-            ):
-                yield DominoRow(
-                    f"{instance}-{side}-{panel.replace('/', '-')}",
-                    f"{prefix}/carcass/side_{side}",
-                    face,
-                    f"{prefix}/{panel}",
-                    end_face,
-                    positions,
-                    "y",
-                    20,
-                    6,
-                    12,
-                    28,
-                )
-        for drawer in ("lower", "upper"):
-            box = f"{prefix}/root/{drawer}/box-{drawer}"
-            for side, face, end_face in (("L", "x+", "x-"), ("R", "x-", "x+")):
-                for end in ("sub_front", "back"):
-                    yield DominoRow(
-                        f"{instance}-{drawer}-{side}-{end}",
-                        f"{box}/side_{side}",
-                        face,
-                        f"{box}/{end}",
-                        end_face,
-                        (60, 210),
-                        "z",
-                        20,
-                        6,
-                        12,
-                        28,
-                    )
-
-
 project = CabinetProject(
     name="two-under-window",
     space_cabinets=(cabinet,),
-    joints=tuple(_joint_rows()),
     layout=Row(
         name="cabinet-row",
         children=(

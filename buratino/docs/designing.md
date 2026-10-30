@@ -25,10 +25,13 @@ It does not define sloped or changing-height clear spaces. Use
 complete example.
 
 Space projects can also define explicit local machining and paired Domino
-mortises, and full-edge display color bands. Bands select narrow stock faces,
+mortises, and component-owned Domino recipes with `Carcass.joinery`,
+`DrawerBox.corner_joinery`, and `Divider.joinery`. A structural divider inherits
+the carcass recipe by default. Bands select narrow stock faces,
 have zero thickness, and leave the solid and cut list unchanged. See
-[Space machining and edge banding](operations.md) and the runnable [machined
-drawer example](../projects/machined-drawer/project.py).
+[Space machining and edge banding](operations.md), the runnable [machined
+drawer example](../projects/machined-drawer/project.py), and the [two under
+window example](../projects/two-under-window/project.py).
 
 ## Describe clear spaces
 

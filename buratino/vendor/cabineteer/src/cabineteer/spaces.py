@@ -7,13 +7,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from itertools import combinations
 import math
-from typing import Any
+from typing import Any, Literal
 
 from .cabinet import CabinetConfig, back_capture_geometry, carcass_panel
 from .drawer import DEFAULT_VERTICAL_GAP, DrawerConfig, drawer_recipe
 from .door import DoorConfig
 from .hardware import OverlayType, get_slide
-from .joinery import DrawerJoineryStyle
+from .joinery import DominoJoinery, DrawerJoineryStyle, component_domino_rows, validate_domino_joinery
 from .space_parts import box_part
 
 
@@ -37,6 +37,7 @@ class DrawerBox:
     material: str = "baltic_birch"
     bottom_material: str = "baltic_birch"
     depth: float | None = None
+    corner_joinery: DominoJoinery | None = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class Divider:
     material: str = "baltic_birch"
     recess: float | None = None
     depth: float | None = None
+    joinery: DominoJoinery | None | Literal["inherit"] = "inherit"
 
 
 @dataclass(frozen=True)
@@ -142,12 +144,13 @@ class Carcass:
     door_gap: float = 2
     drawer_front_gap: float = 2
     outer_reveal: float = 2
+    joinery: DominoJoinery | None = None
 
 
 @dataclass(frozen=True)
 class PhysicalPartPlan:
     parts: list[dict[str, Any]]
-    contacts: list[dict[str, str]] = field(default_factory=list)
+    contacts: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -203,12 +206,13 @@ def _input(value: Any) -> Any:
     return value
 
 
-def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDrawerFront | AppliedFaceboard, ...] | list[Door | AppliedDrawerFront | AppliedFaceboard] = (), *, _bare: bool = False) -> ResolvedModel:
+def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDrawerFront | AppliedFaceboard, ...] | list[Door | AppliedDrawerFront | AppliedFaceboard] = (), *, _bare: bool = False, _defer_joinery: bool = False) -> ResolvedModel:
     """Resolve an applied-back, butt carcass and its rectangular clear spaces."""
     for k in ("width", "height", "depth", "side_thickness", "bottom_thickness", "top_thickness", "back_thickness"):
         _number(getattr(carcass, k), f"carcass.{k}")
     for key in ("door_gap", "drawer_front_gap", "outer_reveal"):
         _number(getattr(carcass, key), f"carcass.{key}", zero=True)
+    validate_domino_joinery(carcass.joinery, "carcass.joinery")
     cfg = CabinetConfig(width=carcass.width, height=carcass.height, depth=carcass.depth,
                         side_thickness=carcass.side_thickness, bottom_thickness=carcass.bottom_thickness,
                         top_thickness=carcass.top_thickness, back_thickness=carcass.back_thickness,
@@ -217,18 +221,21 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
     dims = tuple(_integer(v, f"root {a}") for a, v in zip(("width", "depth", "height"), volume))
     spaces, dividers, allowances, contents, faces, parts = [], [], [], [], [], []
     active: set[int] = set()
-    contacts: list[dict[str, str]] = []
+    contacts: list[dict[str, Any]] = []
     contact_keys: set[tuple[str, str, str]] = set()
     part_ids: set[str] = set()
 
-    def contact(a: str | None, b: str | None, kind: str) -> None:
+    def contact(a: str | None, b: str | None, kind: str, recipe=None) -> None:
         if a is None or b is None or a == b:
             return
         a, b = sorted((a, b))
         key = (a, b, kind)
         if key not in contact_keys:
             contact_keys.add(key)
-            contacts.append(dict(part_a=a, part_b=b, type=kind))
+            record = dict(part_a=a, part_b=b, type=kind)
+            if recipe is not None:
+                record["joinery"] = _input(recipe)
+            contacts.append(record)
 
     def part(id: str, kind: str, origin: tuple, size: tuple, material: str, thickness: float, thickness_axis: int, **extra: Any) -> None:
         if id in part_ids:
@@ -254,7 +261,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
             contact("/carcass/back", "/carcass/" + member, "butt")
         for side_name in ("side_left", "side_right"):
             for panel_name in ("bottom", "top"):
-                contact("/carcass/" + side_name, "/carcass/" + panel_name, "butt")
+                contact("/carcass/" + side_name, "/carcass/" + panel_name, "butt", carcass.joinery)
 
     def visit(space: Space, path: str, origin: tuple, size: tuple, boundaries: dict[str, str | None]) -> None:
         if id(space) in active:
@@ -268,6 +275,9 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
             contents.append(dict(id=path + "/" + space.content.name, space=path, origin=list(origin), size=list(size), boundaries=dict(boundaries), assembly_ref=_input(space.content)))
         elif space.content:
             box = space.content
+            validate_domino_joinery(box.corner_joinery, path + ".corner_joinery")
+            if box.corner_joinery is not None and box.joinery_style != "butt":
+                raise ValueError(f"{path}: corner_joinery requires butt drawer geometry")
             _name(box.name, path)
             cid = path + "/" + box.name
             bottom_clear = _number(box.bottom_clearance, cid + " bottom clearance", zero=True)
@@ -304,7 +314,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
                     contact(cid + "/bottom", cid + "/" + wall, "bottom_groove")
                 for side_name in ("side_L", "side_R"):
                     for end_name in ("sub_front", "back"):
-                        contact(cid + "/" + side_name, cid + "/" + end_name, "drawer_corner")
+                        contact(cid + "/" + side_name, cid + "/" + end_name, "drawer_corner", box.corner_joinery)
                 contents.append(dict(id=cid, space=path, origin=list(box_origin), size=[d.box_width,d.box_depth,height], bottom_clearance=bottom_clear, top_clearance=top_clear, slide_key=box.slide_key, runner_travel_mm=d.slide.travel_mm))
             except (ValueError, KeyError, TypeError) as exc:
                 raise ValueError(f"{cid}: {exc}") from exc
@@ -373,12 +383,18 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
                     depth = available_depth if child.depth is None else _number(child.depth, child_path + " depth")
                     if depth > available_depth: raise ValueError(f"{child_path}: divider depth exceeds available space")
                     co[1] += recess; cs[1] = depth
+                    validate_domino_joinery(child.joinery, child_path + ".joinery", inherit=True)
+                    recipe = carcass.joinery if child.joinery == "inherit" else child.joinery
+                    if child.role != "structural":
+                        if isinstance(child.joinery, DominoJoinery):
+                            raise ValueError(f"{child_path}: adjustable divider cannot have fixed joinery")
+                        recipe = None
                     dividers.append(dict(id=child_path, owner=path, axis=split.axis, role=child.role, origin=co, size=cs, recess=recess))
                     part(child_path, "divider", tuple(co), tuple(cs), child.material, length, axis, owner=path, role=child.role)
                     # The panel spans the parent in the perpendicular direction.
                     ends = ("bottom", "top") if axis == 0 else ("left", "right")
                     for boundary in ends:
-                        contact(child_path, boundaries[boundary], "butt")
+                        contact(child_path, boundaries[boundary], "butt", recipe if boundaries[boundary] and boundaries[boundary].startswith("/carcass/") else None)
                     if depth == available_depth:
                         contact(child_path, boundaries["back"], "butt")
                 else:
@@ -489,4 +505,9 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
     for left, right in combinations(front_parts, 2):
         if all(min(left["bounds"][1][i], right["bounds"][1][i]) - max(left["bounds"][0][i], right["bounds"][0][i]) > 1e-6 for i in range(3)):
             raise ValueError(f"overlapping closed fronts: {left['id']} and {right['id']}")
+    if not _defer_joinery:
+        from .operations import resolve_operations
+        by_id = {part["id"]: part for part in parts}
+        for operation in resolve_operations(parts, (), component_domino_rows(parts, contacts)):
+            by_id[operation["part_id"]]["operations"].append(operation)
     return ResolvedModel(spaces, dividers, allowances, contents, faces, PhysicalPartPlan(parts, contacts), dict(carcass=_input(carcass), root=_input(root), fronts=_input(fronts)))

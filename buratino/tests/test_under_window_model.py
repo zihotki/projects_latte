@@ -1,6 +1,8 @@
 """Under-window stock, runner fit, and registered contact-face joints."""
 
+import json
 from collections import Counter
+from hashlib import sha256
 
 import pytest
 from cabineteer.drawer import DrawerConfig
@@ -8,8 +10,33 @@ from cabineteer.project import project_from_dict, project_to_dict
 from cabineteer.space_adapter import materialize_box_part
 
 from buratino.build import render_documents
+from buratino.cut_services import plan_export
 from buratino.engine import calculate
 from buratino.project import load_project
+
+_LEGACY_CUT_GEOMETRY_SHA256 = (
+    "2ba2af91376a09e6a41c8c630e9977ee560d905c733827daa2a3d5f27c4dce59"
+)
+_LEGACY_PROVIDER_CSV_SHA256 = {
+    "zagenzagen-melamine-panel-18mm-c9f85f74df9c-001.csv": (
+        "e11d656ef37bc3f65ffe385fe1ea72521164d0908e81c70fcc52312d55717f64"
+    ),
+    "zagenzagen-plywood-panel-12mm-58d0115cf732-001.csv": (
+        "f96ca5a425f64a19f081857f41c655e3d5128acfc8da7f7e8ef239704729cc14"
+    ),
+    "zagenzagen-plywood-panel-18mm-109afb8af209-001.csv": (
+        "244e52435159161e2de00b61d697cdbaaba8495e836b4217e436dc13b6f88732"
+    ),
+    "opmaatzagen-melamine-panel-18mm-c9f85f74df9c-001.csv": (
+        "8abc4b1e18ba239cf8c5e0fb4cfc42979f493c58392973c9bdae131ec5bb65e6"
+    ),
+    "opmaatzagen-plywood-panel-12mm-58d0115cf732-001.csv": (
+        "1f8c1d6099202a610b6aca5d4d56aa022177f3b059d8fc42a607edb9791a5d7c"
+    ),
+    "opmaatzagen-plywood-panel-18mm-109afb8af209-001.csv": (
+        "40564d43e955822f2d549e243f78a89a2f051f6d6ee86e82359cb1d043cdf6d2"
+    ),
+}
 
 
 def test_depth_override_preserves_runner_fit():
@@ -77,11 +104,26 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
             assert part["material"] == "plywood"
     joints = result["joints"]
     assert len(joints) == 52
-    assert {j["id"] for j in joints} == {
-        f"{row.id}-{position:g}"
-        for row in source.native_project.joints
-        for position in row.positions
-    }
+    assert all(len(joint["mortises"]) == 2 for joint in joints)
+    geometry = sorted(
+        (
+            mortise["part_id"],
+            mortise["face"],
+            mortise["u"],
+            mortise["v"],
+            mortise["axis"],
+            mortise["length"],
+            mortise["width"],
+            mortise["depth"],
+        )
+        for joint in joints
+        for mortise in joint["mortises"]
+    )
+    assert len(geometry) == 104
+    assert (
+        sha256(json.dumps(geometry, separators=(",", ":")).encode()).hexdigest()
+        == _LEGACY_CUT_GEOMETRY_SHA256
+    )
     cuts = [
         op
         for p in parts.values()
@@ -101,6 +143,19 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
     assert (
         next(h for h in result["hardware"] if h["type"] == "domino")["quantity"] == 52
     )
+    assert len(result["cutting_groups"]) == 11
+    for provider in ("zagenzagen", "opmaatzagen"):
+        export = plan_export(result, provider)
+        expected = {
+            filename: digest
+            for filename, digest in _LEGACY_PROVIDER_CSV_SHA256.items()
+            if filename.startswith(f"{provider}-")
+        }
+        actual = {
+            name: sha256(content.encode()).hexdigest()
+            for name, content in export.files.items()
+        }
+        assert actual == expected
     render_documents(tmp_path, result)
     assembly = (tmp_path / "assembly.html").read_text()
     assert "2 × 6 × 40 mm Domino" in assembly
