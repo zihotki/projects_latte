@@ -36,8 +36,9 @@ or cut-list row to highlight it. Visibility and drawer pose controls change
 display only; they do not change geometry or cutting quantities. Stop the
 server with Ctrl-C.
 
-The [cut-service requirements](docs/cut-services.md) describe planned
-ZAGENZAGEN and OPMAATZAGEN exports. Provider CSV export is not implemented yet.
+Export a validated build with `./buratino/bin/buratino export-cutlist` for
+ZAGENZAGEN or OPMAATZAGEN. See the [cut-service guide](docs/cut-services.md)
+for CSV fields, grouping, configuration, and open provider questions.
 
 ## Build outputs and limits
 

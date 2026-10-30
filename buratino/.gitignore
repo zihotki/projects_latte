@@ -1,5 +1,6 @@
 /.local/
 /projects/*/build/
+/projects/*/exports/
 /archive/real-assembly/build/
 *.egg-info/
 __pycache__/

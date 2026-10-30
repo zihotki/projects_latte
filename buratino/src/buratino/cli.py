@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .build import build_project
+from .cut_service_export import export_cutlist
 from .environment import doctor, root_dir
 from .preview import preview_server
 from .project import InputError
@@ -32,6 +33,18 @@ def main(argv: list[str] | None = None) -> int:
     preview = commands.add_parser("preview", help="Serve the last draft on loopback")
     preview.add_argument("project", help="Project path relative to buratino/")
     preview.add_argument("--port", type=int, default=0)
+    cutlist = commands.add_parser(
+        "export-cutlist", help="Export a validated build for a cutting service"
+    )
+    cutlist.add_argument("project", help="Project path relative to buratino/")
+    cutlist.add_argument(
+        "--provider",
+        required=True,
+        help="Cutting service: zagenzagen or opmaatzagen",
+    )
+    cutlist.add_argument("--config", help="Optional JSON export configuration")
+    cutlist.add_argument("--output", help="Export directory (must be empty or owned)")
+    cutlist.add_argument("--json", action="store_true", help="Print JSON summary")
     args = parser.parse_args(argv)
     root = root_dir()
     try:
@@ -48,6 +61,29 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Draft built: {result['directory']}")
                 print("Not ready for manufacturing. See report.html for checks.")
             return 0
+        if args.command == "export-cutlist":
+            result = export_cutlist(
+                path,
+                args.provider,
+                config_path=Path(args.config) if args.config else None,
+                output_path=Path(args.output) if args.output else None,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2, allow_nan=False))
+            else:
+                print(
+                    f"Cut-service export: {result['status']} "
+                    f"({result['provider']}, {result['physical_panels']} panels)"
+                )
+                print(f"Files: {', '.join(result['files'])}")
+                print(f"Material/thickness groups: {result['group_count']}")
+                print(f"Review issues: {result['issue_count']}")
+                product_selection = (
+                    "yes" if result["provider_product_selection_required"] else "no"
+                )
+                print(f"Provider product selection required: {product_selection}")
+                print(f"Output: {result['directory']}")
+            return 0 if result["status"] == "complete" else 2
         with preview_server(path, args.port) as server:
             print(
                 json.dumps(
