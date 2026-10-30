@@ -9,6 +9,7 @@ body canvas { position:fixed!important;inset:0!important;width:100%!important;he
 .toolbar-heading small { color:var(--muted);font-size:10px; }
 .toolbar-heading a { color:var(--accent);font-size:10px;text-decoration:none; }
 #draft-badge { margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#657579;font-size:9px;font-weight:700; }
+#draft-badge[hidden] { display:none; }
 #draft-badge[data-state="stale"],#draft-badge[data-state="invalid"],#draft-badge[data-state="unknown"] { color:#8b3e2f; }
 .toolbar { display:flex;align-items:center;gap:4px;padding:1px 0; }
 .toolbar button,.sheet-heading button { min-height:24px;padding:3px 8px;border:1px solid var(--line);border-radius:4px;background:white;color:var(--ink);font:inherit;cursor:pointer; }

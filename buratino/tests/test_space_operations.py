@@ -19,6 +19,25 @@ def test_machined_space_report_uses_resolved_records_and_keeps_stock_as_blank(ro
     resolved = {part["id"]: part for part in plan.part_plan.parts}
     reported = {part["id"]: part for part in result["parts"]}
 
+    assert len(resolved) == 10
+    assert all(
+        part["grain_axis_local"] in {"x", "y", "z"} for part in resolved.values()
+    )
+    grain_axes = {
+        part_id: part["grain_axis_local"] for part_id, part in resolved.items()
+    }
+    assert grain_axes == {
+        "/cabinet/carcass/side_left": "z",
+        "/cabinet/carcass/side_right": "z",
+        "/cabinet/carcass/top": "x",
+        "/cabinet/carcass/bottom": "x",
+        "/cabinet/carcass/back": "z",
+        "/cabinet/root/drawer/side_L": "y",
+        "/cabinet/root/drawer/side_R": "y",
+        "/cabinet/root/drawer/sub_front": "x",
+        "/cabinet/root/drawer/back": "x",
+        "/cabinet/root/drawer/bottom": "x",
+    }
     assert reported.keys() == resolved.keys()
     assert all(
         reported[ident]["operations"] == resolved[ident]["operations"]

@@ -90,7 +90,9 @@ class TestBuildHtml:
         html = _build_html("Test", "ZmFrZQ==", {}, viewer_data=data)
         assert 'id="viewer-toolbar"' in html and 'id="viewer-sheet"' in html
         assert 'id="tree-tab"' in html and 'id="parts-tab"' in html
-        assert 'id="show-all"' in html and 'id="isolate-selection"' in html
+        assert 'id="focus-selection"' in html
+        assert 'id="grain-overlay-toggle"' in html
+        assert "DRAFT · NOT FOR MANUFACTURING" not in html
         assert "window.cabinetViewerData" in html
         assert '"cabinet.side"' in html
         assert "PropertyBinding?.sanitizeNodeName" in html

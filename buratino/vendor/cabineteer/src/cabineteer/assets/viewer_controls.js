@@ -9,6 +9,7 @@ const ui = {
   drawerPose: document.getElementById('drawer-pose-toggle'),
   doorPose: document.getElementById('door-pose-toggle'),
   visibility: document.getElementById('visibility-options'),
+  focusSelection: document.getElementById('focus-selection'),
   panelOpacity: document.getElementById('panel-opacity'),
   panelOpacityValue: document.getElementById('panel-opacity-value'),
   grainOverlay: document.getElementById('grain-overlay-toggle'),
@@ -78,6 +79,7 @@ function selectGroup(group) {
   }
   updateTreeSelectionState();
   applyModelSelection();
+  updateFocusSelectionButton();
   const selected = currentGroup();
   const memberProfiles = selected?.member_details
     ?.map(member => `${member.label}${member.profile ? ` · ${profileLabel(member.profile)}` : ''}`)
@@ -98,6 +100,7 @@ function selectTreeParts(parts, label) {
   }
   updateTreeSelectionState();
   applyModelSelection();
+  updateFocusSelectionButton();
   ui.caption.textContent = `${label} selected. ${parts.length === 1 ? grainLabel(parts[0]) + '.' : ''}`;
 }
 
@@ -172,6 +175,7 @@ function renderTable() {
       updateGroupVisibilityButton(group, toggle);
       syncVisibilityControls();
       applyPartVisibility();
+      updateFocusSelectionButton();
     });
     updateGroupVisibilityButton(group, toggle);
     nameCell.appendChild(toggle);
@@ -343,6 +347,7 @@ function renderVisibilityControls() {
       syncGroupVisibilityButtons();
       syncVisibilityControls();
       applyPartVisibility();
+      updateFocusSelectionButton();
     });
     row.append(disclosure, label, eye);
     container.appendChild(row);
@@ -383,6 +388,7 @@ function renderVisibilityControls() {
         syncGroupVisibilityButtons();
         syncVisibilityControls();
         applyPartVisibility();
+        updateFocusSelectionButton();
       });
       childRow.append(spacer, partButton, partEye);
       children.appendChild(childRow);
@@ -395,6 +401,25 @@ function renderVisibilityControls() {
   }
   document.getElementById('group-count').textContent = `${parts.length} parts`;
   syncVisibilityControls();
+  updateFocusSelectionButton();
+}
+
+function updateFocusSelectionButton() {
+  const button = ui.focusSelection;
+  if (!button || !result) return;
+  const parts = result.parts;
+  const selected = parts.filter(part => selectedPartIds.has(part.id));
+  const anyHidden = parts.some(part => !isPartVisible(part));
+  const allSelected = parts.length > 0 && selected.length === parts.length;
+  const isolated = selected.length > 0 && anyHidden && parts.every(part =>
+    isPartVisible(part) === selectedPartIds.has(part.id));
+  button.textContent = anyHidden ? 'Show all' : 'Isolate selection';
+  button.disabled = anyHidden ? false : selected.length === 0 || allSelected;
+  button.setAttribute('aria-pressed', String(isolated));
+  button.setAttribute('aria-label', anyHidden ? 'Show all parts' : 'Isolate selection');
+  button.title = anyHidden
+    ? 'Show all parts'
+    : 'Show only the selected parts';
 }
 
 function makeEyeButton(label, visible, mixed) {
@@ -1065,20 +1090,27 @@ async function waitForViewer() {
 async function refreshStatus() {
   try {
     if (result?.draft_status) {
-      ui.status.textContent = result.draft_status;
-      ui.status.dataset.state = result.draft_state ?? 'draft';
+      const state = result.draft_state ?? 'draft';
+      ui.status.dataset.state = state;
+      ui.status.hidden = !['stale', 'invalid', 'unavailable'].includes(state);
+      ui.status.textContent = state === 'stale' ? 'Outdated inputs · old draft'
+        : state === 'invalid' ? 'Invalid inputs'
+          : state === 'unavailable' ? 'Inputs unavailable' : '';
       return;
     }
     const response = await fetch('./status.json', {cache: 'no-store'});
     if (!response.ok) throw new Error('status unavailable');
-    const {status} = await response.json();
-    ui.status.textContent = status === 'current'
-      ? 'DRAFT · NOT FOR MANUFACTURING'
-      : `${String(status).toUpperCase()} INPUTS · Old draft`;
+    const {status, error} = await response.json();
+    ui.status.textContent = status === 'stale' ? 'Stale inputs · old draft'
+      : status === 'invalid' ? 'Invalid inputs'
+        : status === 'unavailable'
+          ? `Inputs unavailable${error ? ` · ${error}` : ''}` : '';
     ui.status.dataset.state = status;
+    ui.status.hidden = !['stale', 'invalid', 'unavailable'].includes(status);
   } catch {
-    ui.status.textContent = 'DRAFT SNAPSHOT · NOT FOR MANUFACTURING';
+    ui.status.textContent = '';
     ui.status.dataset.state = 'unknown';
+    ui.status.hidden = true;
   }
 }
 
@@ -1161,19 +1193,25 @@ document.getElementById('sheet-toggle')?.addEventListener('click', event => {
   const open = document.body.classList.toggle('sheet-open');
   event.currentTarget.setAttribute('aria-expanded', String(open));
 });
-document.getElementById('show-all')?.addEventListener('click', () => {
-  for (const key of visibilityControls.keys()) visibilityControls.set(key, true);
+ui.focusSelection?.addEventListener('click', () => {
+  focusOrShowAllSelection();
+});
+
+function focusOrShowAllSelection() {
+  if (!result) return;
+  const anyHidden = result.parts.some(part => !isPartVisible(part));
+  if (anyHidden) {
+    for (const part of result.parts) visibilityControls.set(`part:${part.id}`, true);
+  } else {
+    const selected = result.parts.filter(part => selectedPartIds.has(part.id));
+    if (!selected.length || selected.length === result.parts.length) return;
+    for (const part of result.parts) visibilityControls.set(`part:${part.id}`, selectedPartIds.has(part.id));
+  }
   syncGroupVisibilityButtons();
   syncVisibilityControls();
   applyPartVisibility();
-});
-document.getElementById('isolate-selection')?.addEventListener('click', () => {
-  if (!selectedPartIds.size) return;
-  for (const part of result.parts) visibilityControls.set(`part:${part.id}`, selectedPartIds.has(part.id));
-  syncGroupVisibilityButtons();
-  syncVisibilityControls();
-  applyPartVisibility();
-});
+  updateFocusSelectionButton();
+}
 document.getElementById('reset-selection')?.addEventListener('click', () => {
   selectGroup(null);
 });

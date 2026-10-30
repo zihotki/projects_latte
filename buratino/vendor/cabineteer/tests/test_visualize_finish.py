@@ -138,6 +138,8 @@ class TestViewerControls:
         html = _build_html("t", GLB_B64, {})
         assert 'id="finish-sel"' in html
         assert 'id="grain-btn"' in html
+        assert 'Texture grain: vertical' in html
+        assert 'id="grain-overlay-toggle"' in html
         assert 'id="cutlist-btn"' in html
         assert 'id="cutlist-modal"' in html
         assert "initFinishUI();" in html

@@ -128,8 +128,14 @@ project = CabinetProject(
     ),
     part_grain=(
         PartGrain("side-left-grain", "/cabinet/carcass/side_left", "z"),
+        PartGrain("side-right-grain", "/cabinet/carcass/side_right", "z"),
         PartGrain("top-grain", "/cabinet/carcass/top", "x"),
+        PartGrain("bottom-grain", "/cabinet/carcass/bottom", "x"),
         PartGrain("back-grain", "/cabinet/carcass/back", "z"),
+        PartGrain("drawer-side-left-grain", "/cabinet/root/drawer/side_L", "y"),
+        PartGrain("drawer-side-right-grain", "/cabinet/root/drawer/side_R", "y"),
+        PartGrain("drawer-sub-front-grain", "/cabinet/root/drawer/sub_front", "x"),
+        PartGrain("drawer-back-grain", "/cabinet/root/drawer/back", "x"),
         PartGrain("drawer-bottom-grain", "/cabinet/root/drawer/bottom", "x"),
     ),
 )
