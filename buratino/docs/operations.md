@@ -168,8 +168,8 @@ and unsupported transforms.
 ```
 
 Open the revision directory printed by the command. Its `result.json` has the
-operation records on each part. `report.html` and the assembly guide in
-`assembly.html` show dimensioned part drawings and machining captions.
+operation records on each part. `report.html#part-drawings` shows dimensioned part drawings and machining
+captions. `report.html#assembly` shows the exploded assembly views.
 `blank_mm` reports the original stock. A machined part has no
 verified `finished_mm` dimensions. These records do not confirm tooling, fit,
 hardware, installation, or manufacturing readiness.

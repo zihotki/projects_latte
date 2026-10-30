@@ -54,8 +54,9 @@ for CSV fields, grouping, configuration, and open provider questions.
 ## Build outputs and limits
 
 Each build writes a new folder under that project's `build/` directory. It
-contains `result.json`, `parts.csv`, a 3D preview, review report, assembly guide,
-and captured source and provenance. Previous builds stay in place. Failed
+contains `result.json`, `parts.csv`, a 3D preview and one report with cut lists,
+part drawings and exploded assembly views, plus captured source and provenance.
+Previous builds stay in place. Failed
 exports do not replace the latest completed build. Use `--json` for the full
 result and checks.
 

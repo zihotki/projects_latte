@@ -50,6 +50,7 @@ def test_export_and_reexport_replace_old_chunks(tmp_path, monkeypatch):
     assert index["source_revision"] == revision
     assert index["provider_product_selection_required"] is True
     assert index["reports"]["review"].endswith("/report.html")
+    assert index["reports"]["assembly"].endswith("/report.html#assembly")
     assert index["file_context"]
 
     result_path = build / "result.json"

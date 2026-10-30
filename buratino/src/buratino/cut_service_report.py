@@ -28,7 +28,7 @@ def write_cutlists(
             "configuration": "default",
             "reports": {
                 "review": "../../report.html",
-                "assembly": "../../assembly.html",
+                "assembly": "../../report.html#assembly",
             },
             "files": list(plan.files),
         }
@@ -139,8 +139,8 @@ def write_cutlists(
         "follows the authored grain direction when known.</p>"
         "<p>Select the material product on the cutting service website and check "
         "its import preview. The banding machine trims before banding; CSV sizes "
-        "have no band thickness compensation. Unsupported machining stays in the "
-        '<a href="assembly.html">assembly report</a>.</p>'
+        "have no band thickness compensation. Unsupported machining is documented "
+        'in the <a href="report.html#part-drawings">part drawings</a>.</p>'
         "<p>These downloads use the default export configuration. For custom "
         "material, grain or finish settings, use the export-cutlist CLI with "
         "--config.</p>" + "".join(sections) + "</section>"

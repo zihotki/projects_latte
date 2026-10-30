@@ -104,7 +104,7 @@ recipe. Bottom blanks include the groove depth at both edges in each direction.
 The default groove depth is 6 mm; the default 13 mm inset locates the bottom
 panel underside. Profile drawer cut records use each part's native stock
 length/width/thickness frame. Their face polygons, cut depths and inward axes
-are also shown in `assembly.html`. These are draft dimensions, not CNC paths.
+are also shown in the `report.html#part-drawings` section. These are draft dimensions, not CNC paths.
 
 ## Nest modules and arrange cabinets
 

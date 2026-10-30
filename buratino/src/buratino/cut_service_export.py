@@ -216,7 +216,7 @@ def export_cutlist(
         name: Path(os.path.relpath(build_dir / filename, destination)).as_posix()
         for name, filename in (
             ("review", "report.html"),
-            ("assembly", "assembly.html"),
+            ("assembly", "report.html#assembly"),
         )
     }
     index = {

@@ -43,22 +43,19 @@ def test_build_captures_consistent_outputs_without_editing_inputs(root, project)
     assert all(float(row["max_blank_length_mm"]) > 0 for row in rows)
     assert all(row["status"] == "DRAFT_NOT_FOR_MANUFACTURING" for row in rows)
     report = (directory / "report.html").read_text()
-    assembly = (directory / "assembly.html").read_text()
-    assert "Physical part IDs" not in report and "carcass.left_side" not in report
-    assert "Physical part IDs" not in assembly and "carcass.left_side" not in assembly
-    assert all(
-        row["part_code"] in report
-        and all(code in assembly for code in row["part_code"].split(", "))
-        for row in rows
-    )
+    assert not (directory / "assembly.html").exists()
+    assert 'id="assembly"' in report and 'id="part-drawings"' in report
+    assert "Physical part IDs" not in report
+    assert all(code in report for row in rows for code in row["part_code"].split(", "))
     viewer = (directory / "preview.html").read_text()
     assert "cdn.jsdelivr.net" not in viewer
     assert (directory / "assets/three/examples/jsm/loaders/GLTFLoader.js").is_file()
     assert (directory / "cabinet.glb").read_bytes()[:4] == b"glTF"
-    assert '"cutlist": "report.html#cutlists"' in viewer
+    assert '"report": "report.html"' in viewer
+    assert '"cutlist": "report.html#cutlists"' not in viewer
     assert ">Cut lists</a>" in viewer
     assert 'id="cutlists"' in report and 'href="parts.csv">Parts data</a>' in report
-    assert "DRAFT — NOT FOR MANUFACTURING" not in report + assembly
+    assert "DRAFT — NOT FOR MANUFACTURING" not in report
     assert result["source_revision"] == manifest["revision"]
     for provider in ("zagenzagen", "opmaatzagen"):
         index_path = f"cutlists/{provider}/index.json"
@@ -125,28 +122,19 @@ def test_drawer_reports_keep_actual_parts_and_unverified_work_visible(root, tmp_
     directory, _manifest = latest_build(project)
     result = read_json(directory / "result.json")
     report = (directory / "report.html").read_text()
-    assembly = (directory / "assembly.html").read_text()
     viewer = (directory / "preview.html").read_text()
 
     assert outcome["status"] == "draft"
     assert len(result["drawers"]) == 4
     assert sum(group["quantity"] for group in result["cutting_groups"]) == 29
-    assert "4 drawer instances with 24 physical drawer parts" in report
-    assert "29 total physical panels" in report
-    assert "Lower drawer fronts are 18 mm thick" in report
-    assert "2 mm face-to-carcass gap" in report
     assert "520 deep" in report
-    assert "runner" in report.lower() and "catch" in report.lower()
-    assert "future manual work" not in report
-    assert "groove dimensions" not in report
-    assert "groove fit" not in report
-    assert "candidate centers per joint" in assembly
-    assert "Drawer corners have no Domino claim" not in assembly
-    assert "Candidate carcass mortise maps" not in assembly
-    assert "EDGE mortise centers from BACK (mm)" in assembly
-    assert "class='panel-drawing'" in assembly
-    assert "Stock thickness:" in assembly
-    assert "Physical part IDs:" not in assembly
+    assert 'id="assembly"' in report and 'id="part-drawings"' in report
+    assert "Hardware requirements" not in report
+    assert "Joint requirements" not in report
+    assert "Drawer layout" not in report
+    assert "Drawer corners have no Domino claim" not in report
+    assert "Physical part IDs:" not in report
+    assert not (directory / "assembly.html").exists()
     assert 'id="drawer-pose-toggle"' in viewer
     assert 'id="drawer-pose-toggle" type="button" aria-pressed="false" hidden' in viewer
     assert 'id="viewer-toolbar" aria-label="Cabinet viewer controls"' in viewer
@@ -271,6 +259,11 @@ def test_preview_serves_only_allowlisted_build_files_and_reports_invalid_inputs(
                 assert b"draft-badge" in response.read()
             with urllib.request.urlopen(base + "/status.json") as response:
                 assert json.load(response)["status"] == "current"
+            with urllib.request.urlopen(base + "/report.html#assembly") as response:
+                assert b'id="assembly"' in response.read()
+            with pytest.raises(urllib.error.HTTPError) as removed_guide:
+                urllib.request.urlopen(base + "/assembly.html")
+            assert removed_guide.value.code == 404
             for private_path in (
                 "/inputs/project.py",
                 "/inputs/adapter-source/build.py",
@@ -333,14 +326,11 @@ def test_connection_guide_labels_the_actual_joint(root, tmp_path):
 
     result = calculate(load_project(root / "projects/linked-row-fixture")).result
     build.render_documents(tmp_path, result)
-    assembly = (tmp_path / "assembly.html").read_text()
-    joint = next(
-        line for line in assembly.split("<li>") if "Cabinet connection between" in line
-    ).split("</li>", 1)[0]
-    assert "unit-a.carcass" not in joint and "unit-b.carcass" not in joint
-    assert "Cabinet connection between unit-a and unit-b" in joint
-    assert "fastening and capacity are unverified" not in joint
-    assert "Drawer corner" not in joint
+    report = (tmp_path / "report.html").read_text()
+    assert 'id="assembly"' in report
+    assert "Joint requirements" not in report
+    assert "Cabinet connection between unit-a and unit-b" not in report
+    assert not (tmp_path / "assembly.html").exists()
 
 
 def test_build_captures_resolved_native_helper_drawer_configs(root, linked_row_project):
@@ -419,8 +409,7 @@ def test_confirmed_grain_has_no_display_label(project, tmp_path):
     inputs.variables["grain_direction_confirmed"] = True
     result = calculate(inputs).result
     build.render_documents(tmp_path, result)
-    for name in ("report.html", "assembly.html"):
-        assert "length (confirmed)" not in (tmp_path / name).read_text()
+    assert "length (confirmed)" not in (tmp_path / "report.html").read_text()
     with (tmp_path / "parts.csv").open(newline="") as source:
         rows = list(csv.DictReader(source))
     assert rows and all(row["grain_status"] == "confirmed" for row in rows)
@@ -454,9 +443,11 @@ def test_panel_groups_split_when_candidate_positions_differ(root, tmp_path):
     assert [row["part_code"] for row in rows] == ["T-01, T-02"]
     assert [row["quantity"] for row in rows] == ["2"]
     report = (tmp_path / "report.html").read_text()
-    assert "T-01, T-02" in report
-    assembly = (tmp_path / "assembly.html").read_text()
-    assert assembly.count("EDGE mortise centers from BACK (mm)") == 2
+    assert "T-01" in report and "T-02" in report
+    assert (tmp_path / "report.html").read_text().count(
+        "EDGE mortise centers from BACK (mm)"
+    ) == 2
+    assert not (tmp_path / "assembly.html").exists()
 
 
 def test_report_keeps_calculation_checks_in_data(root, tmp_path):
@@ -500,7 +491,10 @@ def test_reports_order_materials_and_keep_mixed_codes_in_one_cut_row(root, tmp_p
     assert [row["material"] for row in rows] == ["Ash", "Birch"]
     assert rows[1]["part_code"] == "L01, U01"
     assert rows[1]["quantity"] == "2"
-    assembly = (tmp_path / "assembly.html").read_text()
-    assert assembly.index("<h3>Ash</h3>") < assembly.index("<h3>Birch</h3>")
-    assert assembly.index("<h4>L</h4>") < assembly.index("<h4>U</h4>")
-    assert "× 1</h5>" not in assembly
+    report = (tmp_path / "report.html").read_text()
+    drawings = report.split('<section id="part-drawings">', 1)[1].split(
+        '<section id="assembly">', 1
+    )[0]
+    assert drawings.index("<h3>Ash</h3>") < drawings.index("<h3>Birch</h3>")
+    assert drawings.index("<h4>L</h4>") < drawings.index("<h4>U</h4>")
+    assert "× 1</h5>" not in drawings

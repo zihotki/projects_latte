@@ -42,6 +42,7 @@ def test_report_groups_mixed_materials_types_and_thicknesses(tmp_path):
     assert "504 of 504 panels included" in report
     assert "rounded up" in report
     assert "banding machine trims before banding" in report
+    assert 'href="report.html#part-drawings"' in report
     assert "default export configuration" in report
     assert "OPMAATZAGEN band syntax" not in report
     for provider, delimiter, header, files in (
@@ -50,6 +51,8 @@ def test_report_groups_mixed_materials_types_and_thicknesses(tmp_path):
     ):
         directory = tmp_path / "cutlists" / provider
         summary = read_json(directory / "index.json")
+        assert summary["reports"]["review"] == "../../report.html"
+        assert summary["reports"]["assembly"] == "../../report.html#assembly"
         assert summary["source_revision"] == result["source_revision"]
         assert summary["source_input_identity"] == "identity"
         assert len(summary["groups"]) == files

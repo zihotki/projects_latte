@@ -8,7 +8,7 @@ from .grouping import machining_signature
 from .machining_dimensions import groove_callouts, groove_dimensions
 
 
-def _projected_geometry(shape, direction):
+def _projected_geometry(shape, direction, x_direction=None):
     """Use the same projected edges and bounds as CadQuery's SVG exporter."""
     from cadquery import Compound, Shape
     from cadquery.occ_impl.shapes import TOLERANCE
@@ -19,7 +19,10 @@ def _projected_geometry(shape, direction):
 
     projection = HLRBRep_Algo()
     projection.Add(shape.wrapped)
-    projection.Projector(HLRAlgo_Projector(gp_Ax2(gp_Pnt(), gp_Dir(*direction))))
+    axes = gp_Ax2(gp_Pnt(), gp_Dir(*direction))
+    if x_direction is not None:
+        axes.SetXDirection(gp_Dir(*x_direction))
+    projection.Projector(HLRAlgo_Projector(axes))
     projection.Update()
     projection.Hide()
     edges = HLRBRep_HLRToShape(projection)
@@ -37,12 +40,17 @@ def _projected_geometry(shape, direction):
     return Compound.makeCompound(projected)
 
 
-def _svg_projector(direction, bounds, scale, left, top, rotation_axis=None):
+def _svg_projector(
+    direction, bounds, scale, left, top, rotation_axis=None, x_direction=None
+):
     """Use getSVG's world projector, optional CAD rotation and viewport transform."""
     from OCP.gp import gp_Ax1, gp_Ax2, gp_Dir, gp_Pnt, gp_Trsf
     from OCP.HLRAlgo import HLRAlgo_Projector
 
-    projector = HLRAlgo_Projector(gp_Ax2(gp_Pnt(), gp_Dir(*direction)))
+    axes = gp_Ax2(gp_Pnt(), gp_Dir(*direction))
+    if x_direction is not None:
+        axes.SetXDirection(gp_Dir(*x_direction))
+    projector = HLRAlgo_Projector(axes)
     rotation = gp_Trsf()
     if rotation_axis is not None:
         rotation.SetRotation(gp_Ax1(gp_Pnt(), gp_Dir(*rotation_axis)), math.pi / 2)

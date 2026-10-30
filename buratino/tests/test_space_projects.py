@@ -3,7 +3,6 @@ import shutil
 
 import pytest
 
-from buratino.build import _drawer_summary
 from buratino.engine import calculate
 from buratino.environment import read_json
 from buratino.preview import latest_build
@@ -96,7 +95,7 @@ def test_space_project_keeps_drawers_fronts_and_door_visibility_separate(root):
     )
 
 
-def test_space_calculation_and_reports_do_not_import_cad(root, monkeypatch):
+def test_space_calculation_and_reports_do_not_import_cad(root, tmp_path, monkeypatch):
     inputs = load_project(root / "projects/spaces-fixed-drawers")
     real_import = builtins.__import__
 
@@ -109,7 +108,12 @@ def test_space_calculation_and_reports_do_not_import_cad(root, monkeypatch):
     result = calculate(inputs).result
 
     assert result["parts"]
-    assert "198 mm" in _drawer_summary(result)
+    from buratino.build import render_documents
+
+    render_documents(tmp_path, result)
+    report = (tmp_path / "report.html").read_text()
+    assert 'id="assembly"' in report
+    assert "Drawer layout" not in report
 
 
 def test_build_validates_the_materialized_shape_map_once(root, tmp_path, monkeypatch):

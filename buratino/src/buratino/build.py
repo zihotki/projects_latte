@@ -7,7 +7,6 @@ import json
 import os
 import shutil
 import uuid
-from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -142,241 +141,14 @@ def _page(title: str, content: str) -> str:
     )
 
 
-def _drawer_summary(result: dict) -> str:
-    drawers = result.get("drawers", [])
-    if not drawers:
-        return "<p>Bare cabinet; this input has no drawer section.</p>"
-    layout = result.get("drawer_layout", {})
-    dims = (
-        layout.get("closed_dimensions_mm")
-        or result.get("overall_dimensions_mm")
-        or result["dimensions_mm"]
-    )
-    distance = layout.get("display_open_distance_mm")
-    pose = (
-        f"{distance} mm" if distance is not None else "the nominal depth of each drawer"
-    )
-    face_thickness = layout.get("face_thickness_mm")
-    face_gap = layout.get("face_to_carcass_gap_mm")
-    face_details = (
-        f" Lower drawer fronts are {face_thickness} mm thick with a "
-        f"{face_gap} mm face-to-carcass gap."
-        if face_thickness is not None and face_gap is not None
-        else ""
-    )
-    parts = sum(len(drawer.get("part_ids", [])) for drawer in drawers)
-    panel_count = sum(part.get("quantity", 1) for part in result["parts"])
-    if any("face_mm" not in drawer for drawer in drawers):
-        rows = []
-        for index, drawer in enumerate(drawers, start=1):
-            box = drawer.get("box_mm", {})
-            rows.append(
-                f"<li>Drawer {index}: "
-                f"box {box.get('width', 0):g} × {box.get('depth', 0):g} × "
-                f"{box.get('height', 0):g} mm.</li>"
-            )
-        panel_count = sum(part.get("quantity", 1) for part in result["parts"])
-        return (
-            f"<p>{len(drawers)} drawer boxes with {panel_count} total physical "
-            f"parts. The preview uses a {html.escape(pose)} display pose. "
-            "This pose does not change exported coordinates.</p>"
-            "<h2>Drawer layout</h2><ul>" + "".join(rows) + "</ul>"
-        )
-    return (
-        f"<p>{len(drawers)} drawer instances with {parts} physical drawer parts. "
-        f"The cut list retains {panel_count} total physical panels. "
-        "Closed overall assembly dimensions: "
-        f"{dims['width']:g} wide × {dims['height']:g} high × "
-        f"{dims['depth']:g} deep, mm.{face_details} The preview opens the drawers by "
-        f"{html.escape(pose)}. This pose does not change "
-        "exported coordinates.</p><h2>Drawer layout</h2><ul>"
-        + "".join(
-            f"<li>{count} × box {box[0]:g} × {box[1]:g} × {box[2]:g} mm; "
-            f"overlay face {face[0]:g} × {face[1]:g} × {face[2]:g} mm.</li>"
-            for (box, face), count in Counter(
-                (
-                    tuple(
-                        drawer["box_mm"][key] for key in ("width", "height", "depth")
-                    ),
-                    tuple(
-                        drawer["face_mm"][key]
-                        for key in ("width", "height", "thickness")
-                    ),
-                )
-                for drawer in drawers
-            ).items()
-        )
-        + "</ul>"
-    )
-
-
-def _hardware_table(
-    result: dict, part_codes: dict | None = None, *, diagnostics: bool = True
-) -> str:
-    hardware = result.get("hardware", [])
-    if not hardware:
-        return "<p>No hardware requirements are listed in this result.</p>"
-
-    def number(value):
-        return (
-            f"{value:.1f}".rstrip("0").rstrip(".")
-            if isinstance(value, int | float)
-            else str(value)
-        )
-
-    rows = []
-    for item in hardware:
-        kind = item.get("type", "")
-        labels = {
-            "domino": "Carcass Domino tenons",
-            "drawer_runner": "Drawer runners",
-            "compatible_grooved_bottom_catch_pair": "Grooved-bottom catches",
-            "concealed_door_hinge": "Concealed door hinges",
-        }
-        label = (
-            item.get("name") or labels.get(kind) or kind.replace("_", " ") or "Hardware"
-        )
-        details = []
-        if item.get("model"):
-            details.append(str(item["model"]))
-        elif item.get("slide_key"):
-            details.append(str(item["slide_key"]))
-        if item.get("size"):
-            details.append(str(item["size"]) + " mm")
-        if item.get("length_mm") is not None:
-            details.append(number(item["length_mm"]) + " mm")
-        if item.get("quantity") is not None:
-            details.append("× " + number(item["quantity"]))
-        elif kind == "domino" and diagnostics:
-            details.append("Quantity unverified")
-        quantities = item.get("quantity_by_part_number", {})
-        if quantities:
-            details.append(
-                "Part numbers: "
-                + ", ".join(
-                    f"{part}: {number(count)}" for part, count in quantities.items()
-                )
-            )
-        elif item.get("part_numbers"):
-            details.append("Part numbers: " + ", ".join(item["part_numbers"]))
-        if kind == "concealed_door_hinge":
-            if item.get("nominal_opening_angle_deg") is not None:
-                details.append(
-                    f"Nominal opening: {number(item['nominal_opening_angle_deg'])}°"
-                )
-            doors = []
-            for door in item.get("doors", []):
-                code = (part_codes or {}).get(door.get("door_id"), "Door")
-                size = door.get("size_mm", {})
-                dimensions = " × ".join(
-                    number(size[k]) for k in ("x", "z", "y") if k in size
-                )
-                edge = door.get("hinge_edge")
-                door_detail = f"{code}: {dimensions} mm" if dimensions else code
-                if edge:
-                    door_detail += f", {edge} hinge edge"
-                doors.append(door_detail)
-            if doors:
-                details.append("Doors: " + "; ".join(doors))
-            if diagnostics:
-                details.append("Hinge count, mounting and clearance unverified")
-        sources = item.get("sources", [])
-        rendered = html.escape(
-            "; ".join(details)
-            or ("Quantity and fit unverified" if diagnostics else "—")
-        )
-        if sources:
-            rendered += (
-                f' · <a href="{html.escape(str(sources[0]), quote=True)}">Source</a>'
-            )
-        rows.append(f"<tr><td>{html.escape(str(label))}</td><td>{rendered}</td></tr>")
-    return (
-        "<table><thead><tr><th>Hardware requirement</th><th>Details</th></tr>"
-        "</thead><tbody>" + "".join(rows) + "</tbody></table>"
-    )
-
-
-def _mortise_summary(
-    configs, cabinets, joints, machining=None, *, concise=False
-) -> str:
-    if configs is None:
-        return "<p>Candidate mortise layout is unavailable.</p>"
-    from cabineteer.assembly import _candidate_positions, generate_draft_mortise_maps
-
-    layouts = {}
-    for cfg, cabinet in zip(configs, cabinets, strict=True):
-        cabinet_id = cabinet["id"]
-        count = sum(
-            joint.get("type") == "domino"
-            and joint.get("cabinet_id") == cabinet_id
-            and any(".carcass." in part for part in joint.get("parts", []))
-            for joint in joints
-        )
-        if not count:
-            continue
-        span = float(cfg.interior_depth)
-        positions = _candidate_positions(span, cfg.domino_spec)
-        if not positions or "unavailable" in generate_draft_mortise_maps(cfg):
-            return (
-                "<p>Candidate mortise layout is unavailable "
-                "for at least one cabinet.</p>"
-            )
-        key = (span, positions)
-        layouts[key] = layouts.get(key, 0) + count
-    if not layouts:
-        return ""
-    lines = []
-    for (span, positions), count in layouts.items():
-        centers = ", ".join(f"{position:g}" for position in positions)
-        spacing = (
-            ", ".join(
-                f"{right - left:g}"
-                for left, right in zip(positions, positions[1:], strict=False)
-            )
-            or "not applicable"
-        )
-        lines.append(
-            f"<li>{count} carcass joints: {len(positions)} candidate centers per joint "
-            f"at {centers} mm from the back over a {span:g} mm span; "
-            f"spacing {spacing} mm; back and front margins "
-            f"{positions[0]:g} and {span - positions[-1]:g} mm. "
-            f"That is {count * len(positions)} candidate tenons.</li>"
-        )
-    if machining:
-        face = machining["face_depth_mm"]
-        edge = machining["edge_depth_mm"]
-        tenon = machining["tenon_length_mm"]
-        walls = machining["face_wall_mm_by_cabinet"]
-        wall_details = "; ".join(
-            f"{html.escape(cabinet)}: {wall['min']:g}–{wall['max']:g} mm"
-            for cabinet, wall in walls.items()
-        )
-        setup = (
-            f"<p>User-specified router cutter: {machining['cutter_diameter_mm']:g} mm; "
-            f"face depth {face['min']:g}–{face['max']:g} mm, paired with edge depth "
-            f"{edge['max']:g}–{edge['min']:g} mm. Each pair totals {tenon:g} mm, "
-            "with no glue clearance included. Nominal remaining side face wall "
-            "for perimeter joints: "
-            f"{wall_details}.</p>"
-        )
-    else:
-        setup = ""
-    return (
-        (
-            ""
-            if concise
-            else "<p>These candidate centers satisfy the configured grid, "
-            "edge clearance and spacing limits.</p>"
-        )
-        + "<ul>"
-        + "".join(lines)
-        + "</ul>"
-        + setup
-    )
-
-
 def render_documents(
-    directory: Path, result: dict, configs=None, panel_views=None, panel_groups=None
+    directory: Path,
+    result: dict,
+    configs=None,
+    panel_views=None,
+    panel_groups=None,
+    *,
+    assembly_geometry=None,
 ) -> None:
     panel_maps = {}
     if configs is not None:
@@ -588,53 +360,15 @@ def render_documents(
         (directory / "parts.csv").write_text(buffer.getvalue(), encoding="utf-8")
     navigation = (
         '<nav aria-label="Report navigation"><a href="preview.html">Model</a> · '
-        '<a href="report.html#cutlists">Cut lists</a> · '
-        '<a href="assembly.html">Assembly guide</a></nav>'
+        '<a href="#cutlists">Cut lists</a> · '
+        '<a href="#part-drawings">Part drawings</a> · '
+        '<a href="#assembly">Assembly</a></nav>'
     )
-    dims = result["dimensions_mm"]
+    dims = result.get("overall_dimensions_mm") or result["dimensions_mm"]
     overview = (
         f"<p>Dimensions: {dims['width']:g} wide × {dims['height']:g} high × "
-        f"{dims['depth']:g} deep, mm.</p>" + _drawer_summary(result)
+        f"{dims['depth']:g} deep, mm.</p>"
     )
-    joint_lines = set()
-    space_pair_counts = Counter(
-        tuple(sorted(joint["parts"]))
-        for joint in result["joints"]
-        if joint.get("type") == "space_domino"
-    )
-    for joint in result["joints"]:
-        if joint.get("type") == "cabinet_connection":
-            names = " and ".join(joint.get("cabinet_ids", []))
-            codes = sorted(
-                {part_codes[part] for part in joint["parts"] if part in part_codes}
-            )
-            joint_lines.add(f"{' ↔ '.join(codes)}: Cabinet connection between {names}.")
-            continue
-        codes = sorted(
-            {part_codes[part] for part in joint["parts"] if part in part_codes}
-        )
-        label = " ↔ ".join(codes) or "Joint"
-        if joint.get("type") == "domino" and any(
-            ".carcass." in part for part in joint["parts"]
-        ):
-            continue
-        # Drawer maps provide the corresponding candidate positions.
-        if joint.get("type") == "drawer_domino" and all(
-            part in drawer_rows for part in joint.get("parts", [])
-        ):
-            joint_lines.add(f"{label}: 6 × 40 mm Domino")
-            continue
-        if joint.get("type") == "space_domino":
-            slot = joint["slot_mm"]
-            depths = "/".join(f"{cut['depth']:g}" for cut in joint["mortises"])
-            joint_lines.add(
-                f"{label}: {space_pair_counts[tuple(sorted(joint['parts']))]} × "
-                f"{slot['width']:g} × {joint['tenon_length_mm']:g} mm Domino; "
-                f"{slot['length']:g} × {slot['width']:g} mm slots, {depths} mm depths"
-            )
-        elif joint.get("type") != "domino":
-            joint_lines.add(f"{label}: {joint.get('type', 'Joint').replace('_', ' ')}")
-    joints = "".join(f"<li>{html.escape(line)}</li>" for line in sorted(joint_lines))
     panel_sections = []
     previous_material = None
     previous_prefix = None
@@ -683,50 +417,46 @@ def render_documents(
         "For stock L/W/T, L is length, W is width and T is thickness.</p>"
         + "".join(panel_sections)
     )
-    mortises = (
-        _mortise_summary(
-            configs,
-            result["cabinets"],
-            result["joints"],
-            result.get("domino_machining"),
-            concise=True,
-        )
-        if configs
-        else ""
-    )
-    joinery = "<h2>Carcass mortise layout</h2>" + mortises if mortises else ""
-    if joints:
-        joinery += "<h2>Joint requirements</h2><ul>" + joints + "</ul>"
-    hardware = (
-        "<h2>Hardware requirements</h2>"
-        + _hardware_table(result, part_codes, diagnostics=False)
-        if result.get("hardware")
-        else ""
+    from .exploded_views import exploded_views
+
+    assembly_parts = result["parts"]
+    viewer = result.get("assembly", {}).get("viewer")
+    if viewer:
+        metadata = viewer.get("parts", {})
+        if isinstance(metadata, list):
+            metadata = {part["id"]: part for part in metadata}
+        assembly_parts = [
+            {
+                **part,
+                **metadata.get(part["id"], {}),
+                **{key: part[key] for key in ("role", "geometry") if key in part},
+                **(
+                    {"finished_mm": part["finished_mm"]}
+                    if part.get("finished_mm")
+                    else {}
+                ),
+            }
+            for part in result["parts"]
+        ]
+    assembly_view = exploded_views(assembly_geometry, assembly_parts, part_codes)
+    assembly_section = (
+        '<section id="assembly"><h2>Assembly</h2>'
+        + (assembly_view or "<p>Exploded assembly view unavailable.</p>")
+        + "</section>"
     )
     content = (
         navigation
         + overview
         + write_cutlists(directory, result, part_codes)
-        + "<h2>Parts</h2>"
-        + _table(cut_groups, part_codes)
+        + '<section id="part-drawings">'
         + drawings
-        + hardware
+        + "</section>"
+        + assembly_section
         + '<p><a href="parts.csv">Parts data</a> · '
         '<a href="result.json">Calculation JSON</a></p>'
     )
     (directory / "report.html").write_text(
         _page(result["name"], content), encoding="utf-8"
-    )
-    assembly = (
-        navigation
-        + overview
-        + joinery
-        + drawings
-        + hardware
-        + '<p><a href="report.html">Return to the report</a></p>'
-    )
-    (directory / "assembly.html").write_text(
-        _page("Assembly guide", assembly), encoding="utf-8"
     )
 
 
@@ -737,7 +467,7 @@ def render_geometry(root: Path, directory: Path, calculation):
     viewer_data = {
         **calculation.result,
         "title": calculation.result.get("name", "Cabinet preview"),
-        "viewer_links": {"report": "report.html", "cutlist": "report.html#cutlists"},
+        "viewer_links": {"report": "report.html"},
     }
     assembly_viewer = calculation.result.get("assembly", {}).get("viewer")
     if assembly_viewer:
@@ -900,6 +630,7 @@ def build_project(
             else calculation.configs,
             views,
             groups,
+            assembly_geometry=panel_assembly,
         )
         if input_identity(path) != project.identity:
             raise InputError(

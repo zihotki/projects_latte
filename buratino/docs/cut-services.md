@@ -26,7 +26,7 @@ does not run CAD or change the build:
 The default output is `projects/NAME/exports/REVISION/PROVIDER/`. It contains
 one CSV per material, panel type, and thickness group, plus `index.json`. The
 index records the revision, source IDs and safe labels, group context, issues,
-and links to the captured review and assembly reports. It is an export trace,
+and links to the captured report and its Assembly section. It is an export trace,
 not another machining list. Re-export replaces only a directory with a valid
 Buratino export marker. The command refuses an unowned non-empty directory.
 
@@ -74,7 +74,7 @@ dimension, the export rounds up to the next millimetre. It never rounds to the
 nearest millimetre. This makes the ordered blank a safe oversize of the exact
 source geometry. The source geometry does not change. The export index records
 the exact source dimensions, ordered dimensions, and the round-up allowance;
-the captured reports retain the exact source geometry.
+the captured report retains the exact source geometry.
 
 Services trim stock before banding. CSV dimensions are the ordered blank
 dimensions. Do not subtract or add band thickness. Band trimming does not
@@ -118,11 +118,11 @@ This is a provider option; it does not change display geometry. The current
 best-effort multi-edge encoding puts comma-separated side labels in one quoted
 cell and uses one shared finish type. This grammar is open and unverified.
 Mixed finish types and finishes that the template cannot express export a
-blank with a review issue. The row remains in the assembly report.
+blank with a review issue. The row remains in the report cut lists.
 
 Existing declared EdgeBand metadata is matching band intent for export.
 Color does not select a product. Services trim before banding, so dimensions
-stay unchanged. Other machining remains in the linked assembly report.
+stay unchanged. Other machining remains in the report part drawings.
 
 No supplier import or order has been tested. Check the CSV in the provider
 import UI before use. ZAGENZAGEN panel limit is 500 physical panels per CSV;

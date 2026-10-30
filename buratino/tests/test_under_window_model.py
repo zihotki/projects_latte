@@ -155,10 +155,13 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
         }
         assert actual == expected
     render_documents(tmp_path, result)
-    assembly = (tmp_path / "assembly.html").read_text()
-    assert "6 × 40 mm; × 92" in assembly
-    assert "20 × 6 mm slots" in assembly
-    assert "12/28 mm depths" in assembly
+    report = (tmp_path / "report.html").read_text()
+    assert 'id="assembly"' in report
+    assert "Joint requirements" not in report
+    assert "6 × 40 mm; × 92" not in report
+    assert "20 × 6 mm slots" not in report
+    assert "12/28 mm depths" not in report
+    assert not (tmp_path / "assembly.html").exists()
 
 
 def test_declared_mortises_remove_stock(root):

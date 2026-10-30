@@ -166,37 +166,6 @@ def test_panel_codes_are_order_independent_and_distinguish_groups():
         _coded_groups([[{"id": "new"}]], mapping)
 
 
-def test_hardware_details_render_nested_data_as_readable_text():
-    from buratino.build import _hardware_table
-
-    result = {
-        "hardware": [
-            {
-                "type": "drawer_runner",
-                "quantity_by_part_number": {"123": 2},
-                "part_numbers": ["123"],
-                "length_mm": 480,
-            },
-            {
-                "type": "concealed_door_hinge",
-                "doors": [
-                    {
-                        "door_id": "door",
-                        "hinge_edge": "right",
-                        "hinge_count": None,
-                        "size_mm": {"x": 300, "z": 400, "y": 18},
-                    }
-                ],
-            },
-        ]
-    }
-    rendered = _hardware_table(result, {"door": "U01"})
-    assert "123: 2" in rendered and "480" in rendered
-    assert "U01" in rendered and "300 × 400 × 18 mm" in rendered
-    assert "unverified" in rendered
-    assert "{'" not in rendered and "None" not in rendered
-
-
 def test_group_label_includes_each_distinct_component():
     from buratino.build import _group_label
 
@@ -206,25 +175,6 @@ def test_group_label_includes_each_distinct_component():
         {"id": "upper.section-2.shelf", "component": "shelf"},
     ]
     assert _group_label(members) == "Upper bottom and Upper shelf"
-
-
-def test_mortise_summary_reports_computed_candidates(project):
-    from buratino.build import _mortise_summary
-
-    calculation = calculate(load_project(project))
-    result = calculation.result
-    summary = _mortise_summary(
-        calculation.configs, result["cabinets"], result["joints"]
-    )
-    assert "4 carcass joints" in summary
-    assert "4 candidate centers per joint" in summary
-    assert "40, 170, 310, 450 mm" in summary
-    assert "494 mm span" in summary
-    assert "130, 140, 140 mm" in summary
-    assert "40 and 44 mm" in summary
-    assert "16 candidate tenons" in summary
-    assert "candidate centers satisfy the configured grid" in summary
-    assert "not determined" not in summary
 
 
 def test_6x40_unknown_machining_is_not_treated_as_a_thickness_error(project):
@@ -256,27 +206,6 @@ def test_6x40_unknown_machining_is_not_treated_as_a_thickness_error(project):
         "actual slot dimensions and clearance are unknown"
         in generate_draft_mortise_maps(replace(cfg, domino_spec=spec))
     )
-
-
-def test_mortise_summary_shows_supplied_router_depths(project):
-    from buratino.build import _mortise_summary
-
-    calculation = calculate(load_project(project))
-    result = calculation.result
-    machining = {
-        "cutter_diameter_mm": 6,
-        "face_depth_mm": {"min": 12, "max": 15},
-        "edge_depth_mm": {"min": 25, "max": 28},
-        "tenon_length_mm": 40,
-        "face_wall_mm_by_cabinet": {"left-drawers": {"min": 3, "max": 6}},
-    }
-    summary = _mortise_summary(
-        calculation.configs, result["cabinets"], result["joints"], machining
-    )
-    assert "cutter: 6 mm" in summary
-    assert "face depth 12–15 mm" in summary and "edge depth 28–25 mm" in summary
-    assert "totals 40 mm" in summary and "3–6 mm" in summary
-    assert "no glue clearance" in summary
 
 
 def test_real_bottom_map_matches_native_solid_and_side_mates(project):
@@ -408,7 +337,7 @@ def test_mortise_maps_measure_from_back_for_both_faces_and_edges():
     ("project_name", "groove_width"),
     [("two-under-window", 12), ("real-assembly-native", 12)],
 )
-def test_report_and_guide_share_part_drawings_and_machining_dimensions(
+def test_single_report_has_drawings_and_exploded_assembly_anchor(
     root, tmp_path, project_name, groove_width
 ):
     from buratino.build import render_documents
@@ -422,27 +351,22 @@ def test_report_and_guide_share_part_drawings_and_machining_dimensions(
     svg = '<svg data-test="modeled-part"><path d="M0 0 L100 0"/></svg>'
     render_documents(tmp_path, result, panel_views={part["id"]: svg})
     report = (tmp_path / "report.html").read_text()
-    guide = (tmp_path / "assembly.html").read_text()
-    for document in (report, guide):
-        assert svg in document
-        assert f"Bottom groove: {groove_width} mm wide × 6 mm deep" in document
-        assert "bottom inset 13 mm" in document
-        assert '<a href="preview.html">Model</a>' in document
-        assert '<a href="report.html#cutlists">Cut lists</a>' in document
-        assert '<a href="assembly.html">Assembly guide</a>' in document
-        assert "Quantity:" in document and "Stock:" in document
-        assert "Hardware requirements" in document
-        for obsolete in (
-            "Resolved machining operations",
-            "Profile operations",
-            "Resolved spaces",
-            "Plan diagnostics",
-            "Physical validation",
-            "Candidate mortise layout is unavailable",
-            "Record ID",
-            "local_profile_mm",
-            "bottom_groove",
-        ):
-            assert obsolete not in document
+    assert svg in report
+    from buratino.machining_notes import machining_notes
+
+    notes = machining_notes(part)
+    assert any(f"Bottom groove: {groove_width} mm wide" in note for note in notes)
+    assert all(note in report for note in notes)
+    assert '<a href="#cutlists">Cut lists</a>' in report
+    assert '<a href="#part-drawings">Part drawings</a>' in report
+    assert '<a href="#assembly">Assembly</a>' in report
     assert 'id="cutlists"' in report
-    assert "Carcass mortise layout" not in guide
+    assert 'id="part-drawings"' in report
+    assert 'id="assembly"' in report
+    assert "Hardware requirements" not in report
+    assert "Joint requirements" not in report
+    assert "Drawer layout" not in report
+    assert "Candidate mortise layout is unavailable" not in report
+    assert "Resolved machining operations" not in report
+    assert "local_profile_mm" not in report
+    assert not (tmp_path / "assembly.html").exists()

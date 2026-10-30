@@ -145,13 +145,12 @@ def _catalog_html(entries: list[dict], states: dict | None = None) -> bytes:
                     files = manifest.get("files", {})
                 else:
                     state = states.get(slug, {}).get("status", "Open to watch inputs")
-                    files = {"preview.html", "report.html", "assembly.html"}
+                    files = {"preview.html", "report.html"}
                 links = " · ".join(
                     f'<a href="/designs/{slug}/{page}.html">{name}</a>'
                     for page, name in (
                         ("preview", "Preview"),
                         ("report", "Report"),
-                        ("assembly", "Assembly"),
                     )
                     if page + ".html" in files
                 )
@@ -422,7 +421,6 @@ def preview_server(
     public_files = {
         "preview.html",
         "report.html",
-        "assembly.html",
         "result.json",
         "parts.csv",
         "cabinet.glb",
@@ -565,7 +563,6 @@ def preview_server(
             if not pinned and relative in {
                 "preview.html",
                 "report.html",
-                "assembly.html",
             }:
                 data = stream.read()
                 stream.close()

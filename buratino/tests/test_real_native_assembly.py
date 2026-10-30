@@ -158,12 +158,46 @@ def test_native_drawer_report_keeps_stock_and_describes_cuts(root, tmp_path):
         assert max(p[0] for p in points) == part["stock_mm"]["length"]
         assert all(0 <= p[2] <= part["stock_mm"]["thickness"] for p in points)
     render_documents(tmp_path, result)
-    document = (tmp_path / "assembly.html").read_text()
+    document = (tmp_path / "report.html").read_text()
     assert "Bottom groove: 12 mm wide × 6 mm deep; bottom inset 13 mm" in document
     assert "face T+ (stock L/W/T)" in document
     assert "Profile cut: follow the dimensioned outline shown." in document
     assert "Bevel:" in document
-    assert "Hardware requirements" in document
-    assert "Assembly guide" in document
+    assert "Hardware requirements" not in document
+    assert 'id="assembly"' in document
     assert "Profile operations" not in document
     assert "calculation JSON" not in document
+    assert not (tmp_path / "assembly.html").exists()
+
+
+def test_exploded_view_receives_native_group_metadata_without_mutating_result(
+    root, tmp_path, monkeypatch
+):
+    from copy import deepcopy
+
+    from buratino import exploded_views
+    from buratino.build import render_documents
+
+    result = calculate(load_project(root / "projects/real-assembly-native")).result
+    original = deepcopy(result["parts"])
+    captured = {}
+
+    def capture(assembly, parts, part_codes):
+        captured.update(assembly=assembly, parts=parts, part_codes=part_codes)
+        return "<figure>test exploded view</figure>"
+
+    monkeypatch.setattr(exploded_views, "exploded_views", capture)
+    geometry = object()
+    render_documents(tmp_path, result, assembly_geometry=geometry)
+
+    assert captured["assembly"] is geometry
+    assert any(part.get("cabinet_id") for part in captured["parts"])
+    assert any(part.get("instance_id") for part in captured["parts"])
+    assert [part["role"] for part in captured["parts"]] == [
+        part["role"] for part in original
+    ]
+    assert [part.get("geometry") for part in captured["parts"]] == [
+        part.get("geometry") for part in original
+    ]
+    assert result["parts"] == original
+    assert "test exploded view" in (tmp_path / "report.html").read_text()

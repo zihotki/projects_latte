@@ -20,6 +20,7 @@ def test_catalog_html_groups_designs_and_examples(root):
     assert "Two under window" in page
     assert "Real assembly native" in page
     assert "spaces-fixed-open" in page
+    assert "Assembly</a>" not in page
 
 
 def test_catalog_root_request_returns_index(root, monkeypatch):
