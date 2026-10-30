@@ -9,8 +9,6 @@ from .build import build_project
 from .cut_service_export import export_cutlist
 from .environment import doctor, root_dir
 from .preview import (
-    catalog_projects,
-    ensure_current_build,
     preview_catalog_server,
     preview_server,
 )
@@ -63,9 +61,6 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, indent=2))
             return 0 if result["ok"] else 1
         if args.command == "preview" and args.project is None:
-            for entry in catalog_projects(root):
-                if entry["kind"] == "design":
-                    ensure_current_build(root, Path(entry["path"]))
             with preview_catalog_server(root, args.port) as server:
                 print(
                     json.dumps(
@@ -111,7 +106,6 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Provider product selection required: {product_selection}")
                 print(f"Output: {result['directory']}")
             return 0 if result["status"] == "complete" else 2
-        ensure_current_build(root, path)
         with preview_server(path, args.port) as server:
             print(
                 json.dumps(
@@ -120,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
                         "manufacturing_ready": False,
                         "url": f"http://127.0.0.1:{server.server_port}/preview.html",
                         "message": (
-                            "Press Ctrl-C to stop. Restart preview after input changes."
+                            "Press Ctrl-C to stop. Input changes rebuild automatically."
                         ),
                     }
                 ),

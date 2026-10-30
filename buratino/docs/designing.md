@@ -90,6 +90,13 @@ subtracts `bottom_clearance` and `top_clearance` from that opening. If
 `top_clearance` is unset, the fit recipe uses its default vertical gap. The
 bottom clearance must also meet the selected slide's minimum.
 
+Drawer boxes in Space and profile assemblies use the same stock-panel and cut
+recipe. Bottom blanks include the groove depth at both edges in each direction.
+The default groove depth is 6 mm; the default 13 mm inset locates the bottom
+panel underside. Profile drawer cut records use each part's native stock
+length/width/thickness frame. Their face polygons, cut depths and inward axes
+are also shown in `assembly.html`. These are draft dimensions, not CNC paths.
+
 ## Nest modules and arrange cabinets
 
 `AssemblyRef` places a named `AssemblyModule` inside a host space. A module

@@ -48,10 +48,12 @@ for (const part of parts) {
   assert.ok(faces.length, `${part.role}: no stock main faces`);
   const mark = context.createGrainMark(part.role, meshes);
   assert.ok(mark, `${part.role}: no grain mark`);
+  assert.equal(mark.children.length, 1, `${part.role}: the grain mark contains hatches only`);
+  assert.equal(mark.children[0].name, `grain-hatching-${part.role}`);
   const toStock = frame.stockToPart.clone().invert();
   for (const segment of mark.children) {
     const positions = segment.geometry.attributes.position;
-    assert.ok(positions.count, `${part.role}: no hatch or arrow vertices`);
+    assert.ok(positions.count, `${part.role}: no hatch vertices`);
     for (let i = 0; i < positions.count; i += 1) {
       const point = new THREE.Vector3().fromBufferAttribute(positions, i).applyMatrix4(toStock);
       assert.ok([0, frame.size[2]].some(plane => Math.abs(Math.abs(point.z - plane) - 0.4) < 0.03),

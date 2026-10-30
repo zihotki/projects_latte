@@ -135,3 +135,31 @@ def test_mixed_opening_runner_selection_is_reported_without_false_single_key(roo
     assert native_snapshot(all_380)["cabinet_hardware_profiles"]["left-drawers"][
         "slide_key"
     ] == ("buratino_hettich_quadro_v6_eb20_380")
+
+
+def test_native_drawer_report_keeps_stock_and_describes_cuts(root, tmp_path):
+    from buratino.build import render_documents
+
+    result = calculate(load_project(root / "projects/real-assembly-native")).result
+    drawer_parts = [part for part in result["parts"] if ".drawer." in part["id"]]
+    assert len(drawer_parts) == 45
+    for part in drawer_parts:
+        assert part["blank_mm"] == part["stock_mm"]
+        if part["component"] == "bottom":
+            assert part["operations"] == []
+            continue
+        groove = next(op for op in part["operations"] if op["role"] == "bottom_groove")
+        assert groove["depth_mm"] == 6
+        assert groove["kind"] == "pocket"
+        assert groove["target"] in {"thickness+", "thickness-"}
+        points = groove["local_profile_mm"]
+        assert min(p[1] for p in points) == 13
+        assert max(p[1] for p in points) == 25
+        assert max(p[0] for p in points) == part["stock_mm"]["length"]
+        assert all(0 <= p[2] <= part["stock_mm"]["thickness"] for p in points)
+    render_documents(tmp_path, result)
+    document = (tmp_path / "assembly.html").read_text()
+    assert "bottom_groove" in document
+    assert "face polygon in stock L/W/T (mm):" in document
+    assert "depth 6 mm; inward" in document
+    assert "profile_trim" in document or "edge_bevel" in document

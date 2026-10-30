@@ -22,8 +22,6 @@ from .joinery import (
     DrawerJoineryStyle,
     DrawerJoinerySpec,
     drawer_joinery_spec,
-    apply_drawer_joinery_to_side,
-    apply_drawer_joinery_to_front_back,
 )
 from .pulls import PullPlacement, VerticalPolicy, pull_positions
 
@@ -359,6 +357,41 @@ def _require_cq():
             raise ImportError("cadquery is required. Install with: pip install cadquery") from exc
 
 
+def drawer_recipe(cfg: DrawerConfig, prefix: str = "") -> tuple[dict, ...]:
+    """Return stock panels, box-local placements and cuts without loading CAD.
+
+    Each panel uses unmachined box XYZ axes. Applied faces remain separate.
+    """
+    from .operations import drawer_pockets
+    from .space_parts import box_part
+
+    offsets = drawer_part_offsets(cfg)
+    sizes = {
+        "side_L": (cfg.side_thickness, cfg.side_panel_length, cfg.box_height),
+        "side_R": (cfg.side_thickness, cfg.side_panel_length, cfg.box_height),
+        "sub_front": (cfg.front_back_panel_length, cfg.front_back_thickness, cfg.box_height),
+        "back": (cfg.front_back_panel_length, cfg.front_back_thickness, cfg.box_height),
+        "bottom": (cfg.bottom_panel_width, cfg.bottom_panel_depth, cfg.bottom_thickness),
+    }
+    parts = []
+    for name, size in sizes.items():
+        axis = 2 if name == "bottom" else (0 if name.startswith("side") else 1)
+        part = box_part(prefix + name, "drawer_" + name, size, offsets[name], "", size[axis], axis)
+        if name != "bottom":
+            part["operations"] = drawer_pockets(
+                part["id"], name, size, cfg.bottom_dado_inset,
+                cfg.bottom_thickness, cfg.bottom_dado_depth, cfg.joinery,
+            )
+        parts.append(part)
+    return tuple(parts)
+
+
+def _materialize_drawer_part(cfg: DrawerConfig, name: str):
+    from .space_adapter import materialize_box_part
+
+    return materialize_box_part(next(part for part in drawer_recipe(cfg) if part["id"] == name))
+
+
 def make_drawer_side(cfg: DrawerConfig, side: str = "left") -> "cq.Workplane":
     """Create a drawer side panel with bottom dado and corner joinery cuts.
 
@@ -371,27 +404,7 @@ def make_drawer_side(cfg: DrawerConfig, side: str = "left") -> "cq.Workplane":
     if side not in ("left", "right"):
         raise ValueError(f"side must be 'left' or 'right', got {side!r}")
 
-    _require_cq()
-
-    length = cfg.side_panel_length
-    panel = (
-        cq.Workplane("XY")
-        .box(cfg.side_thickness, length, cfg.box_height, centered=False)
-    )
-
-    dado_x = (cfg.side_thickness - cfg.bottom_dado_depth) if side == "left" else 0.0
-    dado = (
-        cq.Workplane("XY")
-        .transformed(offset=(dado_x, 0, cfg.bottom_dado_inset))
-        .box(cfg.bottom_dado_depth, length, cfg.bottom_thickness, centered=False)
-    )
-    panel = panel.cut(dado)
-
-    panel = apply_drawer_joinery_to_side(
-        panel, cfg.joinery, length, cfg.box_height, side=side
-    )
-
-    return panel
+    return _materialize_drawer_part(cfg, "side_L" if side == "left" else "side_R")
 
 
 def make_drawer_front_back(cfg: DrawerConfig, position: str = "back") -> "cq.Workplane":
@@ -412,28 +425,7 @@ def make_drawer_front_back(cfg: DrawerConfig, position: str = "back") -> "cq.Wor
     if position not in ("front", "back"):
         raise ValueError(f"position must be 'front' or 'back', got {position!r}")
 
-    _require_cq()
-
-    length = cfg.front_back_panel_length
-
-    panel = (
-        cq.Workplane("XY")
-        .box(length, cfg.front_back_thickness, cfg.box_height, centered=False)
-    )
-
-    dado_y = 0.0 if position == "back" else (cfg.front_back_thickness - cfg.bottom_dado_depth)
-    dado = (
-        cq.Workplane("XY")
-        .transformed(offset=(0, dado_y, cfg.bottom_dado_inset))
-        .box(length, cfg.bottom_dado_depth, cfg.bottom_thickness, centered=False)
-    )
-    panel = panel.cut(dado)
-
-    panel = apply_drawer_joinery_to_front_back(
-        panel, cfg.joinery, length, cfg.box_height, position=position
-    )
-
-    return panel
+    return _materialize_drawer_part(cfg, "sub_front" if position == "front" else "back")
 
 
 def drawer_part_offsets(cfg: DrawerConfig) -> dict[str, tuple[float, float, float]]:
@@ -470,11 +462,7 @@ def drawer_part_offsets(cfg: DrawerConfig) -> dict[str, tuple[float, float, floa
 
 def make_drawer_bottom(cfg: DrawerConfig) -> "cq.Workplane":
     """Create the drawer bottom panel."""
-    _require_cq()
-    return (
-        cq.Workplane("XY")
-        .box(cfg.bottom_panel_width, cfg.bottom_panel_depth, cfg.bottom_thickness, centered=False)
-    )
+    return _materialize_drawer_part(cfg, "bottom")
 
 
 def make_drawer_face(cfg: DrawerConfig) -> "cq.Workplane":

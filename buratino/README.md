@@ -18,9 +18,9 @@ downloads, test files, and runtime identity in `buratino/.cache/`.
 ```
 
 Run `./buratino/bin/buratino preview` to open one catalog for the two current
-designs and the example projects. It refreshes a missing or stale build for
-each design before it starts. The catalog shows examples and tests with their
-build state. You can also preview one project by short name, for example
+designs and the example projects. Open a project to start its background
+build watcher. The catalog shows the current state of watched projects.
+You can also preview one project by short name, for example
 `./buratino/bin/buratino preview two-under-window`. `build` and `export-cutlist`
 also accept a short project name.
 
@@ -39,7 +39,10 @@ The [coordinate contract](docs/coordinates.md) describes model axes, local
 stock frames, placement, and the CAD-to-viewer boundary.
 
 `preview` prints a loopback URL. Each project page shows one captured build.
-After a new build, refresh the page. The preview server can stay running.
+Input changes rebuild automatically after a short pause. The page loads the new
+revision when it is ready. Invalid edits and failed builds keep the last valid
+draft visible; the status banner shows the error. Correct the inputs to retry.
+Catalog projects start watching when you open them.
 Select a part or cut-list row to highlight it. Visibility and drawer pose
 controls change display only; they do not change geometry or cutting
 quantities. Stop the server with Ctrl-C.

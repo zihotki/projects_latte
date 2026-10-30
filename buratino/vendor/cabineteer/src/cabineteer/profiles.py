@@ -669,6 +669,20 @@ def resolve_profile_assembly(
 
 
 @dataclass(frozen=True)
+class NativePocketOperation:
+    """Pocket face polygon and inward cut direction in native stock L/W/T axes."""
+
+    id: str
+    role: str
+    target: str
+    local_profile_mm: tuple[tuple[float, float, float], ...]
+    depth_mm: float
+    inward_axis_local: tuple[float, float, float]
+    kind: str = "pocket"
+    status: str = "unverified"
+
+
+@dataclass(frozen=True)
 class NativeCarcassPart:
     """An existing native carcass part placed in the composite assembly."""
 
@@ -1080,49 +1094,71 @@ def profile_face(
 
 def _placed_drawer_parts(drawer, origin, section, owner, material, bottom_material=""):
     """Place the native drawer box in a profile assembly."""
-    from .drawer import build_drawer, drawer_part_offsets
+    from .drawer import drawer_recipe
+    from .space_adapter import materialize_box_part
 
-    _, drawer_parts = build_drawer(drawer)
-    offsets = drawer_part_offsets(drawer)
     names = {
-        "drawer_side_L": ("side_left", "side_L"),
-        "drawer_side_R": ("side_right", "side_R"),
-        "drawer_sub_front": ("inner_front", "sub_front"),
-        "drawer_back": ("inner_back", "back"),
-        "drawer_bottom": ("bottom", "bottom"),
+        "side_L": "side_left", "side_R": "side_right",
+        "sub_front": "inner_front", "back": "inner_back", "bottom": "bottom",
     }
     parts = []
-    for part in drawer_parts:
-        component, key = names[part.name]
-        pos = tuple(a + b for a, b in zip(origin, offsets[key], strict=True))
-        shape = part.shape.translate(pos)
-        bounds = shape.val().BoundingBox()
+    for panel in drawer_recipe(drawer):
+        key = panel["id"]
+        component = names[key]
+        pos = tuple(a + b for a, b in zip(origin, panel["transform"]["translation"], strict=True))
+        shape = materialize_box_part(panel).translate(pos)
+        x, y, z = panel["stock"]["dimensions"]
         if component.startswith("side"):
             axes = ((0, 1, 0), (0, 0, 1), (1, 0, 0))
-            local_origin = (bounds.xmin, bounds.ymin, bounds.zmin)
-            stock = (bounds.ylen, bounds.zlen, bounds.xlen)
+            stock_origin, stock = (0, 0, 0), (y, z, x)
         elif component == "bottom":
             axes = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
-            local_origin = (bounds.xmin, bounds.ymin, bounds.zmin)
-            stock = (bounds.xlen, bounds.ylen, bounds.zlen)
+            stock_origin, stock = (0, 0, 0), (x, y, z)
         else:
             axes = ((1, 0, 0), (0, 0, 1), (0, -1, 0))
-            local_origin = (bounds.xmin, bounds.ymax, bounds.zmin)
-            stock = (bounds.xlen, bounds.zlen, bounds.ylen)
+            stock_origin, stock = (0, y, 0), (x, z, y)
+        local_origin = tuple(a+b for a,b in zip(pos, stock_origin, strict=True))
+        ident = f"{section}.drawer.{component}"
+        operations = tuple(
+            _native_drawer_pocket(op, ident, (x, y, z), stock_origin, axes)
+            for op in panel["operations"]
+        )
         parts.append(
             NativeCarcassPart(
-                f"{section}.drawer.{component}",
-                owner,
-                component,
-                bottom_material
-                if component == "bottom" and bottom_material
-                else material,
-                shape,
-                LocalFrame(local_origin, *axes),
-                stock,
+                ident, owner, component,
+                bottom_material if component == "bottom" and bottom_material else material,
+                shape, LocalFrame(local_origin, *axes), stock, operations=operations,
             )
         )
     return tuple(parts)
+
+
+def _native_drawer_pocket(op, part_id, size, origin, axes):
+    """Map a recipe pocket from box XYZ to the native stock frame."""
+    normal = "xyz".index(op["face"][0])
+    uv = [axis for axis in range(3) if axis != normal]
+    positive = op["face"][1] == "+"
+
+    def local(vector):
+        return tuple(sum(a*b for a,b in zip(vector, axis, strict=True)) for axis in axes)
+
+    polygon = []
+    for u, v in ((op["u"], op["v"]), (op["u"]+op["size_u"], op["v"]),
+                 (op["u"]+op["size_u"], op["v"]+op["size_v"]),
+                 (op["u"], op["v"]+op["size_v"])):
+        point = [0.0, 0.0, 0.0]
+        point[normal] = size[normal] if positive else 0.0
+        point[uv[0]], point[uv[1]] = u, v
+        polygon.append(local(tuple(a-b for a,b in zip(point, origin, strict=True))))
+    inward = [0.0, 0.0, 0.0]
+    inward[normal] = -1.0 if positive else 1.0
+    direction = local(inward)
+    axis = next(i for i, value in enumerate(direction) if value)
+    target = ("length", "width", "thickness")[axis] + ("+" if direction[axis] < 0 else "-")
+    return NativePocketOperation(
+        f"drawer/{part_id}/{op['role']}", op["role"], target,
+        tuple(polygon), op["depth"], direction,
+    )
 
 
 def upper_drawer_configs(spec: ProfileAssemblySpec):

@@ -816,6 +816,7 @@ def render_documents(
         )
         + f"</ul><p>Input identity: <code>{result['input_identity']}</code></p>"
     )
+    native_operations = ""
     if result.get("space_model"):
         content = (
             f"<p>Carcass dimensions: {dims['width']:g} × {dims['height']:g} × "
@@ -834,12 +835,29 @@ def render_documents(
         operations = []
         for part in result["assembly"]["parts"]:
             for operation in part["operations"]:
+                details = ""
+                if operation["kind"] == "pocket":
+                    points = "; ".join(
+                        "(" + ", ".join(f"{value:g}" for value in point) + ")"
+                        for point in operation["local_profile_mm"]
+                    )
+                    inward = ", ".join(
+                        f"{value:g}" for value in operation["inward_axis_local"]
+                    )
+                    details = (
+                        f"; {html.escape(operation['role'])}; "
+                        f"face polygon in stock L/W/T (mm): {points}; "
+                        f"depth {operation['depth_mm']:g} mm; inward ({inward}) "
+                    )
                 operations.append(
                     f"<li>{html.escape(part['id'])}: "
                     f"{html.escape(operation['kind'])} on "
-                    f"{html.escape(operation['target'])} "
+                    f"{html.escape(operation['target'])} {details}"
                     f"({html.escape(operation['status'])})</li>"
                 )
+        native_operations = (
+            "<h2>Profile operations</h2><ul>" + "".join(operations) + "</ul>"
+        )
         content = (
             f"<p>Occupied dimensions: {dims['width']:g} × {dims['height']:g} × "
             f"{dims['depth']:g} mm.</p>"
@@ -847,9 +865,8 @@ def render_documents(
             '<a href="parts.csv">Draft cut list</a> · '
             '<a href="result.json">Calculation JSON</a></p>'
             + _table(cut_groups, part_codes)
-            + "<h2>Profile operations</h2><ul>"
-            + "".join(operations)
-            + "</ul><h2>Selected hardware</h2>"
+            + native_operations
+            + "<h2>Selected hardware</h2>"
             + _hardware_table(result, part_codes, diagnostics=False)
             + "<p>Hardware, support, joinery and installation "
             "remain unverified.</p>"
@@ -937,7 +954,9 @@ def render_documents(
     if result.get("assembly"):
         assembly = (
             "<p>Assembly and installation are unverified. See the modeled "
-            "panel profiles in the calculation JSON.</p>" + "".join(panel_sections)
+            "panel profiles in the calculation JSON.</p>"
+            + native_operations
+            + "".join(panel_sections)
         )
     (directory / "assembly.html").write_text(
         _page("Draft cabinet assembly", assembly), encoding="utf-8"
@@ -1011,11 +1030,17 @@ def render_geometry(root: Path, directory: Path, calculation):
     return assembly
 
 
-def build_project(root: Path, path: Path) -> dict:
+def build_project(
+    root: Path, path: Path, *, expected_identity: str | None = None
+) -> dict:
     environment = doctor(root)
     if not environment["ok"]:
         raise InputError("environment_invalid", "Run doctor and setup before building.")
     project = load_project(path)
+    if expected_identity is not None and project.identity != expected_identity:
+        raise InputError(
+            "inputs_changed", "Inputs changed before the build captured them; rebuild."
+        )
     calculation = calculate(project)
     errors = [
         item for item in calculation.result["checks"] if item["severity"] == "error"
@@ -1034,6 +1059,7 @@ def build_project(root: Path, path: Path) -> dict:
     published = None
     pointer = None
     try:
+        os.write(descriptor, str(os.getpid()).encode())
         os.close(descriptor)
         stage.mkdir()
         write_json(stage / "result.json", calculation.result)

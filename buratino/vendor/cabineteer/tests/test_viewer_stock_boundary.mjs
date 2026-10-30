@@ -55,11 +55,13 @@ assert.ok(selected.every(({vertices}) => vertices.every(point =>
   'inset floors and walls are excluded');
 const mark = context.createGrainMark(part.role, meshes);
 assert.ok(mark, 'real selected triangles produce a mark');
+assert.equal(mark.children.length, 1, 'the grain mark contains hatches only');
+assert.equal(mark.children[0].name, `grain-hatching-${part.role}`);
 const toStock = cadRoot.matrixWorld.clone().invert();
 const stockOrigin = new THREE.Vector3(...part.transform.translation);
 for (const segment of mark.children) {
   const positions = segment.geometry.attributes.position;
-  assert.ok(positions.count > 0, 'the mark has hatch and arrow segments');
+  assert.ok(positions.count > 0, 'the mark has hatch segments');
   for (let item = 0; item < positions.count; item += 1) {
     const point = new THREE.Vector3().fromBufferAttribute(positions, item);
     const stockPoint = mark.localToWorld(point).applyMatrix4(toStock).sub(stockOrigin);

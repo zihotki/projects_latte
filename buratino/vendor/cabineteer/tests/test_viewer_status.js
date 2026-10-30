@@ -7,7 +7,8 @@ const source = fs.readFileSync(path.join(__dirname, '../src/cabineteer/assets/vi
 const start = source.indexOf('async function refreshStatus()');
 const end = source.indexOf('async function start()', start);
 const status = {textContent: '', dataset: {}, hidden: true};
-const context = {ui: {status}, result: null, fetch: async () => ({ok: true, json: async () => ({status: 'current'})})};
+const navigations = [];
+const context = {document: {querySelector: () => null}, window: {location: {replace: url => navigations.push(url), search: '?view=iso', hash: '#part'}}, ui: {status}, result: null, fetch: async () => ({ok: true, json: async () => ({status: 'current'})})};
 vm.createContext(context);
 vm.runInContext(`${source.slice(start, end)}\nthis.refreshStatus = refreshStatus;`, context);
 
@@ -23,6 +24,11 @@ vm.runInContext(`${source.slice(start, end)}\nthis.refreshStatus = refreshStatus
   assert.equal(status.textContent, 'Outdated inputs · old draft');
 
   context.result = null;
+  context.window.buratinoPreviewRefresh = true;
+  context.fetch = async () => { throw new Error('Server bootstrap owns polling'); };
+  await context.refreshStatus();
+  assert.equal(status.textContent, 'Outdated inputs · old draft');
+  context.window.buratinoPreviewRefresh = false;
   context.fetch = async () => ({ok: true, json: async () => ({status: 'current'})});
   await context.refreshStatus();
   assert.equal(status.hidden, true);
@@ -40,8 +46,23 @@ vm.runInContext(`${source.slice(start, end)}\nthis.refreshStatus = refreshStatus
 
   context.fetch = async () => { throw new Error('missing status endpoint'); };
   await context.refreshStatus();
-  assert.equal(status.hidden, true);
-  assert.equal(status.textContent, '');
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, 'Preview status unavailable');
+
+  context.fetch = async () => ({ok: true, json: async () => ({status: 'updating', revision: 'old'})});
+  context.document.querySelector = () => ({content: 'old', dataset: {entry: '/designs/cabinet/preview.html'}});
+  await context.refreshStatus();
+  assert.equal(status.textContent, 'Updating draft…');
+  assert.deepEqual(navigations, []);
+
+  context.fetch = async () => ({ok: true, json: async () => ({status: 'current', revision: 'new'})});
+  context.document.querySelector = () => null; // Direct pinned pages stay immutable.
+  await context.refreshStatus();
+  assert.deepEqual(navigations, []);
+  context.document.querySelector = () => ({content: 'old', dataset: {entry: '/designs/cabinet/preview.html'}});
+  await context.refreshStatus();
+  await context.refreshStatus();
+  assert.deepEqual(navigations, ['/designs/cabinet/preview.html?view=iso#part']);
 })().catch(error => {
   process.nextTick(() => { throw error; });
 });

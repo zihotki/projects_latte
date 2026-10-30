@@ -1,9 +1,17 @@
-"""Serve revision-pinned builds on loopback, with input-staleness reporting."""
+"""Serve immutable drafts and rebuild changed inputs in background workers."""
 
 import html
 import json
 import mimetypes
+import os
 import re
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from contextlib import suppress
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11,7 +19,61 @@ from urllib.parse import unquote, urlsplit
 
 from .build import build_project
 from .environment import file_hash, read_json
-from .project import InputError, input_identity
+from .project import InputError, _runtime_root, input_identity
+
+# Served independently of captured assets, so older drafts can also refresh.
+_REFRESH_SCRIPT = r"""
+<script>
+(() => {
+  window.buratinoPreviewRefresh = true;
+  const preview = document.querySelector('meta[name="buratino-preview"]');
+  let navigating = false;
+  async function refresh() {
+    if (navigating) return;
+    let banner = document.getElementById('draft-badge')
+      || document.getElementById('buratino-preview-status');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'buratino-preview-status';
+      banner.style.cssText = 'position:fixed;top:12px;left:12px;z-index:10000;'
+        + 'max-width:80vw;padding:8px 12px;background:#fff3cd;color:#3d3520;'
+        + 'border:1px solid #d4bd76;border-radius:6px;font:14px system-ui';
+      document.body.appendChild(banner);
+    }
+    try {
+      const response = await fetch('./status.json', {cache: 'no-store'});
+      if (!response.ok) throw new Error('Preview status unavailable');
+      const {status, revision, error} = await response.json();
+      if (revision && revision !== preview.content) {
+        navigating = true;
+        window.location.replace(preview.dataset.entry
+          + window.location.search + window.location.hash);
+        return;
+      }
+      banner.dataset.state = status;
+      banner.title = error || '';
+      banner.hidden = status === 'current';
+      banner.textContent = status === 'updating' ? 'Updating draft…'
+        : status === 'invalid' ? 'Invalid inputs · old draft'
+          : status === 'stale' ? 'Stale inputs · old draft'
+            : status === 'unavailable' ? 'Inputs unavailable' : '';
+      if (error) banner.textContent += ' · ' + error;
+    } catch {
+      banner.hidden = false;
+      banner.dataset.state = 'unavailable';
+      banner.textContent = 'Preview status unavailable';
+    }
+    setTimeout(refresh, 1000);
+  }
+  document.addEventListener('DOMContentLoaded', refresh, {once: true});
+})();
+</script>
+"""
+
+
+def _signal_group(pid: int, sig: int):
+    with suppress(ProcessLookupError):
+        os.killpg(pid, sig)
 
 
 def catalog_projects(root: Path) -> list[dict]:
@@ -67,7 +129,7 @@ def ensure_current_build(root: Path, project_path: Path) -> tuple[Path, dict]:
     return latest_build(project_path)
 
 
-def _catalog_html(entries: list[dict]) -> bytes:
+def _catalog_html(entries: list[dict], states: dict | None = None) -> bytes:
     sections = []
     for kind, label in (("design", "Designs"), ("example", "Examples and tests")):
         rows = []
@@ -75,10 +137,15 @@ def _catalog_html(entries: list[dict]) -> bytes:
             title = html.escape(entry["title"])
             slug = entry["name"]
             try:
-                _, manifest = latest_build(entry["path"])
-                state = input_status(entry["path"], manifest["input_identity"])[
-                    "status"
-                ]
+                if states is None:
+                    _, manifest = latest_build(entry["path"])
+                    state = input_status(entry["path"], manifest["input_identity"])[
+                        "status"
+                    ]
+                    files = manifest.get("files", {})
+                else:
+                    state = states.get(slug, {}).get("status", "Open to watch inputs")
+                    files = {"preview.html", "report.html", "assembly.html"}
                 links = " · ".join(
                     f'<a href="/designs/{slug}/{page}.html">{name}</a>'
                     for page, name in (
@@ -86,11 +153,17 @@ def _catalog_html(entries: list[dict]) -> bytes:
                         ("report", "Report"),
                         ("assembly", "Assembly"),
                     )
-                    if page + ".html" in manifest.get("files", {})
+                    if page + ".html" in files
                 )
                 detail = f"{html.escape(state)} build · {links or 'No viewer pages'}"
             except (InputError, OSError, ValueError, KeyError, TypeError):
-                detail = "No captured build"
+                state = states.get(entry["name"], {}) if states else {}
+                detail = (
+                    f"{html.escape(state.get('status', 'No captured build'))} · "
+                    f'<a href="/designs/{slug}/preview.html">Preview</a>'
+                )
+            if states and states.get(slug, {}).get("error"):
+                detail += " · " + html.escape(states[slug]["error"])
             rows.append(
                 f"<li><strong>{title}</strong> <code>{html.escape(slug)}</code>"
                 f"<br>{detail}</li>"
@@ -164,24 +237,188 @@ def input_status(project_path: Path, expected_identity: str) -> dict:
         return {"status": "unavailable", "error": str(exc)}
 
 
+class ProjectWatcher:
+    """One serialized build loop. Failed input identities wait for a new edit."""
+
+    def __init__(self, root: Path, project: Path, *, poll=0.25, debounce=0.6):
+        self.root, self.project = root, project
+        self.poll, self.debounce = poll, debounce
+        self.stop = threading.Event()
+        self.lock = threading.Lock()
+        self.state = {"status": "updating", "revision": None}
+        self.identity = None
+        self.manifest = None
+        try:
+            _, self.manifest = latest_build(project)
+            self.state = {"status": "current", "revision": self.manifest["revision"]}
+        except InputError:
+            pass
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def status(self, expected=None):
+        with self.lock:
+            value = dict(self.state)
+            if value["status"] == "current" and expected and expected != self.identity:
+                value["status"] = "stale"
+            return value
+
+    def _state(self, status, error=None):
+        with self.lock:
+            self.state = {
+                "status": status,
+                "revision": self.manifest["revision"] if self.manifest else None,
+            }
+            if error:
+                self.state["error"] = str(error)
+
+    def _build(self):
+        # A fresh interpreter reloads changed engine rules and isolates CAD state.
+        script = """
+import json, sys
+from pathlib import Path
+from buratino.build import build_project
+try:
+    build_project(Path(sys.argv[1]), Path(sys.argv[2]), expected_identity=sys.argv[3])
+except Exception as exc:
+    print(json.dumps({"code": getattr(exc, "code", "build_failed"), "error": str(exc)}))
+    sys.exit(1)
+"""
+        environment = dict(os.environ, BURATINO_ROOT=str(self.root))
+        with tempfile.TemporaryFile(mode="w+") as output:
+            child = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    script,
+                    str(self.root),
+                    str(self.project),
+                    self.identity,
+                ],
+                stdout=output,
+                stderr=output,
+                env=environment,
+                start_new_session=True,
+            )
+            try:
+                while child.poll() is None:
+                    if self.stop.wait(self.poll):
+                        _signal_group(child.pid, signal.SIGTERM)
+                        with suppress(subprocess.TimeoutExpired):
+                            child.wait(timeout=5)
+                        raise InputError("build_stopped", "Preview stopped.")
+                if child.returncode:
+                    output.seek(0)
+                    message = output.read()
+                    try:
+                        failure = json.loads(message.strip().splitlines()[-1])
+                    except (ValueError, IndexError):
+                        failure = {"code": "build_failed", "error": message[-2000:]}
+                    raise InputError(failure["code"], failure["error"])
+            finally:
+                # The leader can exit before a descendant which ignores TERM.
+                _signal_group(child.pid, signal.SIGKILL)
+                if child.poll() is None:
+                    child.wait()
+                # Remove only a lock owned by our terminated child.
+                lock = self.project / "build/.lock"
+                try:
+                    if lock.read_text() == str(child.pid):
+                        lock.unlink()
+                except OSError:
+                    pass
+
+    def _run(self):
+        observed = attempted = None
+        changed_at = 0.0
+        busy_attempts = 0
+        retry_at = 0.0
+        waiting_lock = False
+        while not self.stop.is_set():
+            try:
+                identity = input_identity(self.project)
+                # Also adopt builds published by the CLI or another preview server.
+                pointer = (
+                    read_json(self.project / "build/latest.json")
+                    if (self.project / "build/latest.json").is_file()
+                    else {}
+                )
+                if pointer.get("revision") != (
+                    self.manifest["revision"] if self.manifest else None
+                ) and pointer.get("revision"):
+                    _, self.manifest = latest_build(self.project)
+                self.identity = identity
+                now = time.monotonic()
+                if identity != observed:
+                    observed, changed_at = identity, now
+                    attempted = None
+                    busy_attempts, retry_at, waiting_lock = 0, 0.0, False
+                if self.manifest and identity == self.manifest["input_identity"]:
+                    self._state("current")
+                elif identity != attempted or waiting_lock:
+                    lock_exists = (self.project / "build/.lock").exists()
+                    if waiting_lock and busy_attempts >= 4 and lock_exists:
+                        pass
+                    elif now >= max(changed_at + self.debounce, retry_at):
+                        if self.stop.is_set():
+                            break
+                        self._state("updating")
+                        attempted = identity
+                        try:
+                            self._build()
+                            _, self.manifest = latest_build(self.project)
+                            waiting_lock = False
+                            self._state("current")
+                        except InputError as exc:
+                            waiting_lock = exc.code == "build_busy"
+                            busy_attempts += int(waiting_lock)
+                            retry_at = now + min(0.5 * 2**busy_attempts, 4)
+                            self._state("stale" if waiting_lock else "invalid", exc)
+                        except Exception as exc:
+                            self._state("invalid", exc)
+                    elif not waiting_lock:
+                        self._state("updating")
+            except (InputError, OSError, ValueError, KeyError, TypeError) as exc:
+                self._state("unavailable", exc)
+            self.stop.wait(self.poll)
+
+    def close(self):
+        self.stop.set()
+        # The child observes stop and is terminated within its bounded grace period.
+        self.thread.join()
+
+
 def preview_server(
     project_path: Path, port: int = 0, *, catalog_root: Path | None = None
 ) -> ThreadingHTTPServer:
-    # Validate the initial build before starting the server, as before.
+    # Existing captured files are validated before being served.
     if catalog_root is None:
-        initial_directory, initial_manifest = latest_build(project_path)
-        builds = {
-            (project_path.resolve(), initial_manifest["revision"]): (
+        builds = {}
+        try:
+            initial_directory, initial_manifest = latest_build(project_path)
+            builds[(project_path.resolve(), initial_manifest["revision"])] = (
                 initial_directory,
                 initial_manifest,
             )
-        }
+        except InputError:
+            pass
         entries = []
         projects_by_name = {}
     else:
         entries = catalog_projects(catalog_root)
         projects_by_name = {item["name"]: item["path"] for item in entries}
         builds = {}
+    watchers = {}
+    watcher_lock = threading.Lock()
+
+    def watch(path):
+        with watcher_lock:
+            if path not in watchers:
+                watchers[path] = ProjectWatcher(
+                    catalog_root or _runtime_root(path), path
+                )
+            return watchers[path]
+
     public_files = {
         "preview.html",
         "report.html",
@@ -217,7 +454,12 @@ def preview_server(
             selected_name = None
             if catalog_root is not None:
                 if relative in {"", "index.html"}:
-                    data = _catalog_html(entries)
+                    states = {
+                        name: watcher.status()
+                        for name, path in projects_by_name.items()
+                        if (watcher := watchers.get(path)) is not None
+                    }
+                    data = _catalog_html(entries, states)
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Cache-Control", "no-store")
@@ -235,6 +477,28 @@ def preview_server(
 
             parts = relative.split("/")
             pinned = parts[0] == "revisions" and len(parts) >= 3
+            watcher = watch(selected_project)
+            status_relative = "/".join(parts[2:]) if pinned else relative
+            if status_relative == "status.json":
+                expected = None
+                if pinned:
+                    try:
+                        key = (selected_project, parts[1])
+                        if key not in builds:
+                            builds[key] = _build(selected_project, parts[1])
+                        expected = builds[key][1]["input_identity"]
+                    except InputError:
+                        self.send_error(404)
+                        return None
+                data = json.dumps(watcher.status(expected)).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(data)
+                return None
             try:
                 revision = (
                     parts[1]
@@ -250,20 +514,29 @@ def preview_server(
                 if pinned:
                     relative = "/".join(parts[2:])
             except (InputError, OSError, ValueError, KeyError, TypeError):
-                self.send_error(404)
-                return None
-
-            if relative == "status.json":
-                data = json.dumps(
-                    input_status(selected_project, manifest["input_identity"])
-                ).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                if self.command != "HEAD":
-                    self.wfile.write(data)
+                if pinned:
+                    self.send_error(404)
+                else:
+                    state = watcher.status()
+                    refresh = (
+                        '<meta http-equiv="refresh" content="2">'
+                        if state["status"] == "updating"
+                        else ""
+                    )
+                    data = (
+                        "<!doctype html>"
+                        + refresh
+                        + "<title>Preview</title><p>"
+                        + html.escape(state.get("error", "Preparing preview."))
+                        + "</p><p>Correct inputs and refresh to retry.</p>"
+                    ).encode()
+                    self.send_response(503)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    if self.command != "HEAD":
+                        self.wfile.write(data)
                 return None
 
             listed_files = set(manifest["files"])
@@ -294,7 +567,16 @@ def preview_server(
                     if selected_name is not None
                     else f"/revisions/{manifest['revision']}/"
                 )
-                base = f'<base href="{base_path}">'.encode()
+                entry_path = (
+                    f"/designs/{selected_name}/{relative}"
+                    if selected_name is not None
+                    else f"/{relative}"
+                )
+                base = (
+                    f'<base href="{base_path}">'
+                    f'<meta name="buratino-preview" content="{manifest["revision"]}" '
+                    f'data-entry="{entry_path}">' + _REFRESH_SCRIPT
+                ).encode()
                 data = re.sub(
                     rb"<html\b[^>]*>",
                     lambda match: match.group() + base,
@@ -319,9 +601,22 @@ def preview_server(
             self.end_headers()
             return stream
 
-    return ThreadingHTTPServer(
+    server = ThreadingHTTPServer(
         ("127.0.0.1", port), partial(Handler, directory=str(project_path))
     )
+    if catalog_root is None:
+        watch(project_path.resolve())
+    original_close = server.server_close
+
+    def close():
+        for watcher in watchers.values():
+            watcher.stop.set()
+        original_close()
+        for watcher in watchers.values():
+            watcher.close()
+
+    server.server_close = close
+    return server
 
 
 def preview_catalog_server(root: Path, port: int = 0) -> ThreadingHTTPServer:

@@ -10,11 +10,10 @@ import math
 from typing import Any
 
 from .cabinet import CabinetConfig, back_capture_geometry, carcass_panel
-from .drawer import DEFAULT_VERTICAL_GAP, DrawerConfig, drawer_part_offsets
+from .drawer import DEFAULT_VERTICAL_GAP, DrawerConfig, drawer_recipe
 from .door import DoorConfig
 from .hardware import OverlayType, get_slide
 from .joinery import DrawerJoineryStyle
-from .operations import drawer_pockets
 from .space_parts import box_part
 
 
@@ -290,17 +289,16 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
                     use_standard_height=False, applied_face=False, joinery_style=DrawerJoineryStyle(box.joinery_style))
                 if bottom_clear < d.slide.min_bottom_clearance or d.box_width <= 2*d.side_thickness or d.box_depth > size[1] or d.box_depth <= 2*d.front_back_thickness or d.bottom_dado_depth <= 0 or d.bottom_dado_depth > min(d.side_thickness, d.front_back_thickness) or d.bottom_dado_inset + d.bottom_thickness > height:
                     raise ValueError("drawer recipe does not fit")
-                offsets = drawer_part_offsets(d)
                 box_origin = (origin[0]+d.side_gap, origin[1]+d.front_gap, origin[2]+bottom_clear)
                 box_size = (d.box_width, d.box_depth, height)
                 if any(start < low or start + length > low + span for start, length, low, span in zip(box_origin, box_size, origin, size)):
                     raise ValueError("drawer box extends outside its allocated space")
-                sizes = {"side_L": (d.side_thickness,d.side_panel_length,height), "side_R": (d.side_thickness,d.side_panel_length,height), "sub_front": (d.front_back_panel_length,d.front_back_thickness,height), "back": (d.front_back_panel_length,d.front_back_thickness,height), "bottom": (d.bottom_panel_width,d.bottom_panel_depth,d.bottom_thickness)}
-                for name, sz in sizes.items():
-                    p = tuple(a+b for a,b in zip(box_origin, offsets[name]))
-                    part(cid+"/"+name, "drawer_"+name, p, sz, box.bottom_material if name == "bottom" else box.material, d.bottom_thickness if name == "bottom" else (d.side_thickness if name.startswith("side") else d.front_back_thickness), 2 if name == "bottom" else (0 if name.startswith("side") else 1), owner=cid, motion_group=cid)
-                    if name != "bottom":
-                        parts[-1]["operations"] = drawer_pockets(parts[-1]["id"], name, sz, d.bottom_dado_inset, d.bottom_thickness, d.bottom_dado_depth, d.joinery)
+                for panel in drawer_recipe(d, cid + "/"):
+                    name = panel["id"].rsplit("/", 1)[-1]
+                    p = tuple(a+b for a,b in zip(box_origin, panel["transform"]["translation"]))
+                    stock = panel["stock"]
+                    part(panel["id"], panel["kind"], p, stock["dimensions"], box.bottom_material if name == "bottom" else box.material, stock["thickness"], stock["thickness_axis"], owner=cid, motion_group=cid)
+                    parts[-1]["operations"] = panel["operations"]
                 for wall in ("side_L", "side_R", "sub_front", "back"):
                     contact(cid + "/bottom", cid + "/" + wall, "bottom_groove")
                 for side_name in ("side_L", "side_R"):

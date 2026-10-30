@@ -23,10 +23,15 @@ def test_catalog_html_groups_designs_and_examples(root):
 
 
 def test_catalog_root_request_returns_index(root, monkeypatch):
-    monkeypatch.setattr(
-        preview, "ThreadingHTTPServer", lambda _address, handler: handler
-    )
-    handler_type = preview.preview_catalog_server(root).func
+    class Server:
+        def __init__(self, _address, handler):
+            self.handler = handler
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(preview, "ThreadingHTTPServer", Server)
+    handler_type = preview.preview_catalog_server(root).handler.func
     handler = handler_type.__new__(handler_type)
     responses = []
     handler.path = "/"

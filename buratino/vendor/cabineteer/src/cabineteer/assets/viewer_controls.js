@@ -645,7 +645,6 @@ function createProfileGrainMark(role, part, meshes, partNode) {
   }
 
   const hatchVertices = [];
-  const arrowVertices = [];
   for (const surface of surfaces) {
     const acrossLength = surface.acrossMax - surface.acrossMin;
     const grainLength = surface.grainMax - surface.grainMin;
@@ -658,24 +657,10 @@ function createProfileGrainMark(role, part, meshes, partNode) {
       }
     }
 
-    const centerAcross = (surface.acrossMin + surface.acrossMax) / 2;
-    const centerIntervals = intervalsAt(surface, centerAcross);
-    const longest = centerIntervals.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]))[0];
-    if (!longest) continue;
-    const length = longest[1] - longest[0];
-    const arrowLength = Math.min(length, 220, Math.max(150, Math.min(acrossLength, grainLength) * 0.56));
-    const arrowHead = Math.min(22, arrowLength * 0.14);
-    const start = (longest[0] + longest[1] - arrowLength) / 2;
-    const end = start + arrowLength;
-    const tip = pointOnFace(surface, end, centerAcross);
-    const base = pointOnFace(surface, end - arrowHead, centerAcross);
-    const left = base.clone().addScaledVector(surface.across, arrowHead * 0.55);
-    const right = base.clone().addScaledVector(surface.across, -arrowHead * 0.55);
-    arrowVertices.push(pointOnFace(surface, start, centerAcross), tip, tip, left, tip, right);
   }
 
   const inPart = points => points.map(point => point.clone().applyMatrix4(frame.stockToPart));
-  return createGrainMarkGroup(role, partNode, inPart(hatchVertices), inPart(arrowVertices));
+  return createGrainMarkGroup(role, partNode, inPart(hatchVertices));
 }
 
 function stockFrameTriangles(part, meshes, partNode) {
@@ -736,7 +721,7 @@ function selectStockMainFaceTriangles(triangles, normalAxis, size) {
   });
 }
 
-function createGrainMarkGroup(role, partNode, hatchVertices, arrowVertices) {
+function createGrainMarkGroup(role, partNode, hatchVertices) {
   const {THREE} = viewer;
   if (!hatchVertices.length) return null;
   const mark = new THREE.Group();
@@ -750,16 +735,6 @@ function createGrainMarkGroup(role, partNode, hatchVertices, arrowVertices) {
   }));
   hatches.name = `grain-hatching-${role}`;
   mark.add(hatches);
-  const arrowGeometry = new THREE.BufferGeometry().setFromPoints(arrowVertices);
-  const arrows = new THREE.LineSegments(arrowGeometry, new THREE.LineBasicMaterial({
-    color: 0x126c5e,
-    depthTest: true,
-    depthWrite: false,
-    transparent: true,
-    opacity: 0.98,
-  }));
-  arrows.name = `grain-direction-arrow-${role}`;
-  mark.add(arrows);
   mark.name = `grain-direction-${role}`;
   mark.renderOrder = 6;
   partNode.add(mark);
@@ -853,36 +828,15 @@ function createGrainMark(role, meshes) {
     ];
   }
 
-  const arrowVertices = [];
-  const arrowLength = Math.min(220, Math.max(150, Math.min(uLength, vLength) * 0.56));
-  const arrowHead = Math.min(22, arrowLength * 0.14);
   for (const faceSide of [-1, 1]) {
     const faceNormal = normalMid + faceSide * normalOffset;
     for (let offset = -hatchReach; offset <= hatchReach; offset += spacing) {
       const segment = lineAcrossFace(offset, faceNormal);
       if (segment) hatchVertices.push(...segment);
     }
-    const segment = lineAcrossFace(0, faceNormal);
-    if (!segment) continue;
-    const [start, end] = segment;
-    const length = start.distanceTo(end);
-    const centerOffset = Math.max(0, (length - arrowLength) / 2);
-    const arrowStart = start.clone();
-    const arrowDirection = end.clone().sub(start).normalize();
-    arrowStart.addScaledVector(arrowDirection, centerOffset);
-    const actualLength = Math.min(length, arrowLength);
-    const arrowEnd = arrowStart.clone().addScaledVector(arrowDirection, actualLength);
-    const across = new THREE.Vector3();
-    across[orientation.u] = nu;
-    across[orientation.v] = nv;
-    arrowVertices.push(
-      arrowStart, arrowEnd,
-      arrowEnd, arrowEnd.clone().addScaledVector(arrowDirection, -arrowHead).addScaledVector(across, arrowHead * 0.55),
-      arrowEnd, arrowEnd.clone().addScaledVector(arrowDirection, -arrowHead).addScaledVector(across, -arrowHead * 0.55),
-    );
   }
 
-  return createGrainMarkGroup(role, partNode, hatchVertices, arrowVertices);
+  return createGrainMarkGroup(role, partNode, hatchVertices);
 }
 
 function applyModelSelection() {
@@ -1114,6 +1068,8 @@ async function waitForViewer() {
 }
 
 async function refreshStatus() {
+  if (window.buratinoPreviewRefresh || refreshStatus.pending || refreshStatus.navigating) return;
+  refreshStatus.pending = true;
   try {
     if (result?.draft_status) {
       const state = result.draft_state ?? 'draft';
@@ -1126,24 +1082,36 @@ async function refreshStatus() {
     }
     const response = await fetch('./status.json', {cache: 'no-store'});
     if (!response.ok) throw new Error('status unavailable');
-    const {status, error} = await response.json();
-    ui.status.textContent = status === 'stale' ? 'Stale inputs · old draft'
-      : status === 'invalid' ? 'Invalid inputs'
-        : status === 'unavailable'
-          ? `Inputs unavailable${error ? ` · ${error}` : ''}` : '';
+    const {status, error, revision} = await response.json();
+    const preview = document.querySelector('meta[name="buratino-preview"]');
+    if (preview && revision && revision !== preview.content) {
+      // The base URL pins resources. Navigate through the unpinned entry URL.
+      refreshStatus.navigating = true;
+      window.location.replace(preview.dataset.entry + window.location.search + window.location.hash);
+      return;
+    }
+    ui.status.textContent = status === 'updating' ? 'Updating draft…'
+      : status === 'stale' ? `Stale inputs · old draft${error ? ` · ${error}` : ''}`
+        : status === 'invalid' ? `Invalid inputs · old draft${error ? ` · ${error}` : ''}`
+          : status === 'unavailable'
+            ? `Inputs unavailable${error ? ` · ${error}` : ''}` : '';
     ui.status.dataset.state = status;
-    ui.status.hidden = !['stale', 'invalid', 'unavailable'].includes(status);
+    ui.status.hidden = !['updating', 'stale', 'invalid', 'unavailable'].includes(status);
   } catch {
-    ui.status.textContent = '';
-    ui.status.dataset.state = 'unknown';
-    ui.status.hidden = true;
+    ui.status.textContent = 'Preview status unavailable';
+    ui.status.dataset.state = 'unavailable';
+    ui.status.hidden = false;
+  } finally {
+    refreshStatus.pending = false;
   }
 }
 
 async function start() {
   if (!await loadData()) return;
-  await refreshStatus();
-  setInterval(refreshStatus, 3000);
+  if (!window.buratinoPreviewRefresh) {
+    await refreshStatus();
+    setInterval(refreshStatus, 3000);
+  }
   if (!await waitForViewer()) {
     setMessage('The model did not finish loading. Refresh the preview to try again.', true);
     return;

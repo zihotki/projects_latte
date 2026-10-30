@@ -68,40 +68,46 @@ def space_model_records(model: ResolvedModel, cabinet_id: str = "cabinet") -> di
 
 def materialize_model(model: ResolvedModel) -> dict:
     """Materialize recorded local profiles and operations, keyed by part ID."""
-    import cadquery as cq
     shapes = {}
     for part in model.part_plan.parts:
-        profile = part["profile"]
-        if profile["type"] != "box":
-            raise ValueError(f"{part['id']}: unsupported profile {profile['type']!r}")
-        x, y, z = profile["size"]
-        shape = cq.Workplane("XY").box(x, y, z, centered=False)
-        for op in part.get("operations", []):
-            try:
-                cutter = _operation_cutter(cq, op, (x, y, z), part["id"])
-                shape = shape.cut(cutter)
-                value = shape.val()
-                if not shape.solids().vals() or value.Volume() <= 1e-8:
-                    raise ValueError("cut removes all stock")
-            except ValueError:
-                raise
-            except Exception as exc:
-                raise ValueError(f"{part['id']}: CAD failed for operation {op.get('id', '<unknown>')!r}: {exc}") from exc
-        try:
-            solids = shape.solids().vals()
-            if not solids or shape.val().Volume() <= 1e-8:
-                raise ValueError("operations remove all stock")
-            if any(not solid.isValid() for solid in solids):
-                raise ValueError("operations produce invalid solid geometry")
-        except ValueError:
-            raise
-        except Exception as exc:
-            raise ValueError(f"{part['id']}: CAD materialization failed: {exc}") from exc
+        shape = materialize_box_part(part)
         transform = part["transform"]
         if transform["axes"] != [[1,0,0],[0,1,0],[0,0,1]]:
             raise ValueError(f"{part['id']}: unsupported transform axes")
         shapes[part["id"]] = shape.translate(tuple(transform["translation"]))
     return shapes
+
+
+def materialize_box_part(part: dict):
+    """Cut one rectangular stock panel in its unplaced local XYZ frame."""
+    import cadquery as cq
+    profile = part["profile"]
+    if profile["type"] != "box":
+        raise ValueError(f"{part['id']}: unsupported profile {profile['type']!r}")
+    x, y, z = profile["size"]
+    shape = cq.Workplane("XY").box(x, y, z, centered=False)
+    for op in part.get("operations", []):
+        try:
+            cutter = _operation_cutter(cq, op, (x, y, z), part["id"])
+            shape = shape.cut(cutter)
+            value = shape.val()
+            if not shape.solids().vals() or value.Volume() <= 1e-8:
+                raise ValueError("cut removes all stock")
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(f"{part['id']}: CAD failed for operation {op.get('id', '<unknown>')!r}: {exc}") from exc
+    try:
+        solids = shape.solids().vals()
+        if not solids or shape.val().Volume() <= 1e-8:
+            raise ValueError("operations remove all stock")
+        if any(not solid.isValid() for solid in solids):
+            raise ValueError("operations produce invalid solid geometry")
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"{part['id']}: CAD materialization failed: {exc}") from exc
+    return shape
 
 
 def _operation_cutter(cq, op: dict, dims: tuple[float, float, float], part_id: str):

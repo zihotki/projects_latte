@@ -59,12 +59,13 @@ def test_short_project_names_cannot_escape_projects(root):
         raise AssertionError("Expected path validation to reject traversal")
 
 
-def test_explicit_preview_refreshes_then_starts_server(root, monkeypatch, capsys):
+def test_explicit_preview_starts_without_eager_build(root, monkeypatch, capsys):
     monkeypatch.setattr(cli, "root_dir", lambda: root)
-    calls = []
-    monkeypatch.setattr(
-        cli, "ensure_current_build", lambda base, path: calls.append(path)
-    )
+
+    def unexpected_build(*_args):
+        raise AssertionError("Preview must build in the background")
+
+    monkeypatch.setattr(cli, "build_project", unexpected_build)
 
     class Server:
         server_port = 1234
@@ -82,15 +83,15 @@ def test_explicit_preview_refreshes_then_starts_server(root, monkeypatch, capsys
     assert cli.main(["preview", "two-under-window"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["url"] == "http://127.0.0.1:1234/preview.html"
-    assert calls == [root / "projects/two-under-window"]
 
 
-def test_default_preview_refreshes_only_tagged_designs(root, monkeypatch, capsys):
+def test_default_preview_starts_without_eager_build(root, monkeypatch, capsys):
     monkeypatch.setattr(cli, "root_dir", lambda: root)
-    calls = []
-    monkeypatch.setattr(
-        cli, "ensure_current_build", lambda base, path: calls.append(path)
-    )
+
+    def unexpected_build(*_args):
+        raise AssertionError("Preview must build in the background")
+
+    monkeypatch.setattr(cli, "build_project", unexpected_build)
 
     class Server:
         server_port = 4321
@@ -108,7 +109,3 @@ def test_default_preview_refreshes_only_tagged_designs(root, monkeypatch, capsys
     assert cli.main(["preview"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["url"] == "http://127.0.0.1:4321/"
-    assert calls == [
-        root / "projects/real-assembly-native",
-        root / "projects/two-under-window",
-    ]

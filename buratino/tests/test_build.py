@@ -2,6 +2,7 @@ import csv
 import json
 import shutil
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -271,8 +272,14 @@ def test_preview_serves_only_allowlisted_build_files_and_reports_invalid_inputs(
                     urllib.request.urlopen(request)
                 assert head_failure.value.code == 404
             (project / "project.py").write_text("broken")
-            with urllib.request.urlopen(base + "/status.json") as response:
-                assert json.load(response)["status"] == "stale"
+            deadline = time.monotonic() + 4
+            while True:
+                with urllib.request.urlopen(base + "/status.json") as response:
+                    state = json.load(response)["status"]
+                if state in {"updating", "invalid"}:
+                    break
+                assert time.monotonic() < deadline
+                time.sleep(0.05)
             with pytest.raises(urllib.error.HTTPError) as failure:
                 urllib.request.urlopen(base + "/../design.json")
             assert failure.value.code == 404
@@ -366,6 +373,17 @@ def test_preview_reload_uses_latest_build_and_keeps_old_resources(root, project)
                 with urllib.request.urlopen(base + first_prefix + resource) as response:
                     original = project / "build" / first["revision"] / resource
                     assert response.read() == original.read_bytes()
+            deadline = time.monotonic() + 4
+            while True:
+                with urllib.request.urlopen(base + "/status.json") as response:
+                    state = json.load(response)
+                if (
+                    state["revision"] == second["revision"]
+                    and state["status"] == "current"
+                ):
+                    break
+                assert time.monotonic() < deadline
+                time.sleep(0.05)
             with urllib.request.urlopen(
                 base + first_prefix + "status.json"
             ) as response:
