@@ -5,6 +5,7 @@ import math
 
 from .grouping import machining_signature
 from .machining_dimensions import groove_callouts, groove_dimensions
+from .mortise_views import mortise_layouts
 
 
 def _projected_geometry(shape, direction):
@@ -211,6 +212,20 @@ def panel_views(assembly, parts: list[dict]) -> dict[str, str]:
         )
         machining = groove_callouts(features, project)
         svg = svg.replace("</svg>", callouts + stock_label + machining + "</svg>")
+        layouts, layout_bottom = mortise_layouts(part, viewport_height + 8)
+        if layouts:
+            height = math.ceil(layout_bottom)
+            svg = svg.replace(f'height="{viewport_height:.1f}"', f'height="{height}"')
+            svg = svg.replace(
+                f'viewBox="0 0 360 {viewport_height}"', f'viewBox="0 0 360 {height}"'
+            )
+            svg = svg.replace(
+                "</svg>",
+                '<text x="180" y="244" text-anchor="middle" font-size="11" '
+                'fill="#465c68">CAD overview · modeled solid</text>'
+                + layouts
+                + "</svg>",
+            )
         views[part["id"]] = svg
     return views
 

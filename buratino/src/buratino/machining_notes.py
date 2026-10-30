@@ -1,8 +1,15 @@
 """Short drawing captions from the recorded machining dimensions."""
 
+from .mortise_views import mortise_faces
 
-def machining_notes(part: dict) -> list[str]:
+
+def machining_notes(part: dict, *, mortise_layout_available: bool = False) -> list[str]:
     notes = []
+    layouts = (
+        {face.selector: face for face in mortise_faces(part)}
+        if mortise_layout_available
+        else {}
+    )
     mortises = {}
     for cut in part.get("operations", []):
         if cut.get("type") == "mortise" and "kind" not in cut:
@@ -73,6 +80,13 @@ def machining_notes(part: dict) -> list[str]:
             )
             members = mortises.pop(key, None)
             if members is None:
+                continue
+            if face in layouts:
+                notes.append(
+                    f"Mortises ({len(members)}): {cut['length']:g} × "
+                    f"{cut['width']:g} mm; depth {cut['depth']:g} mm; "
+                    f"{layouts[face].label}. See stock-face layout for centres."
+                )
                 continue
             if len(members) == 1:
                 centers = f"center U {cut['u']:g}, V {cut['v']:g} mm"

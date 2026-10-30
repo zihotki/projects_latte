@@ -149,7 +149,10 @@ between a bare module and its host; declare those contacts with `DominoJoint`
 or `DominoRow`. Dividers with `role="adjustable"` do not inherit. A project
 joint on a pair already owned by a component recipe is rejected; set that
 recipe to `None` before declaring a custom pair. Recipes select slot dimensions,
-depths, and end offsets; the resolver selects the owned contacts and placement.
+depths, end offsets, and target spacing. `spacing` defaults to 100 mm per
+Domino. The resolver uses `ceil(contact span / spacing)` slots and places them
+evenly between the end offsets. A one-slot contact uses its center. Each slot
+must fit the contact, and slots must not overlap.
 
 Every footprint and depth must fit the unmachined stock. A joint needs
 coincident contact faces and a registered pair. The resolver rejects unknown

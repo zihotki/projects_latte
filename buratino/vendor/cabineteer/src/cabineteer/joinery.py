@@ -70,6 +70,9 @@ import math
 from dataclasses import dataclass
 from enum import Enum
 
+
+MAX_DOMINOS_PER_CONTACT = 1000
+
 @dataclass(frozen=True)
 class DominoJoinery:
     """Modeled Domino recipe for owned Space component contacts (mm)."""
@@ -79,9 +82,10 @@ class DominoJoinery:
     face_depth: float = 12
     end_depth: float = 28
     end_offsets: tuple[float, float] = (50, 50)
+    spacing: float = 100
 
     def __post_init__(self):
-        for name in ("slot_length", "slot_width", "face_depth", "end_depth"):
+        for name in ("slot_length", "slot_width", "face_depth", "end_depth", "spacing"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"DominoJoinery.{name}: expected a positive finite number")
@@ -132,9 +136,24 @@ def component_domino_rows(parts, contacts, explicit=()):
         span = high[axis] - low[axis]
         if span < recipe.slot_length or high[cross] - low[cross] < recipe.slot_width:
             raise ValueError(f"{label}: slot does not fit contact")
-        start, end = recipe.end_offsets[0], span - recipe.end_offsets[1]
+        ratio = span / recipe.spacing
+        if not math.isfinite(ratio) or ratio > MAX_DOMINOS_PER_CONTACT:
+            raise ValueError(f"{label}: spacing requests more than {MAX_DOMINOS_PER_CONTACT} Dominoes")
+        count = max(1, math.ceil(ratio))
         half = recipe.slot_length / 2
-        positions = (start, end) if start >= half and end <= span - half and end - start > recipe.slot_length else (span / 2,)
+        if count == 1:
+            positions = (span / 2,)
+        else:
+            start, end = recipe.end_offsets[0], span - recipe.end_offsets[1]
+            if start < half or end > span - half or end <= start:
+                raise ValueError(f"{label}: Domino offsets do not fit contact")
+            positions = tuple(start + (end - start) * i / (count - 1) for i in range(count))
+            if all(float(value).is_integer() for value in (span, *recipe.end_offsets, recipe.slot_length)):
+                positions = tuple(math.floor(position + 0.5) for position in positions)
+        if any(position - half < -1e-9 or position + half > span + 1e-9 for position in positions):
+            raise ValueError(f"{label}: Domino slot does not fit contact")
+        if any(right - left < recipe.slot_length - 1e-9 for left, right in zip(positions, positions[1:])):
+            raise ValueError(f"{label}: Domino slots overlap")
         faces, depths = [], []
         for part in (a, b):
             faces.append("xyz"[normal] + ("+" if abs(part["bounds"][1][normal] - low[normal]) < 1e-6 else "-"))

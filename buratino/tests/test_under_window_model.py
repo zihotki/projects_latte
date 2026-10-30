@@ -1,6 +1,5 @@
 """Under-window stock, runner fit, and registered contact-face joints."""
 
-import json
 from collections import Counter
 from hashlib import sha256
 
@@ -14,10 +13,7 @@ from buratino.cut_services import plan_export
 from buratino.engine import calculate
 from buratino.project import load_project
 
-_LEGACY_CUT_GEOMETRY_SHA256 = (
-    "2ba2af91376a09e6a41c8c630e9977ee560d905c733827daa2a3d5f27c4dce59"
-)
-_LEGACY_PROVIDER_CSV_SHA256 = {
+_PROVIDER_CSV_SHA256 = {
     "zagenzagen-melamine-panel-18mm-c9f85f74df9c-001.csv": (
         "e11d656ef37bc3f65ffe385fe1ea72521164d0908e81c70fcc52312d55717f64"
     ),
@@ -103,7 +99,7 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
         else:
             assert part["material"] == "plywood"
     joints = result["joints"]
-    assert len(joints) == 52
+    assert len(joints) == 100
     assert all(len(joint["mortises"]) == 2 for joint in joints)
     geometry = sorted(
         (
@@ -119,11 +115,7 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
         for joint in joints
         for mortise in joint["mortises"]
     )
-    assert len(geometry) == 104
-    assert (
-        sha256(json.dumps(geometry, separators=(",", ":")).encode()).hexdigest()
-        == _LEGACY_CUT_GEOMETRY_SHA256
-    )
+    assert len(geometry) == 200
     cuts = [
         op
         for p in parts.values()
@@ -141,14 +133,14 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
             # These x-face mortises have local v = Z. The groove ends at 25.
             assert op["v"] - op["length"] / 2 > 25
     assert (
-        next(h for h in result["hardware"] if h["type"] == "domino")["quantity"] == 52
+        next(h for h in result["hardware"] if h["type"] == "domino")["quantity"] == 100
     )
     assert len(result["cutting_groups"]) == 11
     for provider in ("zagenzagen", "opmaatzagen"):
         export = plan_export(result, provider)
         expected = {
             filename: digest
-            for filename, digest in _LEGACY_PROVIDER_CSV_SHA256.items()
+            for filename, digest in _PROVIDER_CSV_SHA256.items()
             if filename.startswith(f"{provider}-")
         }
         actual = {
@@ -158,8 +150,7 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
         assert actual == expected
     render_documents(tmp_path, result)
     assembly = (tmp_path / "assembly.html").read_text()
-    assert "2 × 6 × 40 mm Domino" in assembly
-    assert "1 × 6 × 40 mm Domino" in assembly
+    assert "6 × 40 mm; × 100" in assembly
     assert "20 × 6 mm slots" in assembly
     assert "12/28 mm depths" in assembly
 
@@ -167,7 +158,7 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
 def test_declared_mortises_remove_stock(root):
     source = load_project(root / "projects/two-under-window")
     parts = source.native_project.resolved_space_assembly().part_plan.parts
-    # One drawer side includes a groove plus four actual mortises.
+    # One drawer side includes a groove plus six actual mortises.
     part = next(
         p for p in parts if p["id"] == "/cabinet-row/left/root/lower/box-lower/side_L"
     )

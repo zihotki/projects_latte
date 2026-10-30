@@ -384,6 +384,8 @@ def _domino_joinery_schema(*, inherit=False):
             "type": {"const": "DominoJoinery"},
             **{name: {**positive, "default": default} for name, default in (
                 ("slot_length", 20), ("slot_width", 6), ("face_depth", 12), ("end_depth", 28))},
+            "spacing": {**positive, "default": 100,
+                        "description": "Target contact span per Domino in mm; the resolver uses ceil(span / spacing)."},
             "end_offsets": {"type": "array", "items": {"type": "number", "minimum": 0},
                             "minItems": 2, "maxItems": 2, "default": [50, 50]},
         },
