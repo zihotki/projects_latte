@@ -3,13 +3,13 @@ set -euo pipefail
 
 buratino_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export BURATINO_ROOT="$buratino_root"
-export UV_CACHE_DIR="$buratino_root/.local/uv-cache"
-export UV_PYTHON_INSTALL_DIR="$buratino_root/.local/uv-python"
-export UV_PROJECT_ENVIRONMENT="$buratino_root/.local/venv"
+export UV_CACHE_DIR="$buratino_root/.cache/uv-cache"
+export UV_PYTHON_INSTALL_DIR="$buratino_root/.cache/uv-python"
+export UV_PROJECT_ENVIRONMENT="$buratino_root/.venv"
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONNOUSERSITE=1
-export XDG_CACHE_HOME="$buratino_root/.local/cache"
-export MPLCONFIGDIR="$buratino_root/.local/cache/matplotlib"
+export XDG_CACHE_HOME="$buratino_root/.cache"
+export MPLCONFIGDIR="$buratino_root/.cache/matplotlib"
 
 if [[ "${1:-}" == setup ]]; then
   shift
@@ -33,13 +33,13 @@ case "${1:-}" in
   test)
     cd "$buratino_root"
     shift
-    exec "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest --basetemp .local/pytest "$@"
+    exec "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest --basetemp .cache/pytest "$@"
     ;;
   test-native)
     cd "$buratino_root/vendor/cabineteer"
     shift
     exec "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest \
-      --basetemp "$buratino_root/.local/pytest-native" "$@"
+      --basetemp "$buratino_root/.cache/pytest-native" "$@"
     ;;
 esac
 

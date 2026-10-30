@@ -1001,7 +1001,7 @@ def render_geometry(root: Path, directory: Path, calculation):
     ):
         target = directory / "assets/three" / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(root / ".local/viewer/three" / relative, target)
+        shutil.copy2(root / "vendor/three" / relative, target)
     (directory / "preview.html").write_text(viewer, encoding="utf-8")
     original.unlink()
     return assembly
@@ -1052,7 +1052,7 @@ def build_project(root: Path, path: Path) -> dict:
             snapshots / "engine-source",
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
         )
-        runtime = root / ".local/runtime.json"
+        runtime = root / ".cache/runtime.json"
         if runtime.is_file():
             shutil.copy2(runtime, snapshots / "runtime.json")
         shutil.copytree(

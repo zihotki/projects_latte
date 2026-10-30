@@ -1,8 +1,8 @@
 # Local setup
 
 This fork is part of the Buratino workspace. Use the repository launcher for
-Buratino work. It creates the locked Python environment and local viewing
-assets under `buratino/.local/`.
+Buratino work. It creates the locked Python environment in `buratino/.venv/`
+and viewing assets in `buratino/vendor/three/`.
 
 Run from the repository root:
 

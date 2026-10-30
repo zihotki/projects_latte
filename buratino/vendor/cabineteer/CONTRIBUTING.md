@@ -26,8 +26,8 @@ root with Buratino's locked runtime when a change affects tool behavior covered
 by prompt scenarios:
 
 ```bash
-PYTHONPATH=buratino/vendor/cabineteer buratino/.local/venv/bin/python -m evals --list
-PYTHONPATH=buratino/vendor/cabineteer buratino/.local/venv/bin/python -m evals --name <scenario>
+PYTHONPATH=buratino/vendor/cabineteer buratino/.venv/bin/python -m evals --list
+PYTHONPATH=buratino/vendor/cabineteer buratino/.venv/bin/python -m evals --name <scenario>
 ```
 
 The schema and dispatch for MCP tools live in `src/cabineteer/server.py`.

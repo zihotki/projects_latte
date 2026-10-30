@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
-import * as THREE from '../../../.local/viewer/three/build/three.module.js';
-import {GLTFLoader} from '../../../.local/viewer/three/examples/jsm/loaders/GLTFLoader.js';
+import * as THREE from '../../../vendor/three/build/three.module.js';
+import {GLTFLoader} from '../../../vendor/three/examples/jsm/loaders/GLTFLoader.js';
 
 const [glbPath, metadataPath] = process.argv.slice(2);
 const part = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));

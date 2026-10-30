@@ -1,7 +1,7 @@
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import path from 'node:path';
 
-const tree = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../.local/viewer/three');
+const tree = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../vendor/three');
 
 export function resolve(specifier, context, nextResolve) {
   if (specifier === 'three') {

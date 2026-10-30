@@ -1,4 +1,7 @@
-/.local/
+/.venv/
+/.cache/
+/vendor/three/
+/archive/obsolete-local-state/
 /projects/*/build/
 /projects/*/exports/
 /archive/real-assembly/build/

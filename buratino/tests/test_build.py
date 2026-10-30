@@ -82,7 +82,11 @@ def test_build_captures_consistent_outputs_without_editing_inputs(root, project)
 
 def test_native_real_assembly_build_reports_resolved_contents(root, tmp_path):
     project = tmp_path / "real-assembly-native"
-    shutil.copytree(root / "projects/real-assembly-native", project)
+    shutil.copytree(
+        root / "projects/real-assembly-native",
+        project,
+        ignore=shutil.ignore_patterns("build", "exports"),
+    )
     outcome = build.build_project(root, project)
     directory, _ = latest_build(project)
     result = read_json(directory / "result.json")
@@ -297,9 +301,9 @@ def test_existing_build_lock_is_not_removed(root, project):
 
 
 def test_changed_dependency_lock_is_detected(root, tmp_path):
-    (tmp_path / ".local").mkdir()
-    state = read_json(root / ".local/runtime.json")
-    build.write_json(tmp_path / ".local/runtime.json", state)
+    (tmp_path / ".cache").mkdir()
+    state = read_json(root / ".cache/runtime.json")
+    build.write_json(tmp_path / ".cache/runtime.json", state)
     (tmp_path / "uv.lock").write_text("different lock")
     assert runtime_status(tmp_path)["ok"] is False
 

@@ -60,7 +60,7 @@ def _identity_files(root: Path) -> dict[str, str]:
         "cabineteer.lock.json",
         "uv.lock",
         "viewer-assets.lock.json",
-        ".local/runtime.json",
+        ".cache/runtime.json",
     ):
         candidate = root / relative
         if candidate.is_file():

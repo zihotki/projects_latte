@@ -43,7 +43,9 @@ Set up and run a Buratino assembly example. See the
 
 ## Repository checks
 
-The repository keeps tool caches under `.local/`; nothing is installed globally.
+Buratino uses `buratino/.venv/` for its Python environment,
+`buratino/.cache/` for generated runtime data, and `buratino/vendor/` for
+dependencies. See its [setup guide](buratino/README.md).
 
 ```bash
 pnpm -C cut_on_eight install --frozen-lockfile

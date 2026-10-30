@@ -69,12 +69,14 @@ def runtime_identity() -> dict:
 
 def capture_runtime(root: Path) -> None:
     state = {"lock_sha256": file_hash(root / "uv.lock"), **runtime_identity()}
-    (root / ".local/runtime.json").write_text(json.dumps(state, indent=2) + "\n")
+    cache = root / ".cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "runtime.json").write_text(json.dumps(state, indent=2) + "\n")
 
 
 def runtime_status(root: Path) -> dict:
     try:
-        state = read_json(root / ".local/runtime.json")
+        state = read_json(root / ".cache/runtime.json")
         actual = runtime_identity()
         return {
             "ok": state["lock_sha256"] == file_hash(root / "uv.lock")
@@ -100,7 +102,7 @@ def doctor(root: Path) -> dict:
         "origin": spec.origin if spec else None,
     }
     checks["cad"] = {"ok": importlib.util.find_spec("cadquery") is not None}
-    assets = root / ".local/viewer/three"
+    assets = root / "vendor/three"
     try:
         index = read_json(assets / "files.json")
         lock = read_json(root / "viewer-assets.lock.json")

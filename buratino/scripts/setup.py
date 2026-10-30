@@ -1,4 +1,4 @@
-"""Explicit installation into Buratino's local directory."""
+"""Install Buratino's locked runtime and viewer assets."""
 
 import base64
 import hashlib
@@ -19,9 +19,9 @@ from buratino.environment import file_hash, read_json, source_status  # noqa: E4
 
 def install_assets() -> None:
     lock = read_json(ROOT / "viewer-assets.lock.json")
-    asset_root = ROOT / ".local/viewer"
-    asset_root.mkdir(parents=True, exist_ok=True)
-    archive = asset_root / f"three-{lock['version']}.tgz"
+    cache_root = ROOT / ".cache/viewer"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    archive = cache_root / f"three-{lock['version']}.tgz"
     if not archive.exists():
         print(f"Downloading Three.js {lock['version']}", flush=True)
         with urllib.request.urlopen(lock["url"], timeout=60) as response:
@@ -32,7 +32,7 @@ def install_assets() -> None:
     digest = base64.b64encode(hashlib.sha512(archive.read_bytes()).digest()).decode()
     if f"sha512-{digest}" != lock["integrity"]:
         raise ValueError(f"Viewer integrity mismatch. Remove {archive} and retry.")
-    with tempfile.TemporaryDirectory(dir=asset_root) as temporary:
+    with tempfile.TemporaryDirectory(dir=cache_root) as temporary:
         stage = Path(temporary) / "three"
         stage.mkdir()
         with tarfile.open(archive, "r:gz") as package:
@@ -63,7 +63,7 @@ def install_assets() -> None:
             },
         }
         (stage / "files.json").write_text(json.dumps(index, indent=2) + "\n")
-        target = asset_root / "three"
+        target = ROOT / "vendor/three"
         if target.exists():
             shutil.rmtree(target)
         shutil.copytree(stage, target)
@@ -81,7 +81,7 @@ def main() -> None:
     )
     subprocess.run(
         [
-            str(ROOT / ".local/venv/bin/python"),
+            str(ROOT / ".venv/bin/python"),
             "-c",
             "from pathlib import Path; "
             "from buratino.environment import capture_runtime; "

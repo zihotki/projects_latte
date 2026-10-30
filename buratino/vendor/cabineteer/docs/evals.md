@@ -6,10 +6,10 @@ prompt scenarios. Run these commands from the repository root with Buratino's
 locked runtime:
 
 ```bash
-PYTHONPATH=buratino/vendor/cabineteer buratino/.local/venv/bin/python -m evals --list
-PYTHONPATH=buratino/vendor/cabineteer buratino/.local/venv/bin/python -m evals --name <scenario>
-PYTHONPATH=buratino/vendor/cabineteer buratino/.local/venv/bin/python -m evals --tag <tag>
-PYTHONPATH=buratino/vendor/cabineteer buratino/.local/venv/bin/python -m evals --json
+PYTHONPATH=buratino/vendor/cabineteer buratino/.venv/bin/python -m evals --list
+PYTHONPATH=buratino/vendor/cabineteer buratino/.venv/bin/python -m evals --name <scenario>
+PYTHONPATH=buratino/vendor/cabineteer buratino/.venv/bin/python -m evals --tag <tag>
+PYTHONPATH=buratino/vendor/cabineteer buratino/.venv/bin/python -m evals --json
 ```
 
 Scenario inputs and assertions live in `evals/scenarios.py`. The command lists

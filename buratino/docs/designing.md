@@ -149,7 +149,7 @@ Run a plan check from the repository root with the locked Python runtime. Set
 `<name>` to the project folder:
 
 ```bash
-buratino/.local/venv/bin/python - <<'PY'
+buratino/.venv/bin/python - <<'PY'
 from runpy import run_path
 
 project = run_path("buratino/projects/<name>/project.py")["project"]

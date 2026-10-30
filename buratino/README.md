@@ -7,7 +7,8 @@ explicit. Outputs are drafts, not manufacturing packages.
 ## Start
 
 Run commands from the repository root. Setup installs the locked CAD runtime
-and viewing assets into `buratino/.local/`.
+in `buratino/.venv/` and viewing assets in `buratino/vendor/three/`. It keeps
+downloads, test files, and runtime identity in `buratino/.cache/`.
 
 ```bash
 ./buratino/bin/buratino setup

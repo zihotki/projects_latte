@@ -11,9 +11,10 @@ For Cabineteer internals, see [architecture](docs/architecture.md),
 [MCP reference](docs/mcp.md).
 
 To set up the Buratino workspace, run `./buratino/bin/buratino setup` from the
-repository root. This installs the locked runtime and viewing assets under
-`buratino/.local/`. Use `./buratino/bin/buratino test-native` to run the
-Cabineteer tests through that runtime. See [local setup](docs/local-setup.md)
+repository root. This installs the locked runtime in `buratino/.venv/` and
+viewing assets in `buratino/vendor/three/`. Use
+`./buratino/bin/buratino test-native` to run the Cabineteer tests through that
+runtime. See [local setup](docs/local-setup.md)
 and [contributing](CONTRIBUTING.md) for the current commands.
 
 ## Upstream and license

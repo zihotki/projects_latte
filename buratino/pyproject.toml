@@ -28,7 +28,7 @@ addopts = "-ra -p no:cacheprovider"
 [tool.ruff]
 target-version = "py312"
 line-length = 88
-extend-exclude = [".local", "vendor"]
+extend-exclude = [".venv", ".cache", "vendor", "archive"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
