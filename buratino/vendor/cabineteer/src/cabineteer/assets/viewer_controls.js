@@ -24,7 +24,7 @@ let result;
 let selectedGroup = null;
 let selectedPartIds = new Set();
 let selectedLabel = null;
-let grainVisible = true;
+let grainVisible = false;
 let viewer;
 let roleNodes = new Map();
 let originalMaterials = new Map();
