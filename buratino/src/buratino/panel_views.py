@@ -157,59 +157,6 @@ def panel_views(assembly, parts: list[dict]) -> dict[str, str]:
                     f'text-anchor="middle" font-size="10">{edge_width:.1f} mm</text>'
                 )
                 break
-        profile = part.get("profile", {})
-        points = profile.get("points_mm", [])
-        if (
-            not diagonals
-            and part.get("component") == "top"
-            and profile.get("plane") == "xz"
-            and len(points) == 4
-            and any(
-                abs(b[0] - a[0]) > 1e-5 and abs(b[1] - a[1]) > 1e-5
-                for a, b in zip(points, points[1:] + points[:1], strict=True)
-            )
-        ):
-            # This authored polygon is the actual x/z extrusion section.
-            xs, zs = zip(*points, strict=True)
-            xspan, zspan = max(xs) - min(xs), max(zs) - min(zs)
-            section_scale = min(270 / xspan, 90 / zspan)
-            coords = " ".join(
-                f"{45 + (x - min(xs)) * section_scale:.1f},"
-                f"{355 - (z - min(zs)) * section_scale:.1f}"
-                for x, z in points
-            )
-            slope_edges = [
-                (math.hypot(b[0] - a[0], b[1] - a[1]), a, b)
-                for a, b in zip(points, points[1:] + points[:1], strict=True)
-                if abs(b[0] - a[0]) > 1e-5 and abs(b[1] - a[1]) > 1e-5
-            ]
-            length, a, b = max(slope_edges, key=lambda edge: edge[0])
-            angle = math.degrees(math.atan2(abs(b[1] - a[1]), abs(b[0] - a[0])))
-            ax = 45 + (a[0] - min(xs)) * section_scale
-            ay = 355 - (a[1] - min(zs)) * section_scale
-            bx = 45 + (b[0] - min(xs)) * section_scale
-            by = 355 - (b[1] - min(zs)) * section_scale
-            dx, dy = bx - ax, by - ay
-            norm = math.hypot(dx, dy)
-            nx, ny = -dy / norm, dx / norm
-            if ny > 0:
-                nx, ny = -nx, -ny
-            sx, sy, ex, ey = ax + 15 * nx, ay + 15 * ny, bx + 15 * nx, by + 15 * ny
-            callouts += (
-                '<text x="45" y="250" font-size="10">Edge section (x/z)</text>'
-                f'<polygon points="{coords}" fill="none" stroke="#333"/>'
-                f'<path d="M{ax:.1f} {ay:.1f} L{sx:.1f} {sy:.1f} '
-                f"M{bx:.1f} {by:.1f} L{ex:.1f} {ey:.1f} "
-                f"M{sx:.1f} {sy:.1f} L{ex:.1f} {ey:.1f} "
-                f"M{sx - 3 * nx:.1f} {sy - 3 * ny:.1f} "
-                f"L{sx + 3 * nx:.1f} {sy + 3 * ny:.1f} "
-                f"M{ex - 3 * nx:.1f} {ey - 3 * ny:.1f} "
-                f'L{ex + 3 * nx:.1f} {ey + 3 * ny:.1f}" '
-                'stroke="#333" stroke-width="0.8" fill="none"/>'
-                f'<text x="180" y="375" text-anchor="middle" font-size="10">'
-                f"Sloped edge: {length:.1f} mm at {angle:.1f}° to horizontal</text>"
-            )
-            svg = svg.replace('height="255.0"', 'height="390.0"')
         # Match without relying on the drawing orientation. Keep the full stock
         # envelope when it differs from the projected outline.
         stock_axes = sorted((blank["length"], blank["width"]))

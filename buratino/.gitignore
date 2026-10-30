@@ -1,5 +1,6 @@
 /.local/
 /projects/*/build/
+/archive/real-assembly/build/
 *.egg-info/
 __pycache__/
 *.py[cod]

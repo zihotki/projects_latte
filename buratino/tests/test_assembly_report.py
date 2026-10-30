@@ -234,28 +234,28 @@ def test_group_label_includes_each_distinct_component():
     from buratino.build import _group_label
 
     members = [
-        {"id": "upper.left.bottom_1", "component": "bottom"},
-        {"id": "upper.left.shelf_1", "component": "shelf"},
-        {"id": "upper.right.shelf_2", "component": "shelf"},
+        {"id": "upper.section-1.bottom", "component": "bottom"},
+        {"id": "upper.section-1.shelf", "component": "shelf"},
+        {"id": "upper.section-2.shelf", "component": "shelf"},
     ]
     assert _group_label(members) == "Upper bottom and Upper shelf"
 
 
-def test_mortise_summary_reports_computed_candidates(root):
+def test_mortise_summary_reports_computed_candidates(project):
     from buratino.build import _mortise_summary
 
-    calculation = calculate(load_project(root / "projects/real-assembly"))
+    calculation = calculate(load_project(project))
     result = calculation.result
     summary = _mortise_summary(
         calculation.configs, result["cabinets"], result["joints"]
     )
-    assert "8 carcass joints" in summary
+    assert "4 carcass joints" in summary
     assert "4 candidate centers per joint" in summary
-    assert "40, 180, 320, 460 mm" in summary
-    assert "500 mm span" in summary
-    assert "140, 140, 140 mm" in summary
-    assert "40 and 40 mm" in summary
-    assert "32 candidate tenons" in summary
+    assert "40, 170, 310, 450 mm" in summary
+    assert "494 mm span" in summary
+    assert "130, 140, 140 mm" in summary
+    assert "40 and 44 mm" in summary
+    assert "16 candidate tenons" in summary
     assert "candidate centers satisfy the configured grid" in summary
     assert "not determined" not in summary
 
@@ -291,10 +291,10 @@ def test_6x40_unknown_machining_is_not_treated_as_a_thickness_error(project):
     )
 
 
-def test_mortise_summary_shows_supplied_router_depths(root):
+def test_mortise_summary_shows_supplied_router_depths(project):
     from buratino.build import _mortise_summary
 
-    calculation = calculate(load_project(root / "projects/real-assembly"))
+    calculation = calculate(load_project(project))
     result = calculation.result
     machining = {
         "cutter_diameter_mm": 6,
@@ -312,18 +312,18 @@ def test_mortise_summary_shows_supplied_router_depths(root):
     assert "no glue clearance" in summary
 
 
-def test_real_bottom_map_matches_native_solid_and_side_mates(root):
+def test_real_bottom_map_matches_native_solid_and_side_mates(project):
     import xml.etree.ElementTree as ET
 
     from cabineteer.cabinet import make_bottom_panel
 
-    cfg = calculate(load_project(root / "projects/real-assembly")).configs[0]
+    cfg = calculate(load_project(project)).configs[0]
     maps = draft_mortise_panel_maps(cfg, centered_face_rows=True)
     bottom, top, side = maps["bottom"], maps["top"], maps["side"]
     bounds = make_bottom_panel(cfg).val().BoundingBox()
     assert (bottom.draw_width, bottom.draw_height) == (bounds.xlen, bounds.ylen)
     assert bottom.draw_width == 684
-    assert bottom.draw_height == 500
+    assert bottom.draw_height == 494
     assert top.draw_height == 500
     assert side.draw_width == 500
     assert cfg.domino_spec.size.nominal_width == 19.8
@@ -338,7 +338,7 @@ def test_real_bottom_map_matches_native_solid_and_side_mates(root):
     labels = " ".join(e.text or "" for e in svg.findall("s:text", ns))
     assert all(
         label in labels
-        for label in ("FRONT", "BACK", "LEFT SIDE", "RIGHT SIDE", "EDGE", "684", "500")
+        for label in ("FRONT", "BACK", "LEFT SIDE", "RIGHT SIDE", "EDGE", "684", "494")
     )
     assert not svg.findall("s:ellipse", ns)
     marks = [e for e in svg.findall("s:line", ns) if e.get("stroke-width") == "3"]
@@ -346,20 +346,6 @@ def test_real_bottom_map_matches_native_solid_and_side_mates(root):
     assert len({e.get("x1") for e in marks}) == 2
     assert sorted(e.get("y1") for e in marks[: len(marks) // 2]) == sorted(
         e.get("y1") for e in marks[len(marks) // 2 :]
-    )
-
-
-def test_drawer_summary_separates_overall_depth_from_lower_front_gap(root):
-    from buratino.build import _drawer_summary
-
-    result = calculate(load_project(root / "projects/real-assembly")).result
-    summary = _drawer_summary(result)
-    assert (
-        "Closed overall assembly dimensions: 1440 wide × 2238.1 high × 526 deep"
-        in summary
-    )
-    assert (
-        "Lower drawer fronts are 18 mm thick with a 2 mm face-to-carcass gap" in summary
     )
 
 
@@ -449,23 +435,3 @@ def test_mortise_maps_measure_from_back_for_both_faces_and_edges():
     marks = [e for e in svg.findall("s:line", ns) if e.get("stroke-width") == "3"]
     center = (float(marks[0].get("y1")) + float(marks[0].get("y2"))) / 2
     assert (center - top) / height == pytest.approx(40 / 503, abs=0.001)
-
-
-def test_drawer_maps_show_candidate_centers_and_keep_cad_views(root, tmp_path):
-    from buratino.build import render_documents
-    from buratino.engine import make_geometry
-    from buratino.panel_views import panel_groups, panel_views
-
-    calculation = calculate(load_project(root / "projects/real-assembly"))
-    assembly, _ = make_geometry(calculation)
-    result = calculation.result
-    groups = panel_groups(assembly, result["parts"], result["joints"])
-    views = panel_views(assembly, [group[0] for group in groups])
-    render_documents(tmp_path, result, calculation.configs, views, groups)
-    report = (tmp_path / "assembly.html").read_text()
-    assert "Face rows from ends: 9 mm" in report
-    assert "Mortise centers from BOTTOM (mm)" in report
-    assert "CAD profile" in report
-    assert "drawer domino" not in report
-    assert ">130</text>" in report
-    assert ">90</text>" in report

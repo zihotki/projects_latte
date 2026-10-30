@@ -134,7 +134,7 @@ def test_drawer_reports_keep_actual_parts_and_unverified_work_visible(root, tmp_
     assert 'id="viewer-toolbar" aria-label="Cabinet viewer controls"' in viewer
     assert 'id="viewer-sheet" aria-label="Cabinet details"' in viewer
     assert 'id="parts-tab"' in viewer
-    assert 'id="isolate-selection"' in viewer
+    assert 'id="focus-selection" type="button" aria-pressed="false" disabled' in viewer
     assert "ui.drawerPose.setAttribute('aria-pressed', String(open))" in viewer
     assert "result.overall_dimensions_mm ?? result.dimensions_mm" in viewer
     assert "mm overall" in viewer
@@ -375,12 +375,14 @@ def test_preview_reload_uses_latest_build_and_keeps_old_resources(root, project)
             thread.join()
 
 
-def test_confirmed_grain_has_no_display_label(root, tmp_path):
+def test_confirmed_grain_has_no_display_label(project, tmp_path):
     import csv
 
     from buratino.engine import calculate
 
-    result = calculate(load_project(root / "projects/real-assembly")).result
+    inputs = load_project(project)
+    inputs.variables["grain_direction_confirmed"] = True
+    result = calculate(inputs).result
     build.render_documents(tmp_path, result)
     for name in ("report.html", "assembly.html"):
         assert "length (confirmed)" not in (tmp_path / name).read_text()
@@ -390,18 +392,6 @@ def test_confirmed_grain_has_no_display_label(root, tmp_path):
     assert all(
         group["grain_status"] == "confirmed" for group in result["cutting_groups"]
     )
-
-
-def test_side_panel_maps_show_row_offsets_from_edges(root, tmp_path):
-    from buratino.engine import calculate
-
-    calculation = calculate(load_project(root / "projects/real-assembly"))
-    build.render_documents(tmp_path, calculation.result, calculation.configs)
-    assembly = (tmp_path / "assembly.html").read_text()
-    assert "Inner face; front at" not in assembly
-    assert assembly.count(">9</text>") >= 4
-    assert assembly.count("Thickness 18") >= 4
-    assert "not approved machining positions" not in assembly
 
 
 def test_panel_groups_split_when_candidate_positions_differ(root, tmp_path):

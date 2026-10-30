@@ -1,37 +1,7 @@
 import cadquery as cq
 import pytest
 
-from buratino.engine import calculate, make_geometry
 from buratino.panel_views import panel_views
-from buratino.project import load_project
-
-
-def test_views_include_each_real_assembly_panel(root):
-    calculation = calculate(load_project(root / "projects/real-assembly"))
-    assembly, _ = make_geometry(calculation)
-    parts = calculation.result["parts"]
-    selected = [
-        part
-        for part in parts
-        if part["id"]
-        in {
-            "upper.shared.top_sloped",
-            "upper.left.section-2.door",
-            "upper.left.column-0.opening-0.back",
-            "upper.left.column-0.opening-0.face",
-        }
-    ]
-    assert len(selected) == 4
-    views = panel_views(assembly, selected)
-    assert set(views) == {part["id"] for part in selected}
-    assert all(view.startswith("<svg") and "<path" in view for view in views.values())
-    assert all(
-        ("Max stock blank" in view or "Stock thickness:" in view)
-        and " mm</text>" in view
-        for view in views.values()
-    )
-    assert views[selected[0]["id"]] != views[selected[1]["id"]]
-    assert "Edge section (x/z)" in views["upper.shared.top_sloped"]
 
 
 def test_curved_panel_has_projected_dimensions():
@@ -147,17 +117,3 @@ def test_sloped_profile_dimension_uses_projected_edge():
     }
     view = panel_views(assembly, [part])["sloped"]
     assert "103.1 mm at 14.0°" in view
-
-
-def test_sloped_upper_back_has_compact_profile_dimensions(root):
-    calculation = calculate(load_project(root / "projects/real-assembly"))
-    assembly, _ = make_geometry(calculation)
-    part = next(
-        part for part in calculation.result["parts"] if part["id"] == "upper.left.back"
-    )
-    view = panel_views(assembly, [part])[part["id"]]
-    assert "886.4 mm" in view
-    assert "720.0 mm" in view
-    assert "235.0 mm" in view
-    assert "971.0 mm at 47.9°" in view
-    assert "Profile vertices" not in view

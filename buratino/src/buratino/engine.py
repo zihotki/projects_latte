@@ -14,9 +14,6 @@ from .drawers import (
 )
 from .grouping import group_cutting_blanks
 from .project import InputError, ProjectInputs
-from .upper import add_upper_geometry, make_upper_parts
-from .upper_drawer import make_upper_drawer
-from .upper_fronts import make_upper_front_parts
 
 register_eb20_profile()
 register_eb20_profile(480)
@@ -1218,20 +1215,6 @@ def calculate(project: ProjectInputs) -> Calculation:
             }
         )
 
-    try:
-        upper_parts, upper_cabinets = make_upper_parts(project.variables.get("upper"))
-        upper_fronts = make_upper_front_parts(project.variables.get("upper"))
-        if upper_fronts:
-            upper_drawer_parts, upper_drawer, upper_instance = make_upper_drawer(
-                project.variables["upper"], upper_fronts[0]
-            )
-            parts.extend(upper_drawer_parts)
-            drawers.append(upper_drawer)
-            drawer_instances.append(upper_instance)
-    except (KeyError, TypeError, ValueError, ZeroDivisionError) as exc:
-        raise InputError("invalid_upper", str(exc), "upper") from exc
-    parts.extend(upper_parts)
-    parts.extend(upper_fronts)
     if project.variables.get("drawer_domino"):
         for item in drawer_instances:
             cfg = item["config"]
@@ -1268,116 +1251,6 @@ def calculate(project: ProjectInputs) -> Calculation:
                             ),
                         }
                     )
-    if upper_parts:
-        issues.append(
-            {
-                "code": "upper.construction_unverified",
-                "severity": "unknown",
-                "message": (
-                    "Upper support, front overhang, fastening, wall restraint, shelf "
-                    "attachment and top joinery are unverified. Upper back stock "
-                    "and fastening are unverified."
-                ),
-                "affected": [p["id"] for p in upper_parts],
-            }
-        )
-    if upper_fronts:
-        upper_spec = project.variables["upper"]
-        upper_x = upper_spec["x"]
-        upper_width = upper_spec["cabinet_width_mm"]
-        divider_x = upper_x + 1.5 * upper_width - upper_spec["thickness_mm"] / 2
-        divider_end = divider_x + upper_spec["thickness_mm"]
-        door_mounts = {
-            "upper.left.section-2.door": {
-                "application": "full_overlay",
-                "hinge_edge": "right",
-                "carcass_mount": (
-                    f"double carcass side at x={upper_x + upper_width:g} mm"
-                ),
-            },
-            "upper.right.section-1.door": {
-                "application": "half_overlay",
-                "hinge_edge": "right",
-                "carcass_mount": (
-                    f"shared divider at x={divider_x:g}..{divider_end:g} mm"
-                ),
-            },
-            "upper.right.section-2.door": {
-                "application": "full_overlay",
-                "hinge_edge": "right",
-                "carcass_mount": (
-                    f"outer carcass side at x={upper_x + 2 * upper_width:g} mm"
-                ),
-            },
-        }
-        hinge_doors = []
-        for front in upper_fronts:
-            mount = door_mounts.get(front["id"])
-            if mount is None:
-                continue
-            hinge_doors.append(
-                {
-                    "door_id": front["id"],
-                    "size_mm": front["size_mm"].copy(),
-                    **mount,
-                    "hinge_count": None,
-                    "hinge_count_status": "unverified",
-                    "door_weight_kg": None,
-                    "weight_status": "unverified",
-                    "mounting_plate": None,
-                    "mounting_plate_status": "unverified",
-                    "cup_distance_mm": None,
-                    "cup_position_status": "unverified",
-                    "vertical_hinge_positions_mm": None,
-                    "vertical_position_status": "unverified",
-                }
-            )
-        hardware.append(
-            {
-                "type": "concealed_door_hinge",
-                "status": "draft_selection",
-                "manufacturer": "Hettich",
-                "model": "Sensys 8645i",
-                "nominal_opening_angle_deg": 110,
-                "soft_close": "integrated Silent System",
-                "supported_front_thickness_mm": [15, 22],
-                "project_front_thickness_mm": project.variables["upper"].get(
-                    "front_thickness_mm", project.variables["upper"].get("thickness_mm")
-                ),
-                "doors": hinge_doors,
-                "mounting_details_status": "unverified",
-                "edge_treatment": "square R0 draft; actual treatment unverified",
-                "draft_shared_gap_mm": project.variables["upper"].get(
-                    "front_gap_mm", 3
-                ),
-                "minimum_shared_gap_mm": 2,
-                "minimum_gap_basis": (
-                    "Two 18 mm square-edged fronts, R0, with cup setback C=3–6 mm; "
-                    "actual edge and mounting are unverified."
-                ),
-                "clearance_status": "unverified",
-                "actual_opening_travel_deg": None,
-                "actual_opening_travel_status": "unverified",
-                "sources": [
-                    "https://web.hettich.com/fileadmin/Company_website/HAU/Media/Sensys_and_Intermat_Hinge_Brochure_WEB.pdf",
-                    "https://www.hettich.com/fileadmin/Media_Center/Catalogue/Sensys_Catalogue_11309_en.pdf",
-                ],
-            }
-        )
-        issues.append(
-            {
-                "code": "upper.door_hinges_unverified",
-                "severity": "unknown",
-                "message": (
-                    "Hettich Sensys 8645i is a draft hinge selection. Confirm hinge "
-                    "count from each door's measured weight and dimensions, mounting "
-                    "plate and cup positions, edge treatment, opening clearance, and "
-                    "actual travel before manufacture."
-                ),
-                "affected": [door["door_id"] for door in hinge_doors],
-            }
-        )
-
     # Record named physical connections without claiming verified fasteners.
     connections = project.variables.get("connections", [])
     for connection in connections:
@@ -1528,7 +1401,6 @@ def calculate(project: ProjectInputs) -> Calculation:
                     "affected": [f"{x['drawer_id']}.bottom"],
                 }
                 for x in drawer_instances
-                if not x.get("upper_id")
             ]
         )
         issues.extend(
@@ -1638,37 +1510,33 @@ def calculate(project: ProjectInputs) -> Calculation:
     min_depth = space.get("depth_min") if isinstance(space, dict) else None
     max_depth = space.get("depth_max") if isinstance(space, dict) else None
     overall_width = max(
-        [entry["bounds_mm"]["max"]["x"] for entry in cabinet_entries + upper_cabinets]
+        [entry["bounds_mm"]["max"]["x"] for entry in cabinet_entries]
         + [frame["x"] + frame["width"] for frame in frames]
     ) - min(
-        [entry["bounds_mm"]["min"]["x"] for entry in cabinet_entries + upper_cabinets]
+        [entry["bounds_mm"]["min"]["x"] for entry in cabinet_entries]
         + [frame["x"] for frame in frames]
     )
     carcass_height = max(
-        [entry["bounds_mm"]["max"]["z"] for entry in cabinet_entries + upper_cabinets]
+        [entry["bounds_mm"]["max"]["z"] for entry in cabinet_entries]
         + [f["z"] + f["height"] for f in frames]
     ) - min(
-        [entry["bounds_mm"]["min"]["z"] for entry in cabinet_entries + upper_cabinets]
+        [entry["bounds_mm"]["min"]["z"] for entry in cabinet_entries]
         + [f["z"] for f in frames]
     )
     overall_height = max(
-        [entry["bounds_mm"]["max"]["z"] for entry in cabinet_entries + upper_cabinets]
+        [entry["bounds_mm"]["max"]["z"] for entry in cabinet_entries]
         + [f["z"] + f["height"] for f in frames]
-        + [p["position_mm"]["z"] + p["size_mm"]["z"] for p in upper_fronts]
     ) - min(
-        [entry["bounds_mm"]["min"]["z"] for entry in cabinet_entries + upper_cabinets]
+        [entry["bounds_mm"]["min"]["z"] for entry in cabinet_entries]
         + [f["z"] for f in frames]
-        + [p["position_mm"]["z"] for p in upper_fronts]
     )
     carcass_depth = max(cfg.depth for _, cfg in resolved)
     overall_depth = max(
-        [entry["bounds_mm"]["max"]["y"] for entry in cabinet_entries + upper_cabinets]
+        [entry["bounds_mm"]["max"]["y"] for entry in cabinet_entries]
         + [f["y"] + f["depth"] for f in frames]
-        + [p["position_mm"]["y"] + p["size_mm"]["y"] for p in upper_fronts]
     ) - min(
-        [entry["bounds_mm"]["min"]["y"] for entry in cabinet_entries + upper_cabinets]
+        [entry["bounds_mm"]["min"]["y"] for entry in cabinet_entries]
         + [f["y"] for f in frames]
-        + [p["position_mm"]["y"] for p in upper_fronts]
     )
     if max_width is not None and overall_width > max_width:
         issues.append(
@@ -1764,7 +1632,7 @@ def calculate(project: ProjectInputs) -> Calculation:
             "calculated": project.calculated,
             "cabinets": cabinet_entries,
             "frames": frames,
-            "upper_cabinets": upper_cabinets,
+            "upper_cabinets": [],
             "parts": parts,
             "drawers": drawers,
             "drawer_layout": {
@@ -1806,14 +1674,6 @@ def calculate(project: ProjectInputs) -> Calculation:
                     "cabineteer.drawer.DrawerConfig and native part makers"
                 ),
                 "face_dimensions": "cabineteer.cabinet.face_layout",
-                **(
-                    {
-                        "upper_panels": "buratino.upper.make_upper_parts",
-                        "upper_fronts": "buratino.upper_fronts.make_upper_front_parts",
-                    }
-                    if upper_parts
-                    else {}
-                ),
             },
         },
         drawer_instances,
@@ -1919,11 +1779,7 @@ def make_geometry(calculation: Calculation):
     for item in calculation.drawer_instances:
         cfg = item["config"]
         cabinet_id = item["cabinet_id"]
-        root = (
-            (0, 0, 0)
-            if item.get("upper_id")
-            else (cabinet_x[cabinet_id], cabinet_y[cabinet_id], cabinet_z[cabinet_id])
-        )
+        root = (cabinet_x[cabinet_id], cabinet_y[cabinet_id], cabinet_z[cabinet_id])
         for component, shape in item["shapes"].items():
             if component == "face":
                 continue
@@ -1950,8 +1806,6 @@ def make_geometry(calculation: Calculation):
                     grain_direction="length",
                 )
             )
-        if item.get("upper_id"):
-            continue
         face = item["face_panel"]
         overlay_x = max(0, (face.width - cfg.opening_width) / 2)
         overlay_top = calculation.result["variables"].get(
@@ -2014,9 +1868,4 @@ def make_geometry(calculation: Calculation):
                 grain_direction="length",
             )
         )
-    geometry.extend(
-        add_upper_geometry(
-            assembly, [p for p in calculation.result["parts"] if "profile" in p]
-        )
-    )
     return assembly, geometry

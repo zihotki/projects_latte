@@ -105,18 +105,20 @@ each part translation and creates the two stock-local mortises. It checks the
 contact faces and their common centre. See [operation inputs](operations.md)
 and the [operation resolver](../vendor/cabineteer/src/cabineteer/operations.py).
 
-## Profile parts and sloped panels
+## Native profile frames and world meshes
 
-The profile model starts with row-local X/Z outline points. `y_mm` and
-`extrusion_mm` place and extrude that outline along +Y. The row placement adds
-`world_offset_mm`. These outline coordinates are not stock length/thickness
-coordinates.
+Native `ProfilePart` panels define their outline with row-local X/Z points in
+`profile_xz_mm`. `y_mm` and `extrusion_mm` place and extrude that outline
+along +Y. `world_offset_mm` adds row placement. These are native profile
+fields; they are not the removed upper-project `profile.points_mm` format.
+Outline coordinates are not stock length/thickness coordinates.
 
-Each profile panel has an explicit `LocalFrame`. Its axes are orthonormal and
-right-handed. Length follows the panel, width lies in its plane, and thickness
-is normal to the plane. A sloped cap therefore has a sloped length axis.
-Negative axis components can be part of a right-handed frame; they do not by
-themselves mean the part is mirrored.
+Built-in profile panels and native carcass adapters generate an explicit
+`LocalFrame`. These generated frames are orthonormal and right-handed. Length
+follows the panel, width lies in its plane, and thickness is normal to the
+plane. A sloped cap therefore has a sloped length axis. Negative axis
+components can be part of a right-handed frame; they do not by themselves
+mean the part is mirrored. `LocalFrame` does not validate arbitrary input.
 
 ```text
 world_point = frame.origin_mm
@@ -125,21 +127,22 @@ world_point = frame.origin_mm
             + thickness * frame.thickness_axis
 ```
 
-Profile report `profile_mm` points and the `extrusion_mm` vector use this
-frame. Its `stock_mm` uses length, width, thickness order. A native carcass
-panel can instead carry `geometry.kind = "world_mesh"`, `frame = "world"`,
-and `units = "mm"`. Those vertices are already placed. Do not apply the local
-stock frame to them again. That tessellation is display geometry, not a
-machining plan. See [profile frames and records](../vendor/cabineteer/src/cabineteer/profiles.py).
+Native profile report `profile_mm` points and the `extrusion_mm` vector use
+this manufacturing frame. Its `stock_mm` uses length, width, thickness order.
+A native carcass panel can instead carry `geometry.kind = "world_mesh"`,
+`frame = "world"`, and `units = "mm"`. Those vertices are already placed. Do
+not apply the local stock frame to them again. That tessellation is display
+geometry, not a machining plan. See
+[profile frames and records](../vendor/cabineteer/src/cabineteer/profiles.py).
 
 ## GLB and the viewer
 
-CadQuery export can represent placement in either vertex positions or node
-transforms. Space solids are already placed before export, so their named
-part nodes can be identity nodes with CAD-world vertex positions. Other
-geometry paths can export a local shape with an assembly location. Read the
-vertex **and the complete node transform chain**. Never add the part origin
-to exported geometry merely because a node has the part's name.
+For supported Space and native assembly outputs, read the vertex **and the
+complete node transform chain**. Space solids are placed before export, so
+their named part nodes can be identity nodes with CAD-world vertex positions.
+Native carcass `world_mesh` vertices also use CAD-world millimetres. Never add
+the part origin to these exported vertices a second time. Other exporters may
+represent placement in node transforms; a consumer must handle the full chain.
 
 The exported scene root converts CAD Z-up to viewer Y-up with a -90 degree
 rotation about X:
@@ -152,20 +155,19 @@ This changes the basis, not the dimensions. The current viewer uses the same
 numeric millimetre values. Apply the basis conversion once. A different
 consumer must check units and node transforms at its import boundary.
 
-Viewer overlays first transform mesh vertices into the named part node frame
-with `inverse(part.matrixWorld) * mesh.matrixWorld`. For Space stock meshes,
-that frame can still contain the CAD placement in the vertices. Their original
-face planes therefore include `part.origin`. Local profile overlay points
-remain local. Neither path may select main faces from finished mesh extrema:
-an inset cut floor can become an extreme after an entire face is removed.
+For Space grain marks, the viewer transforms mesh vertices into the named
+part node frame with `inverse(part.matrixWorld) * mesh.matrixWorld`. For a
+Space part with profile data, it clips triangles to the original stock main
+faces. Inset groove and rebate floors do not receive grain marks. For
+world-placed Space meshes, coordinates in the part frame still include CAD
+placement. Keep the stock datum when deriving face planes.
 
-Space parts with a `profile` use triangle clipping on the original main-face
-planes. The non-profile grain fallback uses mesh bounds instead. Do not route
-a new machined part through that fallback: finished bounds cannot identify
-original stock planes. Edge colors match faces on their declared stock planes;
-the renderer does not track face provenance. Drawer and door poses are display transforms;
-they must move these overlays with their part. They do not change resolved
-coordinates, reports, or cut quantities. See [viewer controls](../vendor/cabineteer/src/cabineteer/assets/viewer_controls.js)
+CAD assigns edge-band colors to surviving faces on the declared stock planes.
+It matches each face normal and center to the plane; the viewer does not infer
+edge-band provenance. Drawer and door poses are display transforms. They move
+their part in the viewer and do not change resolved coordinates, reports, or
+cut quantities.
+See [viewer controls](../vendor/cabineteer/src/cabineteer/assets/viewer_controls.js)
 and [GLB export](../vendor/cabineteer/src/cabineteer/visualize.py).
 
 ## Reports and cutting dimensions
@@ -173,7 +175,9 @@ and [GLB export](../vendor/cabineteer/src/cabineteer/visualize.py).
 Space report `stock_mm` and `blank_mm` order the two panel dimensions as
 length and width. This can differ from stock XYZ order. Keep the stock axis
 mapping and grain direction when you map these dimensions to a provider.
-Do not recover orientation from the largest dimension alone.
+Do not recover orientation from the largest dimension alone. When planar
+dimensions are equal, the first local axis in X, Y, Z order is the stable
+blank-length tie-breaker used for reported grain direction.
 
 Panel drawings project the actual CAD solid into a page. Their screen origin
 and view direction are presentation choices. Operation coordinates retain
@@ -205,8 +209,8 @@ node buratino/vendor/cabineteer/tests/test_viewer_profile_grain.js
 Before changing a coordinate boundary, check a nonzero placement and unequal
 dimensions. A symmetric box at the origin can hide an axis swap or a double
 translation. Compare plan bounds, CAD bounds, and freshly exported GLB vertices
-after node transforms. Include a placed sloped panel and a cut that removes an
-entire original face. Keep the original stock frame unchanged.
+after node transforms. Include a placed sloped panel. Keep the original stock
+frame unchanged.
 
 When you add a geometry representation, define its frame at the producer and
 add the corresponding consumer conversion. Do not infer its origin from the

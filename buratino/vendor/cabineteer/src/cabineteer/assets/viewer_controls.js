@@ -125,7 +125,7 @@ function profileLabel(profile) {
   if (profile.label || profile.name || profile.shape) {
     return profile.label ?? profile.name ?? profile.shape;
   }
-  const pointCount = profile.points_mm?.length ?? profile.points?.length;
+  const pointCount = profile.points?.length;
   return `${profile.plane ? `${profile.plane.toUpperCase()} ` : ''}profile${pointCount ? ` (${pointCount} points)` : ''}`;
 }
 
@@ -285,7 +285,7 @@ function renderVisibilityControls() {
       knownOwners.add(id);
     }
   }
-  const ownerOrder = ['lower', 'upper.left', 'upper.right', 'roof', 'frame.support'];
+  const ownerOrder = ['lower', 'upper', 'roof', 'frame.support'];
   owners.sort((left, right) => {
     const leftIndex = ownerOrder.indexOf(String(left.id).toLowerCase().replaceAll('_', '.'));
     const rightIndex = ownerOrder.indexOf(String(right.id).toLowerCase().replaceAll('_', '.'));
@@ -307,8 +307,7 @@ function renderVisibilityControls() {
     const key = String(owner.id).toLowerCase().replaceAll('_', '.');
     const known = {
       lower: 'Lower',
-      'upper.left': 'Upper left',
-      'upper.right': 'Upper right',
+      upper: 'Upper',
       roof: 'Roof',
       'frame.support': 'Support frame',
     };
@@ -562,20 +561,6 @@ function createProfileGrainMark(role, part, meshes, partNode) {
   const worldToPart = partNode.matrixWorld.clone().invert();
   const expectedNormal = new THREE.Vector3();
   expectedNormal[normalAxis] = 1;
-  if (normalAxis === 'z' && Array.isArray(part.profile?.points_mm)) {
-    const points = part.profile.points_mm;
-    let broadEdge = null;
-    for (let i = 0; i < points.length; i += 1) {
-      const start = points[i];
-      const end = points[(i + 1) % points.length];
-      const dx = end[0] - start[0];
-      const dz = end[1] - start[1];
-      if (!broadEdge || Math.abs(dx) > Math.abs(broadEdge.dx)) broadEdge = {dx, dz};
-    }
-    if (broadEdge && Math.abs(broadEdge.dx) > 1e-7) {
-      expectedNormal.set(-broadEdge.dz, 0, broadEdge.dx).normalize();
-    }
-  }
   const mainFaceRange = profileMainFaceRange(part, expectedNormal);
   if (!mainFaceRange) return null;
 
@@ -723,20 +708,6 @@ function createProfileGrainMark(role, part, meshes, partNode) {
 
 function profileMainFaceRange(part, expectedNormal) {
   const axis = part.surface_normal_axis_local;
-  if (Array.isArray(part.profile?.points_mm) && ['x', 'z'].includes(axis)) {
-    const projections = part.profile.points_mm
-      .filter(point => Array.isArray(point) && point.length >= 2)
-      .map(point => point[0] * expectedNormal.x + point[1] * expectedNormal.z);
-    if (projections.length) {
-      return {min: Math.min(...projections), max: Math.max(...projections)};
-    }
-  }
-
-  if (axis === 'y' && part.profile?.extrusion_axis === 'y') {
-    const depth = part.profile.extrusion_mm ?? part.size_mm?.y;
-    if (Number.isFinite(depth) && depth > 0) return {min: 0, max: depth};
-  }
-
   const axisIndex = ['x', 'y', 'z'].indexOf(axis);
   const dimensions = part.stock?.dimensions;
   if (axisIndex < 0 || !Array.isArray(dimensions) || dimensions.length !== 3 ||

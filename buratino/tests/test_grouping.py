@@ -179,8 +179,10 @@ def test_drawer_components_group_with_useful_labels_and_keep_all_physical_ids():
     }
 
 
-def test_real_assembly_confirms_grain_without_changing_grouping(root):
-    result = calculate(load_project(root / "projects/real-assembly")).result
+def test_confirmed_grain_does_not_change_grouping(project):
+    inputs = load_project(project)
+    inputs.variables["grain_direction_confirmed"] = True
+    result = calculate(inputs).result
 
     assert result["parts"]
     assert all(part["grain_status"] == "confirmed" for part in result["parts"])
