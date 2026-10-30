@@ -576,25 +576,12 @@ function createProfileGrainMark(role, part, meshes, partNode) {
       expectedNormal.set(-broadEdge.dz, 0, broadEdge.dx).normalize();
     }
   }
+  const mainFaceRange = profileMainFaceRange(part, expectedNormal);
+  if (!mainFaceRange) return null;
+
   const grainDirection = new THREE.Vector3();
   grainDirection[grainAxis] = 1;
   const surfaces = [];
-  let minPlane = Infinity;
-  let maxPlane = -Infinity;
-
-  for (const mesh of meshes) {
-    if (!mesh.geometry) continue;
-    mesh.updateWorldMatrix(true, false);
-    const positions = mesh.geometry.attributes.position;
-    if (!positions) continue;
-    const relative = worldToPart.clone().multiply(mesh.matrixWorld);
-    for (let vertexIndex = 0; vertexIndex < positions.count; vertexIndex += 1) {
-      const vertex = new THREE.Vector3().fromBufferAttribute(positions, vertexIndex).applyMatrix4(relative);
-      const plane = vertex.dot(expectedNormal);
-      minPlane = Math.min(minPlane, plane);
-      maxPlane = Math.max(maxPlane, plane);
-    }
-  }
 
   for (const mesh of meshes) {
     if (!mesh.geometry) continue;
@@ -615,7 +602,12 @@ function createProfileGrainMark(role, part, meshes, partNode) {
       const faceNormal = vertices[1].clone().sub(vertices[0])
         .cross(vertices[2].clone().sub(vertices[0])).normalize();
       const normalAlignment = faceNormal.dot(expectedNormal);
-      if (!isOuterProfileFace(normalAlignment, expectedNormal.dot(vertices[0]), minPlane, maxPlane)) continue;
+      if (!isOuterProfileFace(
+        normalAlignment,
+        expectedNormal.dot(vertices[0]),
+        mainFaceRange.min,
+        mainFaceRange.max,
+      )) continue;
       const surfaceGrain = grainDirection.clone()
         .addScaledVector(faceNormal, -grainDirection.dot(faceNormal));
       if (surfaceGrain.lengthSq() < 1e-10) continue;
@@ -727,6 +719,25 @@ function createProfileGrainMark(role, part, meshes, partNode) {
   }
 
   return createGrainMarkGroup(role, partNode, hatchVertices, arrowVertices);
+}
+
+function profileMainFaceRange(part, expectedNormal) {
+  if (part.surface_normal_axis_local === 'z' && Array.isArray(part.profile?.points_mm)) {
+    const projections = part.profile.points_mm
+      .filter(point => Array.isArray(point) && point.length >= 2)
+      .map(point => point[0] * expectedNormal.x + point[1] * expectedNormal.z);
+    if (projections.length) {
+      return {min: Math.min(...projections), max: Math.max(...projections)};
+    }
+  }
+
+  const axis = part.surface_normal_axis_local;
+  const axisIndex = ['x', 'y', 'z'].indexOf(axis);
+  const dimensions = part.stock?.dimensions;
+  if (axisIndex < 0 || !Array.isArray(dimensions) || dimensions.length !== 3 ||
+      !Number.isFinite(dimensions[axisIndex]) || dimensions[axisIndex] <= 0 ||
+      Math.abs(expectedNormal[axis] - 1) > 1e-7) return null;
+  return {min: 0, max: dimensions[axisIndex]};
 }
 
 function isOuterProfileFace(normalAlignment, plane, minPlane, maxPlane) {
