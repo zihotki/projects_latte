@@ -20,6 +20,13 @@ an error if machining removes the selected edge face completely. It colors only
 surviving finished faces on the original stock plane. This display input does not change the solid or
 the cut list, BOM, or CSV fields.
 
+Space projects can record grain for each resolved part with
+`part_grain=(PartGrain("side-left", "/cabinet/carcass/side_left", "z"),)`.
+The axis is local to the stock part (`x`, `y`, or `z`); `none` records stock
+with no directional grain. A part with no record has unknown grain. The
+resolver rejects duplicate, unknown, and thickness-axis references. It does
+not infer grain from dimensions or change part geometry.
+
 ## Small runnable project
 
 Save this as `project.py` and run it with the locked Buratino Python runtime.

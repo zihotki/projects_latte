@@ -2,7 +2,7 @@
 
 from cabineteer.hettich_eb20 import EB20_SLIDE_KEYS
 from cabineteer.operations import Bevel, Bore, DominoJoint, Groove, Pocket, Rabbet
-from cabineteer.project import CabinetProject, EdgeBand, SpaceModelSpec
+from cabineteer.project import CabinetProject, EdgeBand, PartGrain, SpaceModelSpec
 from cabineteer.spaces import Carcass, DrawerBox, Space
 
 variables = {
@@ -125,5 +125,11 @@ project = CabinetProject(
             part_id="/cabinet/carcass/side_left",
             edge="y-",
         ),
+    ),
+    part_grain=(
+        PartGrain("side-left-grain", "/cabinet/carcass/side_left", "z"),
+        PartGrain("top-grain", "/cabinet/carcass/top", "x"),
+        PartGrain("back-grain", "/cabinet/carcass/back", "z"),
+        PartGrain("drawer-bottom-grain", "/cabinet/root/drawer/bottom", "x"),
     ),
 )

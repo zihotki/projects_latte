@@ -11,6 +11,7 @@ const ui = {
   visibility: document.getElementById('visibility-options'),
   panelOpacity: document.getElementById('panel-opacity'),
   panelOpacityValue: document.getElementById('panel-opacity-value'),
+  grainOverlay: document.getElementById('grain-overlay-toggle'),
 };
 
 const number = value => Number(value).toLocaleString(undefined, {
@@ -49,6 +50,16 @@ function currentGroup() {
   return result.cutting_groups.find(group => group.id === selectedGroup);
 }
 
+function grainLabel(part) {
+  if (part?.grain_status === 'nondirectional' || part?.grain_direction === 'none') {
+    return 'No directional grain';
+  }
+  const axis = part?.grain_axis_local;
+  return ['x', 'y', 'z'].includes(axis)
+    ? `Grain along local ${axis.toUpperCase()}`
+    : 'Grain direction unknown';
+}
+
 function selectGroup(group) {
   selectedGroup = group?.id ?? null;
   selectedPartIds = new Set(group?.members ?? []);
@@ -66,7 +77,7 @@ function selectGroup(group) {
     ?.map(member => `${member.label}${member.profile ? ` · ${profileLabel(member.profile)}` : ''}`)
     .filter(Boolean);
   ui.caption.textContent = selected
-    ? `${selected.label} · ${selected.quantity} ${selected.quantity === 1 ? 'panel' : 'panels'} · ${selected.material} · ${selected.edge_treatment ?? 'Edge treatment unverified'}${selected.grain_status === 'confirmed' ? '' : ' · Grain direction unverified'} · Blank dimensions only; profile is not a machining instruction${memberProfiles?.length ? ` · Members: ${[...new Set(memberProfiles)].join('; ')}` : ''}`
+    ? `${selected.label} · ${selected.quantity} ${selected.quantity === 1 ? 'panel' : 'panels'} · ${selected.material} · ${selected.edge_treatment ?? 'Edge treatment unverified'} · ${grainLabel(selected)} · Blank dimensions only; profile is not a machining instruction${memberProfiles?.length ? ` · Members: ${[...new Set(memberProfiles)].join('; ')}` : ''}`
     : selectedLabel ? `${selectedLabel} selected.` : 'Select a part or row.';
 }
 
@@ -81,7 +92,7 @@ function selectTreeParts(parts, label) {
   }
   updateTreeSelectionState();
   applyModelSelection();
-  ui.caption.textContent = `${label} selected.`;
+  ui.caption.textContent = `${label} selected. ${parts.length === 1 ? grainLabel(parts[0]) + '.' : ''}`;
 }
 
 function updateTreeSelectionState() {
@@ -135,7 +146,7 @@ function renderTable() {
     const profileLabels = details
       .filter(member => member.profile)
       .map(member => `${member.label}: ${profileLabel(member.profile)}`);
-    row.title = `${group.label} · ${group.quantity} ${group.quantity === 1 ? 'panel' : 'panels'} · ${group.material}${profileLabels.length ? ` · ${[...new Set(profileLabels)].join('; ')}` : ''} · Profile machining unverified`;
+    row.title = `${group.label} · ${group.quantity} ${group.quantity === 1 ? 'panel' : 'panels'} · ${group.material} · ${grainLabel(group)}${profileLabels.length ? ` · ${[...new Set(profileLabels)].join('; ')}` : ''} · Profile machining unverified`;
     const dims = group.blank_mm ?? group.finished_mm;
     const nameCell = document.createElement('td');
     nameCell.className = 'part-name';
@@ -1159,6 +1170,12 @@ document.getElementById('isolate-selection')?.addEventListener('click', () => {
 });
 document.getElementById('reset-selection')?.addEventListener('click', () => {
   selectGroup(null);
+});
+ui.grainOverlay?.addEventListener('click', event => {
+  grainVisible = !grainVisible;
+  event.currentTarget.setAttribute('aria-pressed', String(grainVisible));
+  event.currentTarget.textContent = `Grain marks: ${grainVisible ? 'on' : 'off'}`;
+  if (viewer) applyPartVisibility();
 });
 ui.drawerPose?.addEventListener('click', () => {
   if (viewer && (drawerPartNodes.length || legacyDrawerPose)) setDrawerPose(!drawersOpen);

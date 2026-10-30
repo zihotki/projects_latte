@@ -1349,7 +1349,7 @@ def _build_html(
     <div class="sheet-heading"><button id="sheet-toggle" type="button" aria-expanded="false"><span id="sheet-title">Model</span><span aria-hidden="true">⌃</span></button></div>
     <section id="tree-view" role="tabpanel"><div class="section-heading">Model <span id="group-count"></span></div><p id="model-hint">Select a name; use the eye to hide.</p><div id="visibility-options" role="tree" aria-label="Cabinet parts"></div><details id="viewer-info"><summary>Dimensions and render notes</summary><div id="project-info">{info_html}</div>{caveat_html}</details></section>
     <section id="parts-view" role="tabpanel" hidden><div class="section-heading">Cut list <span id="table-hint"></span></div><div id="table-scroll"><table aria-label="Cabinet parts"><thead><tr><th>Part</th><th>Qty</th><th>Blank mm</th></tr></thead><tbody id="parts-body"></tbody></table></div><div id="selection-caption">Select a part or row.</div></section>
-    <section id="settings-view" hidden><div class="section-heading">Settings</div><div id="finish-ui"><select id="finish-sel" title="Exterior finish"></select><button id="grain-btn" title="Toggle grain orientation">Grain: vertical</button><button id="cutlist-btn" type="button">Generate cutlist request</button></div></section>
+    <section id="settings-view" hidden><div class="section-heading">Settings</div><div id="finish-ui"><select id="finish-sel" title="Exterior finish"></select><button id="grain-btn" title="Toggle grain orientation">Grain: vertical</button><button id="grain-overlay-toggle" type="button" aria-pressed="true">Grain marks: on</button><button id="cutlist-btn" type="button">Generate cutlist request</button></div></section>
     <div id="viewer-message" role="status" hidden></div>
   </aside>
 

@@ -44,10 +44,18 @@ def space_model_records(model: ResolvedModel, cabinet_id: str = "cabinet") -> di
         if motion in drawer_ids:
             item["instance_id"] = motion
         parts.append(item)
-        key = (item["material"], *stock.values())
+        key = (
+            item["material"],
+            *stock.values(),
+            item.get("grain_axis_local") or "",
+            item.get("grain_status", "unverified"),
+        )
         groups.setdefault(key, []).append(item)
     cutting_groups = [dict(id="space-group-" + hashlib.sha256(json.dumps(key, separators=(",", ":")).encode()).hexdigest()[:16], label=members[0]["label"],
         quantity=len(members), material=members[0]["material"],
+        grain_axis_local=members[0].get("grain_axis_local"),
+        grain_direction=members[0].get("grain_direction", "unknown"),
+        grain_status=members[0].get("grain_status", "unverified"),
         members=[p["id"] for p in members], blank_mm=members[0]["stock_mm"])
         for key, members in sorted(groups.items())]
     drawers = [dict(instance_id=c["id"], box_mm=dict(zip(("width", "depth", "height"), c["size"]))) for c in model.contents if "slide_key" in c]
