@@ -27,6 +27,9 @@ to build a new project. Start from a runnable example:
 - [Profiled assembly with a sloped roof](projects/profile-row-sloped/project.py)
 - [Larger native profile assembly draft](projects/real-assembly-native/project.py)
 
+The [coordinate contract](docs/coordinates.md) describes model axes, local
+stock frames, placement, and the CAD-to-viewer boundary.
+
 `preview` prints a loopback URL. Each page shows one captured build. After a
 new build, refresh the page. The preview server can stay running. Select a part
 or cut-list row to highlight it. Visibility and drawer pose controls change

@@ -27,8 +27,11 @@ with no directional grain. A part with no record has unknown grain. The
 resolver rejects duplicate, unknown, and thickness-axis references. It does
 not infer grain from dimensions or change part geometry.
 Import `PartGrain` from `cabineteer.part_grain`. The **Grain marks** control in
-Settings shows these saved directions. Finish controls change the display;
+the main toolbar shows these saved directions. Finish controls change the display;
 they do not edit `part_grain`.
+
+See the [coordinate contract](coordinates.md) for stock axes, placement, face
+coordinates, and the conversion to viewer coordinates.
 
 ## Small runnable project
 

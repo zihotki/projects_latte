@@ -6,6 +6,9 @@ assumptions. Keep project code declarative: use Cabineteer inputs to describe
 the furniture. Add Python calculations only for values that depend on other
 project inputs. Use millimetres for dimensions and gaps.
 
+The [coordinate contract](coordinates.md) defines axes, stock datums, placement,
+and export frames. Read it before adding geometry or machining logic.
+
 ## Choose a model
 
 | Design | Start from | Model |
