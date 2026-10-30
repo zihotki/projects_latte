@@ -722,7 +722,8 @@ function createProfileGrainMark(role, part, meshes, partNode) {
 }
 
 function profileMainFaceRange(part, expectedNormal) {
-  if (part.surface_normal_axis_local === 'z' && Array.isArray(part.profile?.points_mm)) {
+  const axis = part.surface_normal_axis_local;
+  if (Array.isArray(part.profile?.points_mm) && ['x', 'z'].includes(axis)) {
     const projections = part.profile.points_mm
       .filter(point => Array.isArray(point) && point.length >= 2)
       .map(point => point[0] * expectedNormal.x + point[1] * expectedNormal.z);
@@ -731,13 +732,20 @@ function profileMainFaceRange(part, expectedNormal) {
     }
   }
 
-  const axis = part.surface_normal_axis_local;
+  if (axis === 'y' && part.profile?.extrusion_axis === 'y') {
+    const depth = part.profile.extrusion_mm ?? part.size_mm?.y;
+    if (Number.isFinite(depth) && depth > 0) return {min: 0, max: depth};
+  }
+
   const axisIndex = ['x', 'y', 'z'].indexOf(axis);
   const dimensions = part.stock?.dimensions;
   if (axisIndex < 0 || !Array.isArray(dimensions) || dimensions.length !== 3 ||
       !Number.isFinite(dimensions[axisIndex]) || dimensions[axisIndex] <= 0 ||
       Math.abs(expectedNormal[axis] - 1) > 1e-7) return null;
-  return {min: 0, max: dimensions[axisIndex]};
+  const origin = part.transform?.translation ?? part.origin ?? [0, 0, 0];
+  const originProjection = origin[0] * expectedNormal.x +
+    origin[1] * expectedNormal.y + origin[2] * expectedNormal.z;
+  return {min: originProjection, max: originProjection + dimensions[axisIndex]};
 }
 
 function isOuterProfileFace(normalAlignment, plane, minPlane, maxPlane) {
