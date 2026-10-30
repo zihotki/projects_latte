@@ -577,6 +577,22 @@ function createProfileGrainMark(role, part, meshes, partNode) {
   const grainDirection = new THREE.Vector3();
   grainDirection[grainAxis] = 1;
   const surfaces = [];
+  let minPlane = Infinity;
+  let maxPlane = -Infinity;
+
+  for (const mesh of meshes) {
+    if (!mesh.geometry) continue;
+    mesh.updateWorldMatrix(true, false);
+    const positions = mesh.geometry.attributes.position;
+    if (!positions) continue;
+    const relative = worldToPart.clone().multiply(mesh.matrixWorld);
+    for (let vertexIndex = 0; vertexIndex < positions.count; vertexIndex += 1) {
+      const vertex = new THREE.Vector3().fromBufferAttribute(positions, vertexIndex).applyMatrix4(relative);
+      const plane = vertex.dot(expectedNormal);
+      minPlane = Math.min(minPlane, plane);
+      maxPlane = Math.max(maxPlane, plane);
+    }
+  }
 
   for (const mesh of meshes) {
     if (!mesh.geometry) continue;
@@ -596,7 +612,8 @@ function createProfileGrainMark(role, part, meshes, partNode) {
       }
       const faceNormal = vertices[1].clone().sub(vertices[0])
         .cross(vertices[2].clone().sub(vertices[0])).normalize();
-      if (Math.abs(faceNormal.dot(expectedNormal)) < 0.9999) continue;
+      const normalAlignment = faceNormal.dot(expectedNormal);
+      if (!isOuterProfileFace(normalAlignment, expectedNormal.dot(vertices[0]), minPlane, maxPlane)) continue;
       const surfaceGrain = grainDirection.clone()
         .addScaledVector(faceNormal, -grainDirection.dot(faceNormal));
       if (surfaceGrain.lengthSq() < 1e-10) continue;
@@ -708,6 +725,12 @@ function createProfileGrainMark(role, part, meshes, partNode) {
   }
 
   return createGrainMarkGroup(role, partNode, hatchVertices, arrowVertices);
+}
+
+function isOuterProfileFace(normalAlignment, plane, minPlane, maxPlane) {
+  if (Math.abs(normalAlignment) < 0.9999) return false;
+  const outerPlane = normalAlignment > 0 ? maxPlane : minPlane;
+  return Math.abs(plane - outerPlane) < 0.02;
 }
 
 function createGrainMarkGroup(role, partNode, hatchVertices, arrowVertices) {
