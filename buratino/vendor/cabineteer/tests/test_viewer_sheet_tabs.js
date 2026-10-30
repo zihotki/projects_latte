@@ -74,7 +74,7 @@ assert.equal(elements.get('settings-view').hidden, false);
 
 sheetToggle.click();
 assert.equal(sheetOpen(), false);
-assertTab('settings-tab', true, 'the sheet toggle may retain the selected tab');
+assertTab('settings-tab', false);
 assert.equal(sheetToggle.attributes['aria-expanded'], 'false');
 sheetToggle.click();
 assert.equal(sheetOpen(), true);

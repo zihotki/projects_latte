@@ -1215,6 +1215,12 @@ for (const button of document.querySelectorAll('[data-view]')) {
 function setSheetOpen(open) {
   document.body.classList.toggle('sheet-open', open);
   document.getElementById('sheet-toggle').setAttribute('aria-expanded', String(open));
+  if (!open) {
+    activeSheetTab = null;
+    for (const buttonId of ['tree-tab', 'parts-tab', 'settings-tab']) {
+      document.getElementById(buttonId).setAttribute('aria-selected', 'false');
+    }
+  }
 }
 
 function selectSheetTab(tab, toggleCurrent = false) {
@@ -1223,10 +1229,6 @@ function selectSheetTab(tab, toggleCurrent = false) {
   const sheetOpen = document.body.classList.contains('sheet-open');
   if (toggleCurrent && sheetOpen && activeSheetTab === tab) {
     setSheetOpen(false);
-    activeSheetTab = null;
-    for (const buttonId of Object.keys(panes)) {
-      document.getElementById(buttonId).setAttribute('aria-selected', 'false');
-    }
     return;
   }
 
