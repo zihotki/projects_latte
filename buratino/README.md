@@ -33,6 +33,9 @@ or cut-list row to highlight it. Visibility and drawer pose controls change
 display only; they do not change geometry or cutting quantities. Stop the
 server with Ctrl-C.
 
+The [cut-service requirements](docs/cut-services.md) describe planned
+ZAGENZAGEN and OPMAATZAGEN exports. Provider CSV export is not implemented yet.
+
 ## Build outputs and limits
 
 Each build writes a new folder under that project's `build/` directory. It

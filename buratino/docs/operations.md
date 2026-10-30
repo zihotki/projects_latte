@@ -26,6 +26,9 @@ The axis is local to the stock part (`x`, `y`, or `z`); `none` records stock
 with no directional grain. A part with no record has unknown grain. The
 resolver rejects duplicate, unknown, and thickness-axis references. It does
 not infer grain from dimensions or change part geometry.
+Import `PartGrain` from `cabineteer.part_grain`. The **Grain marks** control in
+Settings shows these saved directions. Finish controls change the display;
+they do not edit `part_grain`.
 
 ## Small runnable project
 
