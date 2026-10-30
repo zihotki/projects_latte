@@ -389,6 +389,7 @@ def _machining_schema(*, joints: bool = False, nullable: bool = False) -> dict:
         "size_u": positive, "size_v": positive, "depth": positive,
         "length": positive, "width": positive, "diameter": positive,
         "leg_a": positive, "leg_b": positive, "depth_a": positive, "depth_b": positive,
+        "positions": {"type": "array", "items": position, "minItems": 1, "uniqueItems": True},
         "centre": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
     }
     definitions = {
@@ -399,8 +400,9 @@ def _machining_schema(*, joints: bool = False, nullable: bool = False) -> dict:
         "Bore": "id part_id face u v diameter depth",
         "Mortise": "id part_id face u v axis length width depth",
         "DominoJoint": "id part_a face_a part_b face_b centre axis length width depth_a depth_b",
+        "DominoRow": "id part_a face_a part_b face_b positions axis length width depth_a depth_b",
     }
-    choices = ["DominoJoint"] if joints else ["Pocket", "Rabbet", "Bevel", "Groove", "Bore", "Mortise"]
+    choices = ["DominoJoint", "DominoRow"] if joints else ["Pocket", "Rabbet", "Bevel", "Groove", "Bore", "Mortise"]
     alternatives = []
     for name in choices:
         names = definitions[name].split()
@@ -1300,6 +1302,7 @@ async def list_tools() -> list[types.Tool]:
                     "opening_width":  {"type": "number", "description": "Cabinet opening width in mm."},
                     "opening_height": {"type": "number", "description": "Available height for drawer in mm."},
                     "opening_depth":  {"type": "number", "description": "Cabinet interior depth in mm."},
+                    "box_depth_override": {"type": "number", "exclusiveMinimum": 0, "description": "Optional box depth in mm, independent of a side-mounted runner length."},
                     "slide_key": {
                         "type": "string",
                         "description": "Drawer slide key from list_hardware.",

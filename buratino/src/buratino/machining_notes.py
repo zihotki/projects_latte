@@ -3,6 +3,13 @@
 
 def machining_notes(part: dict) -> list[str]:
     notes = []
+    mortises = {}
+    for cut in part.get("operations", []):
+        if cut.get("type") == "mortise" and "kind" not in cut:
+            key = tuple(
+                cut[name] for name in ("face", "axis", "length", "width", "depth")
+            )
+            mortises.setdefault(key, []).append(cut)
     for cut in part.get("operations", []):
         kind = cut.get("kind", cut.get("type", ""))
         if "kind" in cut:
@@ -61,9 +68,26 @@ def machining_notes(part: dict) -> list[str]:
                 f"center U {cut['u']:g}, V {cut['v']:g} mm"
             )
         elif kind == "mortise":
+            key = tuple(
+                cut[name] for name in ("face", "axis", "length", "width", "depth")
+            )
+            members = mortises.pop(key, None)
+            if members is None:
+                continue
+            if len(members) == 1:
+                centers = f"center U {cut['u']:g}, V {cut['v']:g} mm"
+            else:
+                rows = {}
+                for member in members:
+                    rows.setdefault(member["u"], []).append(member["v"])
+                centers = "centers U/V (mm): " + "; ".join(
+                    f"{u:g}/(" + ", ".join(f"{v:g}" for v in values) + ")"
+                    for u, values in rows.items()
+                )
+            count = f"Mortises ({len(members)})" if len(members) > 1 else "Mortise"
             note = (
-                f"Mortise: {cut['length']:g} × {cut['width']:g} mm; "
-                f"depth {cut['depth']:g} mm; center U {cut['u']:g}, V {cut['v']:g} mm; "
+                f"{count}: {cut['length']:g} × {cut['width']:g} mm; "
+                f"depth {cut['depth']:g} mm; {centers}; "
                 f"length along {cut['axis'].upper()}"
             )
         elif kind in {"rabbet", "bevel"}:

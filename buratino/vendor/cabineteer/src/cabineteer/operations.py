@@ -94,6 +94,27 @@ class DominoJoint:
     depth_b: float
 
 
+@dataclass(frozen=True)
+class DominoRow:
+    """Explicit mortise row on the overlap of two opposed contact faces.
+
+    Positions are offsets along ``axis`` from the contact overlap minimum.
+    The other in-plane coordinate is the overlap midpoint. Each position
+    expands to a DominoJoint with the stable ID ``<row id>-<position>``.
+    """
+    id: str
+    part_a: str
+    face_a: str
+    part_b: str
+    face_b: str
+    positions: tuple[float, ...]
+    axis: str
+    length: float
+    width: float
+    depth_a: float
+    depth_b: float
+
+
 OPERATIONS = (Pocket, Rabbet, Bevel, Groove, Bore, Mortise)
 
 
@@ -235,11 +256,63 @@ def _groove_pocket(part, op):
     )
 
 
+def _expand_domino_row(row, by_id):
+    if not isinstance(row.id, str) or not row.id or "/" in row.id:
+        raise ValueError(f"invalid row ID {row.id!r}")
+    if row.part_a == row.part_b or row.part_a not in by_id or row.part_b not in by_id:
+        raise ValueError(f"{row.id}: row requires two existing distinct parts")
+    normal = _face(row.face_a)
+    if _face(row.face_b) != normal or row.face_a[1] == row.face_b[1]:
+        raise ValueError(f"{row.id}: row requires opposed faces")
+    if row.axis not in ("x", "y", "z") or row.axis == row.face_a[0]:
+        raise ValueError(f"{row.id}: incompatible row axis")
+    a, b = by_id[row.part_a], by_id[row.part_b]
+    origins = [part["transform"]["translation"] for part in (a, b)]
+    sizes = [part["profile"]["size"] for part in (a, b)]
+    planes = [origin[normal] + (size[normal] if face[1] == "+" else 0)
+              for origin, size, face in zip(origins, sizes, (row.face_a, row.face_b))]
+    if abs(planes[0] - planes[1]) > TOLERANCE:
+        raise ValueError(f"{row.id}: row faces must be coincident")
+    in_plane = [i for i in range(3) if i != normal]
+    low = [max(origin[i] for origin in origins) for i in range(3)]
+    high = [min(origin[i] + size[i] for origin, size in zip(origins, sizes)) for i in range(3)]
+    if any(high[i] - low[i] <= TOLERANCE for i in in_plane):
+        raise ValueError(f"{row.id}: row faces have no contact overlap")
+    if not isinstance(row.positions, (tuple, list)) or not row.positions:
+        raise ValueError(f"{row.id}: row requires positions")
+    axis = "xyz".index(row.axis)
+    cross = next(i for i in in_plane if i != axis)
+    for position in row.positions:
+        _number(position, f"{row.id} position")
+        if position > high[axis] - low[axis]:
+            raise ValueError(f"{row.id}: row position outside contact overlap")
+        centre = [0.0, 0.0, 0.0]
+        centre[normal] = planes[0]
+        centre[axis] = low[axis] + position
+        centre[cross] = (low[cross] + high[cross]) / 2
+        yield DominoJoint(f"{row.id}-{position:g}", row.part_a, row.face_a,
+                          row.part_b, row.face_b, tuple(centre), row.axis,
+                          row.length, row.width, row.depth_a, row.depth_b)
+
+
 def resolve_operations(parts, operations, joints):
     """Return validated cuts; XYZ is stock-local, with depth inward from face."""
     by_id = {p["id"]: p for p in parts}
     if len(by_id) != len(parts):
         raise ValueError("duplicate part IDs")
+    row_ids = set()
+    expanded = []
+    for joint in joints:
+        if isinstance(joint, DominoRow):
+            if not isinstance(joint.id, str) or not joint.id or "/" in joint.id:
+                raise ValueError(f"invalid row ID {joint.id!r}")
+            if joint.id in row_ids:
+                raise ValueError(f"duplicate row ID {joint.id!r}")
+            row_ids.add(joint.id)
+            expanded.extend(_expand_domino_row(joint, by_id))
+        else:
+            expanded.append(joint)
+    joints = tuple(expanded)
     ids = set()
     result = []
 

@@ -216,6 +216,8 @@ class DrawerSlideSpec:
     #: line so the paperwork states it — added after the 563H swap left
     #: Charlie unable to verify extension from the BOM (2026-07-23).
     extension: str = "full"
+    # Published travel, when explicitly known; do not infer it from box depth.
+    travel_mm: float | None = None
     minimum_cavity_depth: float = 0
     maximum_side_thickness: float = 0
     bottom_recess_range: tuple[float, float] | None = None
@@ -798,6 +800,32 @@ FERRETTI_HDSC550V90 = DrawerSlideSpec(
 )
 
 
+FERRETTI_HDSC500V90 = DrawerSlideSpec(
+    # Retailer dimensions: 19.5 mm thick, 53 mm high, 500 mm long.
+    # Clearance tolerances, mounting offsets and width limits are not supplied;
+    # the values below model the nominal thickness and do not verify fit.
+    name="Ferretti Heavy Duty Softclose 500 mm",
+    manufacturer="Ferretti",
+    slide_type=SlideType.SIDE_MOUNT,
+    mount_location=SlideMountLocation.SIDE,
+    min_side_clearance=19.5,
+    max_side_clearance=19.5,
+    nominal_side_clearance=19.5,
+    min_top_clearance=0,
+    min_bottom_clearance=0,
+    available_lengths=(500,),
+    max_load_kg=90,
+    min_drawer_height=0,
+    max_drawer_width=0,
+    rear_bracket_inset=0,
+    front_bracket_inset=0,
+    part_numbers={500: "HDSC500V90"},
+    sold_as_pair=True,
+    travel_mm=500,
+    sources=("https://www.meubelbeslagcenter.nl/heavy-duty-softclose-ladegeleiders-500mm-zijmontage",),
+)
+
+
 # ── Salice Futura ─────────────────────────────────────────────────────────────
 
 SALICE_FUTURA = DrawerSlideSpec(
@@ -1092,6 +1120,7 @@ SLIDES: dict[str, DrawerSlideSpec] = {
     # Accuride
     "accuride_3832":          ACCURIDE_3832,
     "ferretti_hdsc550v90":    FERRETTI_HDSC550V90,
+    "ferretti_hdsc500v90":    FERRETTI_HDSC500V90,
     # Salice Futura
     "salice_futura":          SALICE_FUTURA,
     "salice_futura_smove":    SALICE_FUTURA_SMOVE,

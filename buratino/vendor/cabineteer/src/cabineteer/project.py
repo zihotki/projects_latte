@@ -43,7 +43,7 @@ from .layout import (LayoutNode, LayoutLeaf, Frame, Row, Stack, CabinetRef, Boun
 from .spaces import (Carcass, Space, Split, Divider, Fixed, Fr, DrawerBox, Door,
                      AppliedDrawerFront, AppliedFaceboard, AssemblyModule, AssemblyRef,
                      Insets, SpaceCabinetDefinition, Natural, ResolvedModel, resolve_model, _input)
-from .operations import Pocket, Rabbet, Bevel, Groove, Bore, Mortise, DominoJoint, OPERATIONS
+from .operations import Pocket, Rabbet, Bevel, Groove, Bore, Mortise, DominoJoint, DominoRow, OPERATIONS
 from .edge_banding import EdgeBand
 from .part_grain import GrainRule, PartGrain
 from .profiles import (
@@ -265,7 +265,7 @@ def _read_input(value):
         SpaceCabinetDefinition, CabinetRef, Frame, Row, Stack, LayoutLeaf, Bounds3D,
         ProfileAssemblySpec, RoofProfile, ProfiledBox, ProfileFaceSpec,
         ProfileDrawerSpec, ProfileShelfSpec, ProfileLowerDrawerSpec,
-        Pocket, Rabbet, Bevel, Groove, Bore, Mortise, DominoJoint,
+        Pocket, Rabbet, Bevel, Groove, Bore, Mortise, DominoJoint, DominoRow,
         EdgeBand, PartGrain, GrainRule,
     )}
     if isinstance(value, list):
@@ -348,7 +348,7 @@ class CabinetProject:
             or self.profile_assembly is not None
         ):
             raise ValueError("part_grain requires a Space or profile assembly project")
-        if not all(isinstance(item, OPERATIONS) for item in self.operations) or not all(isinstance(item, DominoJoint) for item in self.joints):
+        if not all(isinstance(item, OPERATIONS) for item in self.operations) or not all(isinstance(item, (DominoJoint, DominoRow)) for item in self.joints):
             raise ValueError("invalid operation or joint input")
         if not all(isinstance(item, EdgeBand) for item in self.edge_banding):
             raise ValueError("edge_banding must contain EdgeBand inputs")

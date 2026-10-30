@@ -406,7 +406,7 @@ def test_mortise_maps_measure_from_back_for_both_faces_and_edges():
 
 @pytest.mark.parametrize(
     ("project_name", "groove_width"),
-    [("two-under-window", 18), ("real-assembly-native", 12)],
+    [("two-under-window", 12), ("real-assembly-native", 12)],
 )
 def test_report_and_guide_share_part_drawings_and_machining_dimensions(
     root, tmp_path, project_name, groove_width

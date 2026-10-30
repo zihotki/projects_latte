@@ -90,6 +90,12 @@ subtracts `bottom_clearance` and `top_clearance` from that opening. If
 `top_clearance` is unset, the fit recipe uses its default vertical gap. The
 bottom clearance must also meet the selected slide's minimum.
 
+`DrawerBox(depth=544)` sets the box depth independently of runner length.
+Omit `depth` to keep the runner-based default. The box and its front gap must
+fit the clear opening depth. A side-mounted box must be at least as deep as
+its runner; an undermount box must keep the runner-specific depth. A saved
+runner travel value sets the preview open distance independently of box depth.
+
 Drawer boxes in Space and profile assemblies use the same stock-panel and cut
 recipe. Bottom blanks include the groove depth at both edges in each direction.
 The default groove depth is 6 mm; the default 13 mm inset locates the bottom

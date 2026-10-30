@@ -597,6 +597,11 @@ def render_documents(
         f"{dims['depth']:g} deep, mm.</p>" + _drawer_summary(result)
     )
     joint_lines = set()
+    space_pair_counts = Counter(
+        tuple(sorted(joint["parts"]))
+        for joint in result["joints"]
+        if joint.get("type") == "space_domino"
+    )
     for joint in result["joints"]:
         if joint.get("type") == "cabinet_connection":
             names = " and ".join(joint.get("cabinet_ids", []))
@@ -619,7 +624,15 @@ def render_documents(
         ):
             joint_lines.add(f"{label}: 6 × 40 mm Domino")
             continue
-        if joint.get("type") != "domino":
+        if joint.get("type") == "space_domino":
+            slot = joint["slot_mm"]
+            depths = "/".join(f"{cut['depth']:g}" for cut in joint["mortises"])
+            joint_lines.add(
+                f"{label}: {space_pair_counts[tuple(sorted(joint['parts']))]} × "
+                f"{slot['width']:g} × {joint['tenon_length_mm']:g} mm Domino; "
+                f"{slot['length']:g} × {slot['width']:g} mm slots, {depths} mm depths"
+            )
+        elif joint.get("type") != "domino":
             joint_lines.add(f"{label}: {joint.get('type', 'Joint').replace('_', ' ')}")
     joints = "".join(f"<li>{html.escape(line)}</li>" for line in sorted(joint_lines))
     panel_sections = []

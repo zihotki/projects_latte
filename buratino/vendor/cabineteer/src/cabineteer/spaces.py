@@ -36,6 +36,7 @@ class DrawerBox:
     joinery_style: str = "butt"
     material: str = "baltic_birch"
     bottom_material: str = "baltic_birch"
+    depth: float | None = None
 
 
 @dataclass(frozen=True)
@@ -282,7 +283,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
             if box.bottom_thickness is not None:
                 _number(box.bottom_thickness, cid + " bottom_thickness")
             try:
-                d = DrawerConfig(opening_width=size[0], opening_height=size[2], opening_depth=size[1], slide_key=box.slide_key,
+                d = DrawerConfig(opening_width=size[0], opening_height=size[2], opening_depth=size[1], slide_key=box.slide_key, box_depth_override=box.depth,
                     side_thickness=box.side_thickness, front_back_thickness=box.front_back_thickness, bottom_thickness=box.bottom_thickness,
                     bottom_dado_depth=box.bottom_dado_depth, bottom_dado_inset=box.bottom_dado_inset, front_gap=box.front_gap,
                     vertical_gap=size[2] - height - get_slide(box.slide_key).min_bottom_clearance,
@@ -304,7 +305,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
                 for side_name in ("side_L", "side_R"):
                     for end_name in ("sub_front", "back"):
                         contact(cid + "/" + side_name, cid + "/" + end_name, "drawer_corner")
-                contents.append(dict(id=cid, space=path, origin=list(box_origin), size=[d.box_width,d.box_depth,height], bottom_clearance=bottom_clear, top_clearance=top_clear, slide_key=box.slide_key))
+                contents.append(dict(id=cid, space=path, origin=list(box_origin), size=[d.box_width,d.box_depth,height], bottom_clearance=bottom_clear, top_clearance=top_clear, slide_key=box.slide_key, runner_travel_mm=d.slide.travel_mm))
             except (ValueError, KeyError, TypeError) as exc:
                 raise ValueError(f"{cid}: {exc}") from exc
         if space.split:

@@ -13,10 +13,11 @@ All dimensions in millimeters. Drawer orientation:
 
 from dataclasses import dataclass, field
 from typing import Optional
+import math
 
 cq = None  # Loaded only when geometry is requested.
 
-from .hardware import DrawerSlideSpec, get_slide, get_pull
+from .hardware import DrawerSlideSpec, SlideMountLocation, get_slide, get_pull
 from .cabinet import CabinetConfig, PartInfo
 from .joinery import (
     DrawerJoineryStyle,
@@ -138,6 +139,7 @@ class DrawerConfig:
 
     # Hardware
     slide_key: str = "blum_tandem_550h"
+    box_depth_override: Optional[float] = None
 
     # Corner joinery style
     joinery_style: DrawerJoineryStyle = DrawerJoineryStyle.HALF_LAP
@@ -278,10 +280,20 @@ class DrawerConfig:
         if recess and not recess[0] <= self.bottom_dado_inset <= recess[1]:
             raise ValueError(f"{self.slide.name} bottom recess must be {recess[0]:g} to {recess[1]:g} mm")
         slide_length = self.slide.slide_length_for_depth(self.opening_depth)
-        return min(
-            self.opening_depth - self.front_gap,
-            slide_length,
-        )
+        default_depth = min(self.opening_depth - self.front_gap, slide_length)
+        depth = self.box_depth_override
+        if depth is None:
+            return default_depth
+        if isinstance(depth, bool) or not isinstance(depth, (int, float)) or not math.isfinite(depth) or depth <= 0:
+            raise ValueError("box_depth_override must be a positive finite number")
+        if depth + self.front_gap > self.opening_depth:
+            raise ValueError("drawer box depth exceeds usable opening depth")
+        if self.slide.mount_location == SlideMountLocation.SIDE:
+            if depth < slide_length:
+                raise ValueError("drawer box depth must be at least the side-mounted runner length")
+        elif abs(depth - default_depth) > 1e-6:
+            raise ValueError("undermount drawer box must retain the runner-specific depth")
+        return depth
 
     @property
     def side_panel_length(self) -> float:

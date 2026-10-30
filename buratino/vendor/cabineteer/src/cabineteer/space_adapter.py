@@ -59,7 +59,7 @@ def space_model_records(model: ResolvedModel, cabinet_id: str = "cabinet") -> di
         grain_status=members[0].get("grain_status", "unverified"),
         members=[p["id"] for p in members], blank_mm=members[0]["stock_mm"])
         for key, members in sorted(groups.items())]
-    drawers = [dict(instance_id=c["id"], box_mm=dict(zip(("width", "depth", "height"), c["size"]))) for c in model.contents if "slide_key" in c]
+    drawers = [dict(instance_id=c["id"], box_mm=dict(zip(("width", "depth", "height"), c["size"])), runner_travel_mm=c.get("runner_travel_mm")) for c in model.contents if "slide_key" in c]
     return {"parts": parts, "contacts": deepcopy(model.part_plan.contacts),
             "viewer": {"parts": parts, "cutting_groups": cutting_groups,
                        "drawers": drawers, "cabinets": [dict(p, name=p["id"].rsplit("/", 1)[-1], parent_id=(ancestors(p["id"])[-1] if ancestors(p["id"]) else None), ancestor_ids=ancestors(p["id"])) for p in instances] or [{"id": cabinet_id, "name": cabinet_id}],

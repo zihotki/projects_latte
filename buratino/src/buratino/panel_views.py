@@ -4,6 +4,7 @@ import json
 import math
 
 from .grouping import machining_signature
+from .machining_dimensions import groove_callouts, groove_dimensions
 
 
 def _projected_geometry(shape, direction):
@@ -35,6 +36,26 @@ def _projected_geometry(shape, direction):
     return Compound.makeCompound(projected)
 
 
+def _svg_projector(direction, bounds, scale, left, top, rotation_axis=None):
+    """Use getSVG's world projector, optional CAD rotation and viewport transform."""
+    from OCP.gp import gp_Ax1, gp_Ax2, gp_Dir, gp_Pnt, gp_Trsf
+    from OCP.HLRAlgo import HLRAlgo_Projector
+
+    projector = HLRAlgo_Projector(gp_Ax2(gp_Pnt(), gp_Dir(*direction)))
+    rotation = gp_Trsf()
+    if rotation_axis is not None:
+        rotation.SetRotation(gp_Ax1(gp_Pnt(), gp_Dir(*rotation_axis)), math.pi / 2)
+
+    def project(point):
+        world = gp_Pnt(*point)
+        if rotation_axis is not None:
+            world.Transform(rotation)
+        x, y, _ = projector.Project(world)
+        return left + (x - bounds.xmin) * scale, top + (bounds.ymax - y) * scale
+
+    return project
+
+
 def panel_views(assembly, parts: list[dict]) -> dict[str, str]:
     """Return one inline SVG per physical part, keyed by its stable ID.
 
@@ -54,6 +75,7 @@ def panel_views(assembly, parts: list[dict]) -> dict[str, str]:
         normal = face.normalAt()
         projection = _projected_geometry(shape, normal.toTuple())
         bounds = projection.BoundingBox()
+        rotation_axis = None
         side_map = ".carcass." in part["id"] and part.get("component") in {
             "left_side",
             "right_side",
@@ -61,7 +83,8 @@ def panel_views(assembly, parts: list[dict]) -> dict[str, str]:
         if (side_map and bounds.xlen > bounds.ylen) or (
             not side_map and bounds.ylen > bounds.xlen
         ):
-            shape = shape.rotate((0, 0, 0), normal.toTuple(), 90)
+            rotation_axis = normal.toTuple()
+            shape = shape.rotate((0, 0, 0), rotation_axis, 90)
             face = max(
                 (item for item in shape.Faces() if item.geomType() == "PLANE"),
                 key=lambda item: item.Area(),
@@ -87,9 +110,11 @@ def panel_views(assembly, parts: list[dict]) -> dict[str, str]:
             },
         )
         svg = svg[svg.index("<svg") :]
-        svg = svg.replace('height="200.0"', 'height="255.0"')
+        features = groove_dimensions(part)
+        viewport_height = 255 + 110 * len(features)
+        svg = svg.replace('height="200.0"', f'height="{viewport_height:.1f}"')
         # Scale the full viewport, including dimensions below the CAD outline.
-        svg = svg.replace("<svg", '<svg viewBox="0 0 360 255"', 1)
+        svg = svg.replace("<svg", f'<svg viewBox="0 0 360 {viewport_height}"', 1)
         blank = part.get("blank_mm") or part.get("finished_mm", {})
         dim_y, dim_x = top - 13, left - 16
         callouts = (
@@ -181,7 +206,11 @@ def panel_views(assembly, parts: list[dict]) -> dict[str, str]:
                 f'font-size="10" fill="#222">{blank["length"]:g} × '
                 f"{blank['width']:g} × {blank['thickness']:g} mm</text>"
             )
-        svg = svg.replace("</svg>", callouts + stock_label + "</svg>")
+        project = _svg_projector(
+            normal.toTuple(), bounds, scale, left, top, rotation_axis
+        )
+        machining = groove_callouts(features, project)
+        svg = svg.replace("</svg>", callouts + stock_label + machining + "</svg>")
         views[part["id"]] = svg
     return views
 
@@ -205,6 +234,10 @@ def panel_groups(
         component = part.get("component", part["id"].rsplit(".", 1)[-1])
         assigned = []
         for joint in joints or []:
+            # Space joints are already modeled and included in machining_signature.
+            # Their report graph contains per-instance IDs, not extra processing.
+            if joint.get("type") == "space_domino":
+                continue
             if part["id"] not in joint.get("parts", []):
                 continue
             counterparts = [

@@ -1,6 +1,7 @@
-"""Two plywood cabinets with two side-mounted drawers each."""
+"""Two melamine cabinets with two side-mounted drawers each."""
 
 from cabineteer.layout import CabinetRef, Row
+from cabineteer.operations import DominoRow
 from cabineteer.project import CabinetProject, GrainRule
 from cabineteer.spaces import (
     AppliedDrawerFront,
@@ -17,8 +18,8 @@ from cabineteer.spaces import (
 variables = {
     "observations": [
         "Each cabinet is 1048 mm wide, 679 mm high, and 590 mm deep including fronts.",
-        "Cabinet and drawer parts use 18 mm plywood.",
-        "Each cabinet has two drawers using Ferretti HDSC550V90 slides.",
+        "Carcass parts use 18 mm melamine; drawer walls and fronts use 18 mm plywood.",
+        "Each cabinet has two drawers using Ferretti HDSC500V90 slides.",
     ],
     "assumptions": [
         "The 572 mm body depth includes the back and excludes the 18 mm fronts.",
@@ -26,11 +27,26 @@ variables = {
         "equal-height openings.",
         "Drawer fronts have 2 mm reveals and a 3 mm top reveal; confirm handles.",
         "A 50 mm deep, 18 mm thick rail spans the cabinet front between drawers; "
-        "confirm fastening and support.",
-        "Drawer bottoms use 18 mm plywood in 6 mm deep grooves with a 13 mm "
-        "bottom inset; confirm joinery.",
+        "Domino joints are modeled at both ends; confirm support.",
+        "Drawer bottoms use 12 mm plywood in 6 mm deep grooves with a 13 mm "
+        "bottom inset.",
+        "Drawer boxes are 544 mm deep, leaving 10 mm behind in the 554 mm clear body. "
+        "The 500 mm runner travel leaves the rear 44 mm inside at full travel.",
+        "Domino joints use a declared 6 x 40 mm tenon recipe: 20 x 6 mm obround "
+        "mortises, 12 mm into the side face and 28 mm into the panel end. "
+        "These slot dimensions are design choices, not catalog mortise measurements.",
+        "The back is screw-on and applied fronts need separate fastening; "
+        "no screw holes are modeled.",
         "Slide clearance is modeled as 19.5 mm per side; confirm installation "
         "tolerances, mounting, load conditions and drawer width with the supplier.",
+        "Runner source: https://www.meubelbeslagcenter.nl/"
+        "heavy-duty-softclose-ladegeleiders-500mm-zijmontage . "
+        "The supplier lists HDSC500V90 as a pair, 500 mm long with 500 mm travel, "
+        "19.5 mm thick, 53 mm high, with a 90 kg product rating. "
+        "This is not a cabinet load check.",
+        "Asymmetric 12/28 mm depths for a 40 mm Domino follow the Festool manual: "
+        "https://www.festool.com/-/media/tts/fcp/festool/knowledge/downloads-page/download-brochures/"
+        "manual_domino/versions/festool-domino-manual-april-2016-au-imp-en.pdf .",
         "The model does not check whether the cabinets fit under the window "
         "or support the intended load.",
         "Grain directions are design choices for the shown plywood parts, "
@@ -41,13 +57,14 @@ calculated = {}
 
 _drawer = {
     "height": 270,
+    "depth": 544,
     "bottom_clearance": 10,
     "top_clearance": 10,
     "front_gap": 0,
-    "slide_key": "ferretti_hdsc550v90",
+    "slide_key": "ferretti_hdsc500v90",
     "side_thickness": 18,
     "front_back_thickness": 18,
-    "bottom_thickness": 18,
+    "bottom_thickness": 12,
     "bottom_dado_depth": 6,
     "bottom_dado_inset": 13,
     "material": "plywood",
@@ -64,8 +81,8 @@ cabinet = SpaceCabinetDefinition(
         bottom_thickness=18,
         top_thickness=18,
         back_thickness=18,
-        material="plywood",
-        back_material="plywood",
+        material="melamine",
+        back_material="melamine",
     ),
     root=Space(
         "root",
@@ -73,7 +90,7 @@ cabinet = SpaceCabinetDefinition(
             axis="height",
             children=(
                 Space("lower", Fr(1), content=DrawerBox("box-lower", **_drawer)),
-                Divider("front-rail", depth=50, material="plywood"),
+                Divider("front-rail", depth=50, material="melamine"),
                 Space("upper", Fr(1), content=DrawerBox("box-upper", **_drawer)),
             ),
         ),
@@ -97,9 +114,53 @@ cabinet = SpaceCabinetDefinition(
     ),
 )
 
+
+# Explicit contact pairs; offsets start at the common face overlap minimum.
+def _joint_rows():
+    for instance in ("left", "right"):
+        prefix = f"/cabinet-row/{instance}"
+        for side, face, end_face in (("left", "x+", "x-"), ("right", "x-", "x+")):
+            for panel, positions in (
+                ("carcass/bottom", (70, 480)),
+                ("carcass/top", (70, 480)),
+                ("root/front-rail", (25,)),
+            ):
+                yield DominoRow(
+                    f"{instance}-{side}-{panel.replace('/', '-')}",
+                    f"{prefix}/carcass/side_{side}",
+                    face,
+                    f"{prefix}/{panel}",
+                    end_face,
+                    positions,
+                    "y",
+                    20,
+                    6,
+                    12,
+                    28,
+                )
+        for drawer in ("lower", "upper"):
+            box = f"{prefix}/root/{drawer}/box-{drawer}"
+            for side, face, end_face in (("L", "x+", "x-"), ("R", "x-", "x+")):
+                for end in ("sub_front", "back"):
+                    yield DominoRow(
+                        f"{instance}-{drawer}-{side}-{end}",
+                        f"{box}/side_{side}",
+                        face,
+                        f"{box}/{end}",
+                        end_face,
+                        (60, 210),
+                        "z",
+                        20,
+                        6,
+                        12,
+                        28,
+                    )
+
+
 project = CabinetProject(
     name="two-under-window",
     space_cabinets=(cabinet,),
+    joints=tuple(_joint_rows()),
     layout=Row(
         name="cabinet-row",
         children=(

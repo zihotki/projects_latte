@@ -510,6 +510,39 @@ def _calculate_space_model(project: ProjectInputs) -> Calculation:
         for front in plan.fronts
         if front.get("hinge_key")
     )
+    # Registered Space joint cuts are the source for both reports and hardware.
+    paired_cuts: dict[str, list[dict]] = {}
+    for part in parts:
+        for operation in part.get("operations", []):
+            if operation.get("source") == "joint":
+                paired_cuts.setdefault(operation["joint_id"], []).append(operation)
+    joints = []
+    for joint_id, cuts in sorted(paired_cuts.items()):
+        if len(cuts) != 2 or {cut["joint_side"] for cut in cuts} != {"a", "b"}:
+            raise ValueError(f"{joint_id}: expected two registered joint cuts")
+        joints.append(
+            {
+                "id": joint_id,
+                "type": "space_domino",
+                "parts": [cut["part_id"] for cut in cuts],
+                "mortises": cuts,
+                "slot_mm": {"length": cuts[0]["length"], "width": cuts[0]["width"]},
+                "tenon_length_mm": sum(cut["depth"] for cut in cuts),
+            }
+        )
+    tenon_counts: dict[tuple[float, float], int] = {}
+    for joint in joints:
+        key = (joint["slot_mm"]["width"], joint["tenon_length_mm"])
+        tenon_counts[key] = tenon_counts.get(key, 0) + 1
+    hardware.extend(
+        {
+            "type": "domino",
+            "name": "Domino tenons",
+            "size": f"{width:g} × {length:g}",
+            "quantity": count,
+        }
+        for (width, length), count in sorted(tenon_counts.items())
+    )
     drawer_records = records["viewer"].get("drawers", [])
     dimensions = _space_bounds_size(plan_data["structural_bounds"])
     occupied_dimensions = _space_bounds_size(plan_data["occupied_bounds"])
@@ -555,7 +588,7 @@ def _calculate_space_model(project: ProjectInputs) -> Calculation:
         "upper_cabinets": [],
         "parts": parts,
         "drawers": drawer_records,
-        "joints": [],
+        "joints": joints,
         "hardware": hardware,
         "checks": [
             {

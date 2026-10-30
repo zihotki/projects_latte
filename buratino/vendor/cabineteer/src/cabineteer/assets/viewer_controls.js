@@ -913,6 +913,10 @@ function collectDrawerPartNodes() {
 
 function drawerPoseDistance(part) {
   const drawer = result.drawers?.find(item => item.instance_id === part.instance_id);
+  const runnerTravel = Number(drawer?.runner_travel_mm);
+  if (Number.isFinite(runnerTravel) && runnerTravel > 0) {
+    return {distance: runnerTravel, basis: 'published runner travel'};
+  }
   const drawerDepth = Number(drawer?.box_mm?.depth);
   if (Number.isFinite(drawerDepth) && drawerDepth > 0) {
     return {distance: drawerDepth, basis: 'nominal drawer depth'};

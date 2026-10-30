@@ -310,3 +310,68 @@ def test_stopped_mortise_length_cannot_be_null():
             [Mortise("m", "/a", "x+", 50, 50, "u", None, 8, 5)],
             [],
         )
+
+
+def test_domino_row_uses_translated_contact_overlap():
+    from cabineteer.operations import DominoRow
+
+    parts = [
+        part("/a", [100, 200, 300], [18, 100, 200]),
+        part("/b", [118, 220, 330], [80, 60, 140]),
+    ]
+    row = DominoRow("row", "/a", "x+", "/b", "x-", (20, 40), "y", 20, 6, 12, 28)
+    cuts = resolve_operations(parts, [], [row])
+    assert [(op["joint_id"], op["part_id"], op["u"], op["v"]) for op in cuts] == [
+        ("row-20", "/a", 40, 100), ("row-40", "/a", 60, 100),
+        ("row-20", "/b", 20, 70), ("row-40", "/b", 40, 70),
+    ]
+    # Expansion reuses the same two-mortise resolver as explicit world centres.
+    explicit = [replace(DominoJoint("row", "/a", "x+", "/b", "x-",
+                                    (118, 240, 400), "y", 20, 6, 12, 28),
+                        id=f"row-{offset}", centre=(118, 220 + offset, 400))
+                for offset in (20, 40)]
+    assert cuts == resolve_operations(parts, [], explicit)
+
+
+@pytest.mark.parametrize("change", [
+    {"face_b": "x+"}, {"axis": "x"}, {"positions": ()},
+    {"positions": (float("nan"),)}, {"positions": (-1,)},
+    {"positions": (61,)}, {"positions": (0,)}, {"positions": (20, 20)},
+    {"length": 80},
+])
+def test_domino_row_rejects_invalid_pattern_or_slot(change):
+    from cabineteer.operations import DominoRow
+
+    parts = [part("/a", [0, 0, 0], [18, 100, 200]),
+             part("/b", [18, 20, 30], [80, 60, 140])]
+    row = DominoRow("row", "/a", "x+", "/b", "x-", (20,), "y", 20, 6, 12, 28)
+    with pytest.raises(ValueError):
+        resolve_operations(parts, [], [replace(row, **change)])
+
+
+@pytest.mark.parametrize("origin", [[19, 20, 30], [18, 120, 30]])
+def test_domino_row_requires_coincident_overlapping_faces(origin):
+    from cabineteer.operations import DominoRow
+
+    parts = [part("/a", [0, 0, 0], [18, 100, 200]),
+             part("/b", origin, [80, 60, 140])]
+    row = DominoRow("row", "/a", "x+", "/b", "x-", (20,), "y", 20, 6, 12, 28)
+    with pytest.raises(ValueError, match="coincident|overlap"):
+        resolve_operations(parts, [], [row])
+
+
+def test_domino_row_project_and_schema_round_trip():
+    from cabineteer.operations import DominoRow
+    from cabineteer.server import _machining_schema
+
+    row = DominoRow("row", "/cabinet/carcass/side_left", "x+", "/cabinet/carcass/top", "x-",
+                    (70, 480), "y", 20, 6, 12, 28)
+    project = CabinetProject(name="row", space_model=SpaceModelSpec(
+        Carcass(1048, 679, 572, back_thickness=18), Space("root")), joints=(row,))
+    encoded = project_to_dict(project)
+    assert project_to_dict(project_from_dict(encoded)) == encoded
+    assert len(project_from_dict(encoded).resolved_space_model().part_plan.parts) == 5
+    schemas = {item["properties"]["type"]["enum"][0]: item
+               for item in _machining_schema(joints=True)["items"]["oneOf"]}
+    assert schemas["DominoRow"]["properties"]["positions"]["uniqueItems"] is True
+    assert set(schemas["DominoRow"]["required"]) == set(schemas["DominoRow"]["properties"])

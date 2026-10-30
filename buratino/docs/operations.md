@@ -113,6 +113,10 @@ DominoJoint(
     id, part_a, face_a, part_b, face_b, centre, axis,
     length, width, depth_a, depth_b,
 )
+DominoRow(
+    id, part_a, face_a, part_b, face_b, positions, axis,
+    length, width, depth_a, depth_b,
+)
 ```
 
 `Pocket` removes a rectangular prism. `Rabbet` names an adjacent edge; width
@@ -129,6 +133,13 @@ one paired joint with one world-space centre, one world-space axis, common
 length and width, and explicit depth for each part. The resolver creates one
 mortise record on each part. It does not choose a Domino size.
 
+`DominoRow` places several such pairs on the common overlap of two opposed,
+coincident faces. `positions` gives offsets along the world `axis` from the
+minimum of that overlap. The other face coordinate is the overlap midpoint.
+For example, `positions=(70, 480), axis="y"` places two pairs along the contact
+face depth. Each pair has the stable ID `<row id>-<position>`. Both slots must
+fit their parts; the row does not select contact faces or joint dimensions.
+
 Every footprint and depth must fit the unmachined stock. A joint needs
 coincident contact faces and a registered pair. The resolver rejects unknown
 or ambiguous part IDs, duplicate IDs, non-box profiles, invalid dimensions,
@@ -141,7 +152,8 @@ and unsupported transforms.
 ```
 
 Open the revision directory printed by the command. Its `result.json` has the
-operation records on each part, and its `report.html` has the per-part
-machining table. `blank_mm` reports the original stock. A machined part has no
+operation records on each part. `report.html` and the assembly guide in
+`assembly.html` show dimensioned part drawings and machining captions.
+`blank_mm` reports the original stock. A machined part has no
 verified `finished_mm` dimensions. These records do not confirm tooling, fit,
 hardware, installation, or manufacturing readiness.
