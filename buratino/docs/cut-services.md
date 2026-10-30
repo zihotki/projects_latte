@@ -1,5 +1,17 @@
 # Cut-service exports
 
+Each build includes provider downloads at `report.html#cutlists`. The report
+lists one CSV per material, panel type and thickness group (with separate files
+when a provider limit requires a split). It shows panel counts and export issues,
+including omitted source records. The CSV files and their `index.json` source
+traces are captured under `build/REVISION/cutlists/PROVIDER/` and remain with
+that build. `parts.csv` is secondary internal parts data.
+
+Report downloads use the default export configuration. To set custom material,
+grain or finish options, use the CLI below with `--config`. These settings do
+not change existing report downloads. Select and check the actual material
+product on the provider website.
+
 Export the latest validated build. The command reads its captured result and
 does not run CAD or change the build:
 

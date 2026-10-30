@@ -55,6 +55,19 @@ def test_build_captures_consistent_outputs_without_editing_inputs(root, project)
     assert "cdn.jsdelivr.net" not in viewer
     assert (directory / "assets/three/examples/jsm/loaders/GLTFLoader.js").is_file()
     assert (directory / "cabinet.glb").read_bytes()[:4] == b"glTF"
+    assert '"cutlist": "report.html#cutlists"' in viewer
+    assert ">Cut lists</a>" in viewer
+    assert 'id="cutlists"' in report and 'href="parts.csv">Parts data</a>' in report
+    assert "DRAFT — NOT FOR MANUFACTURING" not in report + assembly
+    assert result["source_revision"] == manifest["revision"]
+    for provider in ("zagenzagen", "opmaatzagen"):
+        index_path = f"cutlists/{provider}/index.json"
+        assert index_path in manifest["files"]
+        index = read_json(directory / index_path)
+        assert index["source_revision"] == manifest["revision"]
+        assert sum(group["quantity"] for group in index["groups"]) == 5
+        for name in index["files"]:
+            assert f"cutlists/{provider}/{name}" in manifest["files"]
     first_hashes = dict(manifest["files"])
     second = build.build_project(root, project)
     assert second["revision"] != outcome["revision"]

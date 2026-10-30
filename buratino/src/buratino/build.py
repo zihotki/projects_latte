@@ -11,6 +11,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .cut_service_report import write_cutlists
 from .engine import calculate, make_geometry
 from .environment import doctor, file_hash, read_json
 from .grouping import group_cutting_blanks
@@ -119,7 +120,6 @@ def _page(title: str, content: str) -> str:
         "color:#243233;background:#fafaf7}h1{line-height:1.2}"
         "table{border-collapse:collapse;width:100%;font-size:14px}"
         "td,th{padding:10px;text-align:left;border-bottom:1px solid #d8dcd6}"
-        ".draft{padding:16px;background:#fff0d4;border-left:5px solid #b77419}"
         "a{color:#226458}code{overflow-wrap:anywhere}"
         ".panel{border-top:1px solid #d8dcd6;padding:12px 0}"
         ".panel-drawing{display:flex;flex-direction:column;align-items:center;"
@@ -128,9 +128,8 @@ def _page(title: str, content: str) -> str:
         ".panel-drawing svg rect{fill:#fff;stroke:#333}"
         ".panel-dimensions{font-weight:600;font-size:13px;"
         "margin:4px 8px 8px;text-align:center}"
-        "@media print{body{margin:0}.draft{border:2px solid #444}}"
-        "</style><body><p class='draft'><strong>"
-        "DRAFT — NOT FOR MANUFACTURING.</strong></p>"
+        "@media print{body{margin:0}}"
+        "</style><body>"
         f"<h1>{html.escape(title)}</h1>{content}</body></html>"
     )
 
@@ -796,12 +795,11 @@ def render_documents(
         + _physical_validation_summary(result)
         + (
             '<p><a href="preview.html">Inspect 3D model</a> · '
-            '<a href="parts.csv">Draft cut list</a> · '
+            '<a href="report.html#cutlists">Cut lists</a> · '
             '<a href="assembly.html">Draft assembly guide</a> · '
             '<a href="result.json">Calculation JSON</a></p>'
         )
         + _table(cut_groups, part_codes)
-        + (f"<h2>Calculation errors</h2><ul>{checks}</ul>" if checks else "")
         + (
             "<h2>Hardware requirements</h2>"
             + _hardware_table(result, part_codes, diagnostics=False)
@@ -824,7 +822,7 @@ def render_documents(
             + _space_model_summary(result)
             + _physical_validation_summary(result)
             + '<p><a href="preview.html">Inspect 3D model</a> · '
-            '<a href="parts.csv">Draft cut list</a> · '
+            '<a href="report.html#cutlists">Cut lists</a> · '
             '<a href="result.json">Calculation JSON</a></p>'
             + _table(cut_groups, part_codes)
             + _space_operations_table(result["parts"])
@@ -862,7 +860,7 @@ def render_documents(
             f"<p>Occupied dimensions: {dims['width']:g} × {dims['height']:g} × "
             f"{dims['depth']:g} mm.</p>"
             '<p><a href="preview.html">Inspect 3D model</a> · '
-            '<a href="parts.csv">Draft cut list</a> · '
+            '<a href="report.html#cutlists">Cut lists</a> · '
             '<a href="result.json">Calculation JSON</a></p>'
             + _table(cut_groups, part_codes)
             + native_operations
@@ -871,6 +869,12 @@ def render_documents(
             + "<p>Hardware, support, joinery and installation "
             "remain unverified.</p>"
         )
+    content = (
+        write_cutlists(directory, result, part_codes)
+        + (f"<h2>Calculation errors</h2><ul>{checks}</ul>" if checks else "")
+        + content
+        + '<p><a href="parts.csv">Parts data</a> — internal part records.</p>'
+    )
     (directory / "report.html").write_text(
         _page(result["name"], content), encoding="utf-8"
     )
@@ -970,7 +974,7 @@ def render_geometry(root: Path, directory: Path, calculation):
     viewer_data = {
         **calculation.result,
         "title": calculation.result.get("name", "Cabinet preview"),
-        "viewer_links": {"report": "report.html", "cutlist": "parts.csv"},
+        "viewer_links": {"report": "report.html", "cutlist": "report.html#cutlists"},
     }
     assembly_viewer = calculation.result.get("assembly", {}).get("viewer")
     if assembly_viewer:
@@ -1062,6 +1066,7 @@ def build_project(
         os.write(descriptor, str(os.getpid()).encode())
         os.close(descriptor)
         stage.mkdir()
+        calculation.result["source_revision"] = revision
         write_json(stage / "result.json", calculation.result)
         snapshots = stage / "inputs"
         snapshots.mkdir()

@@ -1337,7 +1337,7 @@ def _build_html(
   <div id="loading">Loading model…</div>
 
   <header id="viewer-toolbar" aria-label="Cabinet viewer controls">
-    <div class="toolbar-heading"><strong id="project-title">{safe_title}</strong><small id="project-dimensions">3D cabinet</small><span id="draft-badge" data-state="current" hidden></span><a id="report-link" href="report.html" hidden>Report</a><a id="cutlist-link" href="parts.csv" hidden>Cut list</a></div>
+    <div class="toolbar-heading"><strong id="project-title">{safe_title}</strong><small id="project-dimensions">3D cabinet</small><span id="draft-badge" data-state="current" hidden></span><a id="report-link" href="report.html" hidden>Report</a><a id="cutlist-link" href="report.html#cutlists" hidden>Cut lists</a></div>
     <div class="toolbar" aria-label="Views">
       <button type="button" data-view="iso">Iso</button><button type="button" data-view="front">Front</button><button type="button" data-view="side">Side</button><button type="button" data-view="top">Top</button>
       <button id="tree-tab" type="button" role="tab" aria-selected="false">Model</button><button id="parts-tab" type="button" role="tab" aria-selected="false">Parts</button><button id="settings-tab" type="button" role="tab" aria-selected="false">Settings</button>

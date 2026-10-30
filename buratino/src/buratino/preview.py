@@ -541,7 +541,14 @@ def preview_server(
 
             listed_files = set(manifest["files"])
             allowed = (public_files & listed_files) | {
-                name for name in listed_files if name.startswith("assets/")
+                name
+                for name in listed_files
+                if name.startswith("assets/")
+                or re.fullmatch(
+                    r"cutlists/(zagenzagen|opmaatzagen)/"
+                    r"(?:[a-z0-9][a-z0-9.-]*\.csv|index\.json)",
+                    name,
+                )
             }
             if relative not in allowed:
                 self.send_error(404)
