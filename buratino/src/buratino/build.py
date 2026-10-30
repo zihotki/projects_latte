@@ -15,6 +15,7 @@ from .cut_service_report import write_cutlists
 from .engine import calculate, make_geometry
 from .environment import doctor, file_hash, read_json
 from .grouping import group_cutting_blanks
+from .machining_notes import machining_notes
 from .project import (
     InputError,
     input_identity,
@@ -61,6 +62,10 @@ def _coded_groups(
 
 def _part_label(part: dict) -> str:
     component = part.get("component", "panel").replace("_", " ")
+    if component == "carcass":
+        component = part["id"].rsplit("/", 1)[-1].replace("_", " ")
+    if component.startswith("drawer "):
+        return component.replace("drawer ", "Drawer ", 1)
     ident = part.get("id", "")
     if ident.startswith("frame."):
         return "Frame rail"
@@ -123,7 +128,10 @@ def _page(title: str, content: str) -> str:
         "a{color:#226458}code{overflow-wrap:anywhere}"
         ".panel{border-top:1px solid #d8dcd6;padding:12px 0}"
         ".panel-drawing{display:flex;flex-direction:column;align-items:center;"
-        "width:620px;max-width:100%;background:white;border:1px solid #d8dcd6}"
+        "width:620px;max-width:100%;margin:0;background:white;"
+        "border:1px solid #d8dcd6}"
+        ".panel-drawing figcaption{padding:0 16px;font-size:14px;width:100%;"
+        "box-sizing:border-box}"
         ".panel-drawing svg{display:block;width:100%;max-width:600px;height:auto}"
         ".panel-drawing svg rect{fill:#fff;stroke:#333}"
         ".panel-dimensions{font-weight:600;font-size:13px;"
@@ -160,10 +168,10 @@ def _drawer_summary(result: dict) -> str:
     panel_count = sum(part.get("quantity", 1) for part in result["parts"])
     if any("face_mm" not in drawer for drawer in drawers):
         rows = []
-        for drawer in drawers:
+        for index, drawer in enumerate(drawers, start=1):
             box = drawer.get("box_mm", {})
             rows.append(
-                f"<li>{html.escape(drawer.get('instance_id', 'Drawer'))}: "
+                f"<li>Drawer {index}: "
                 f"box {box.get('width', 0):g} × {box.get('depth', 0):g} × "
                 f"{box.get('height', 0):g} mm.</li>"
             )
@@ -199,160 +207,6 @@ def _drawer_summary(result: dict) -> str:
             ).items()
         )
         + "</ul>"
-    )
-
-
-def _space_model_summary(result: dict) -> str:
-    model = result.get("space_plan") or result.get("space_model")
-    if not model:
-        return ""
-    rows = []
-    for space in model.get("spaces", []):
-        size = space["size"]
-        origin = space["origin"]
-        rows.append(
-            f"<li>{html.escape(space['id'])}: {size[0]:g} wide × "
-            f"{size[1]:g} deep × {size[2]:g} high mm; "
-            f"origin {origin[0]:g}, {origin[1]:g}, {origin[2]:g} mm.</li>"
-        )
-    allowances = "".join(
-        f"<li>{html.escape(item['owner'])}: {item['size'][0]:g} × "
-        f"{item['size'][1]:g} × {item['size'][2]:g} mm at "
-        f"{html.escape(item['edge'])} edge.</li>"
-        for item in model.get("allowances", [])
-    )
-    fronts = "".join(
-        f"<li>{html.escape(front.get('id', front.get('name', 'Front')))}: "
-        f"{html.escape(front.get('type') or 'front')}; "
-        f"hinge side {html.escape(front.get('hinge_side') or 'not applicable')}; "
-        f"motion group {html.escape(front.get('motion_group') or 'none')}.</li>"
-        for front in model.get("fronts", [])
-    )
-    placements = "".join(
-        f"<li>{html.escape(item.get('id', 'Instance'))}: origin "
-        f"{html.escape(str(item.get('origin', [])))} mm; size "
-        f"{html.escape(str(item.get('size', [])))} mm.</li>"
-        for item in model.get("placements", [])
-    )
-    allocations = "".join(
-        f"<li>{html.escape(item.get('path', item.get('id', 'Allocation')))}: "
-        f"{item.get('used_span', 0):g} mm used, {item.get('slack', 0):g} mm slack, "
-        f"{item.get('used_span', 0) + item.get('slack', 0):g} mm available.</li>"
-        for item in model.get("allocations", [])
-    )
-    diagnostics = "".join(
-        f"<li>{html.escape(item.get('code', 'diagnostic'))}: "
-        f"{html.escape(item.get('message', str(item)))}</li>"
-        for item in model.get("diagnostics", [])
-    )
-    return (
-        f"<p>Resolved native plan version {result.get('plan_version', 'unknown')}. "
-        "Structural and occupied dimensions come from the resolved plan.</p>"
-        "<h2>Resolved spaces</h2><ul>"
-        + "".join(rows)
-        + "</ul>"
-        + ("<h2>Placements</h2><ul>" + placements + "</ul>" if placements else "")
-        + ("<h2>Allocations</h2><ul>" + allocations + "</ul>" if allocations else "")
-        + ("<h2>Allowance</h2><ul>" + allowances + "</ul>" if allowances else "")
-        + ("<h2>Fronts</h2><ul>" + fronts + "</ul>" if fronts else "")
-        + (
-            "<h2>Plan diagnostics</h2><ul>" + diagnostics + "</ul>"
-            if diagnostics
-            else ""
-        )
-    )
-
-
-def _space_operations_table(parts: list[dict]) -> str:
-    """Render resolved Space cuts as a readable per-part manufacturing table."""
-    rows = []
-    for part in parts:
-        for operation in part.get("operations", []):
-            dimensions = {
-                key: value
-                for key, value in operation.items()
-                if key
-                not in {
-                    "id",
-                    "part_id",
-                    "type",
-                    "input_type",
-                    "groove",
-                    "source",
-                    "face",
-                    "edge",
-                    "joint_id",
-                    "joint_side",
-                    "role",
-                    "axis",
-                }
-                and isinstance(value, int | float)
-                and not isinstance(value, bool)
-            }
-            if operation.get("input_type") == "groove":
-                groove = operation["groove"]
-                dimensions.update(
-                    offset=groove["offset"],
-                    groove_start=groove["start"],
-                    groove_length=groove["length"],
-                )
-            references = [
-                str(operation[key])
-                for key in ("face", "edge", "axis")
-                if operation.get(key) is not None
-            ]
-            if operation.get("input_type") == "groove":
-                references.append(str(operation["groove"]["edge"]))
-            pairing = ""
-            if operation.get("joint_id"):
-                pairing = (
-                    f"{operation['joint_id']} ({operation.get('joint_side', '?')})"
-                )
-            dimension_text = ", ".join(
-                f"{key} {value:g} mm" for key, value in dimensions.items()
-            )
-            operation_type = operation.get("input_type", operation.get("type", ""))
-            rows.append(
-                "<tr>"
-                f"<td>{html.escape(part['id'])}</td>"
-                f"<td>{html.escape(str(operation.get('id', '')))}</td>"
-                f"<td>{html.escape(str(operation_type).title())}</td>"
-                f"<td>{html.escape(str(operation.get('source', '')))}</td>"
-                f"<td>{html.escape(', '.join(references))}</td>"
-                f"<td>{html.escape(dimension_text)}</td>"
-                f"<td>{html.escape(pairing)}</td></tr>"
-            )
-    if not rows:
-        return ""
-    return (
-        "<h2>Resolved machining operations</h2>"
-        "<p>Coordinates use each part's unmachined stock minimum XYZ corner. "
-        "Face coordinates use the remaining axes in ascending XYZ order. "
-        "Depth runs inward from the selected face. Dimensions are mm.</p>"
-        "<table><thead><tr><th>Part</th><th>Record ID</th><th>Type</th>"
-        "<th>Source</th><th>Face, edge, or axis</th><th>Dimensions</th>"
-        "<th>Joint pair</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
-    )
-
-
-def _physical_validation_summary(result: dict) -> str:
-    validation = result.get("physical_validation")
-    if not validation:
-        return ""
-    diagnostics = "".join(
-        "<li>"
-        + html.escape(item.get("code", "physical_validation"))
-        + ": "
-        + html.escape(", ".join(item.get("part_ids", [])) or "No part IDs")
-        + "</li>"
-        for item in validation.get("diagnostics", [])
-    )
-    details = f"<ul>{diagnostics}</ul>" if diagnostics else "<p>No CAD diagnostics.</p>"
-    return (
-        "<h2>Physical validation</h2><p>Status: "
-        + html.escape(validation.get("status", "unknown"))
-        + "</p>"
-        + details
     )
 
 
@@ -440,43 +294,6 @@ def _hardware_table(
         "<table><thead><tr><th>Hardware requirement</th><th>Details</th></tr>"
         "</thead><tbody>" + "".join(rows) + "</tbody></table>"
     )
-
-
-def _map_legend(cabinet_id: str, part_codes: dict[str, str]) -> str:
-    entries = [
-        f"{label}: {html.escape(part_codes[part_id])}"
-        for label, part_id in (
-            ("Top", f"{cabinet_id}.carcass.top"),
-            ("Bottom", f"{cabinet_id}.carcass.bottom"),
-        )
-        if part_id in part_codes
-    ]
-    return f"<p>Map part codes — {'; '.join(entries)}.</p>" if entries else ""
-
-
-def _candidate_maps(configs, cabinets, part_codes, generate) -> str:
-    grouped = {}
-    for cfg, cabinet in zip(configs, cabinets, strict=True):
-        cabinet_id = cabinet["id"]
-        codes = tuple(
-            part_codes.get(f"{cabinet_id}.carcass.{component}")
-            for component in ("top", "bottom")
-        )
-        # A common title makes the complete generated map comparable, including
-        # its geometry and settings. Missing codes cannot establish equivalence.
-        markup = generate(cfg, "Cabinet")
-        key = (codes, markup) if all(codes) else (codes, markup, cabinet_id)
-        if key not in grouped:
-            grouped[key] = [cabinet_id, []]
-        grouped[key][1].append(cabinet_id)
-    sections = []
-    for key, (first_id, names) in grouped.items():
-        sections.append(
-            f"<p>Cabinets: {html.escape(', '.join(names))}.</p>"
-            + _map_legend(first_id, part_codes)
-            + key[1]
-        )
-    return "".join(sections) or "<p>Candidate carcass maps are unavailable.</p>"
 
 
 def _mortise_summary(
@@ -769,114 +586,15 @@ def render_documents(
                 }
             )
         (directory / "parts.csv").write_text(buffer.getvalue(), encoding="utf-8")
-    unique_checks = {
-        (issue["severity"], issue["code"], issue["message"])
-        for issue in result["checks"]
-        if issue["severity"] == "error"
-    }
-    part_codes = {part["id"]: code for code, members in groups for part in members}
-    checks = "".join(
-        f"<li><strong>{html.escape(severity)}: {html.escape(code)}</strong>"
-        f" — {html.escape(message)}</li>"
-        for severity, code, message in sorted(unique_checks)
-    )
-    mortise_summary = _mortise_summary(
-        configs, result["cabinets"], result["joints"], result.get("domino_machining")
+    navigation = (
+        '<nav aria-label="Report navigation"><a href="preview.html">Model</a> · '
+        '<a href="report.html#cutlists">Cut lists</a> · '
+        '<a href="assembly.html">Assembly guide</a></nav>'
     )
     dims = result["dimensions_mm"]
-    dimension_label = (
-        "Carcass dimensions" if result.get("drawers") else "Cabinet dimensions"
-    )
-    content = (
-        f"<p>{dimension_label}: {dims['width']:g} wide × {dims['height']:g} high × "
-        f"{dims['depth']:g} deep, mm.</p>"
-        + _drawer_summary(result)
-        + _space_model_summary(result)
-        + _physical_validation_summary(result)
-        + (
-            '<p><a href="preview.html">Inspect 3D model</a> · '
-            '<a href="report.html#cutlists">Cut lists</a> · '
-            '<a href="assembly.html">Draft assembly guide</a> · '
-            '<a href="result.json">Calculation JSON</a></p>'
-        )
-        + _table(cut_groups, part_codes)
-        + (
-            "<h2>Hardware requirements</h2>"
-            + _hardware_table(result, part_codes, diagnostics=False)
-            if result.get("drawers")
-            else ""
-        )
-        + "<h2>Carcass mortise layout</h2>"
-        + mortise_summary
-        + "<h2>Dimension rules</h2><ul>"
-        + "".join(
-            f"<li>{html.escape(text)}</li>" for text in result["explanations"].values()
-        )
-        + f"</ul><p>Input identity: <code>{result['input_identity']}</code></p>"
-    )
-    native_operations = ""
-    if result.get("space_model"):
-        content = (
-            f"<p>Carcass dimensions: {dims['width']:g} × {dims['height']:g} × "
-            f"{dims['depth']:g} mm.</p>"
-            + _space_model_summary(result)
-            + _physical_validation_summary(result)
-            + '<p><a href="preview.html">Inspect 3D model</a> · '
-            '<a href="report.html#cutlists">Cut lists</a> · '
-            '<a href="result.json">Calculation JSON</a></p>'
-            + _table(cut_groups, part_codes)
-            + _space_operations_table(result["parts"])
-            + "<h2>Selected hardware</h2>"
-            + _hardware_table(result, part_codes, diagnostics=False)
-        )
-    elif result.get("assembly"):
-        operations = []
-        for part in result["assembly"]["parts"]:
-            for operation in part["operations"]:
-                details = ""
-                if operation["kind"] == "pocket":
-                    points = "; ".join(
-                        "(" + ", ".join(f"{value:g}" for value in point) + ")"
-                        for point in operation["local_profile_mm"]
-                    )
-                    inward = ", ".join(
-                        f"{value:g}" for value in operation["inward_axis_local"]
-                    )
-                    details = (
-                        f"; {html.escape(operation['role'])}; "
-                        f"face polygon in stock L/W/T (mm): {points}; "
-                        f"depth {operation['depth_mm']:g} mm; inward ({inward}) "
-                    )
-                operations.append(
-                    f"<li>{html.escape(part['id'])}: "
-                    f"{html.escape(operation['kind'])} on "
-                    f"{html.escape(operation['target'])} {details}"
-                    f"({html.escape(operation['status'])})</li>"
-                )
-        native_operations = (
-            "<h2>Profile operations</h2><ul>" + "".join(operations) + "</ul>"
-        )
-        content = (
-            f"<p>Occupied dimensions: {dims['width']:g} × {dims['height']:g} × "
-            f"{dims['depth']:g} mm.</p>"
-            '<p><a href="preview.html">Inspect 3D model</a> · '
-            '<a href="report.html#cutlists">Cut lists</a> · '
-            '<a href="result.json">Calculation JSON</a></p>'
-            + _table(cut_groups, part_codes)
-            + native_operations
-            + "<h2>Selected hardware</h2>"
-            + _hardware_table(result, part_codes, diagnostics=False)
-            + "<p>Hardware, support, joinery and installation "
-            "remain unverified.</p>"
-        )
-    content = (
-        write_cutlists(directory, result, part_codes)
-        + (f"<h2>Calculation errors</h2><ul>{checks}</ul>" if checks else "")
-        + content
-        + '<p><a href="parts.csv">Parts data</a> — internal part records.</p>'
-    )
-    (directory / "report.html").write_text(
-        _page(result["name"], content), encoding="utf-8"
+    overview = (
+        f"<p>Dimensions: {dims['width']:g} wide × {dims['height']:g} high × "
+        f"{dims['depth']:g} deep, mm.</p>" + _drawer_summary(result)
     )
     joint_lines = set()
     for joint in result["joints"]:
@@ -922,48 +640,80 @@ def render_documents(
             previous_prefix = prefix
         view = views_by_part.get(part["id"])
         mortise_map = panel_maps.get(part["id"])
-        illustration = mortise_map or view or "<p>Panel view unavailable.</p>"
-        if part["id"] in drawer_rows and part["component"] == "back" and view:
-            illustration += "<p>CAD profile</p>" + view
+        illustration = view or mortise_map or "<p>Panel view unavailable.</p>"
+        if mortise_map and view:
+            illustration += "<p>Mortise center positions</p>" + mortise_map
         quantity = sum(member.get("quantity", 1) for member in members)
         count = f" × {quantity}" if quantity > 1 else ""
+        blank = part.get("blank_mm") or part.get("finished_mm", {})
+        notes = machining_notes(part)
+        caption = (
+            "<ul class='machining-dimensions'>"
+            + "".join(f"<li>{html.escape(note)}</li>" for note in notes)
+            + "</ul>"
+            if notes
+            else ""
+        )
         panel_sections.append(
             f"<section class='panel'><h5>{html.escape(code)} — "
             f"{html.escape(_group_label(members))}{count}</h5>"
-            f"<div class='panel-drawing'>{illustration}</div>" + "</section>"
+            f"<p>Quantity: {quantity}. Stock: {blank['length']:g} × "
+            f"{blank['width']:g} × {blank['thickness']:g} mm.</p>"
+            f"<figure class='panel-drawing'>{illustration}"
+            f"<figcaption>{caption}</figcaption></figure></section>"
         )
-    assembly = (
-        "<p>Dimensions are in millimetres. Mortise marks show center positions.</p>"
-        + "<h2>Carcass mortise layout</h2>"
-        + _mortise_summary(
+    drawings = (
+        "<h2>Part drawings</h2>"
+        "<p>Dimensions are in millimetres. Dashed edges show hidden cuts. "
+        "For stock XYZ, measure from the uncut stock minimum corner. "
+        "Face U/V follow the other two XYZ axes in order; depth runs inward. "
+        "For stock L/W/T, L is length, W is width and T is thickness.</p>"
+        + "".join(panel_sections)
+    )
+    mortises = (
+        _mortise_summary(
             configs,
             result["cabinets"],
             result["joints"],
             result.get("domino_machining"),
             concise=True,
         )
-        + "<h2>Joint requirements</h2><ul>"
-        + joints
-        + "</ul>"
-        + "<h2>Modeled panels</h2>"
-        + "".join(panel_sections)
-        + (
-            "<h2>Drawer hardware and assembly limits</h2>"
-            + _hardware_table(result, part_codes, diagnostics=False)
-            if result.get("drawers")
-            else ""
-        )
-        + "<p><a href='report.html'>Return to the review report</a></p>"
+        if configs
+        else ""
     )
-    if result.get("assembly"):
-        assembly = (
-            "<p>Assembly and installation are unverified. See the modeled "
-            "panel profiles in the calculation JSON.</p>"
-            + native_operations
-            + "".join(panel_sections)
-        )
+    joinery = "<h2>Carcass mortise layout</h2>" + mortises if mortises else ""
+    if joints:
+        joinery += "<h2>Joint requirements</h2><ul>" + joints + "</ul>"
+    hardware = (
+        "<h2>Hardware requirements</h2>"
+        + _hardware_table(result, part_codes, diagnostics=False)
+        if result.get("hardware")
+        else ""
+    )
+    content = (
+        navigation
+        + overview
+        + write_cutlists(directory, result, part_codes)
+        + "<h2>Parts</h2>"
+        + _table(cut_groups, part_codes)
+        + drawings
+        + hardware
+        + '<p><a href="parts.csv">Parts data</a> · '
+        '<a href="result.json">Calculation JSON</a></p>'
+    )
+    (directory / "report.html").write_text(
+        _page(result["name"], content), encoding="utf-8"
+    )
+    assembly = (
+        navigation
+        + overview
+        + joinery
+        + drawings
+        + hardware
+        + '<p><a href="report.html">Return to the report</a></p>'
+    )
     (directory / "assembly.html").write_text(
-        _page("Draft cabinet assembly", assembly), encoding="utf-8"
+        _page("Assembly guide", assembly), encoding="utf-8"
     )
 
 

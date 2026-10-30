@@ -5,9 +5,10 @@ from types import SimpleNamespace
 
 import cadquery as cq
 
-from buratino.build import _space_operations_table, render_documents, render_geometry
+from buratino.build import render_documents, render_geometry
 from buratino.engine import calculate
 from buratino.grouping import group_cutting_blanks
+from buratino.machining_notes import machining_notes
 from buratino.panel_views import panel_groups
 from buratino.project import load_project
 
@@ -85,21 +86,15 @@ def test_machined_space_report_uses_resolved_records_and_keeps_stock_as_blank(ro
         for part in machined
     )
 
-    table = _space_operations_table(result["parts"])
-    groove = next(
-        operation
-        for part in machined
-        for operation in part["operations"]
-        if operation.get("input_type") == "groove"
-    )
-    assert "Resolved machining operations" in table
-    assert "joint/side-to-back/a" in table
-    assert "user/side-edge-bore" in table
-    assert ">Groove<" in table
-    assert "offset 320 mm" in table
-    assert f"groove_length {groove['groove']['length']:g} mm" in table
-    assert "unmachined stock minimum XYZ corner" in table
-    assert "Depth runs inward" in table
+    notes = " ".join(note for part in machined for note in machining_notes(part))
+    assert "Groove: 6 mm wide × 2 mm deep" in notes
+    assert "offset 320 mm from z- edge" in notes
+    assert "Bore: diameter 5 mm; depth 10 mm; center U 9, V 250 mm" in notes
+    assert "face y- (stock XYZ)" in notes
+    assert "Rebate: 6 mm wide × 4 mm deep" in notes
+    assert "Bevel: legs 6 × 4 mm" in notes
+    assert "Bottom groove: 12 mm wide × 6 mm deep; bottom inset 13 mm" in notes
+    assert "joint/" not in notes and "user/" not in notes
 
 
 def test_cutting_groups_keep_parts_with_different_cuts_apart():

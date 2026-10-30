@@ -459,7 +459,7 @@ def test_panel_groups_split_when_candidate_positions_differ(root, tmp_path):
     assert assembly.count("EDGE mortise centers from BACK (mm)") == 2
 
 
-def test_review_report_shows_errors_without_unknown_check_list(root, tmp_path):
+def test_report_keeps_calculation_checks_in_data(root, tmp_path):
     from buratino.engine import calculate
 
     result = calculate(load_project(root / "projects/simple-cabinet")).result
@@ -469,7 +469,8 @@ def test_review_report_shows_errors_without_unknown_check_list(root, tmp_path):
     ]
     build.render_documents(tmp_path, result)
     report = (tmp_path / "report.html").read_text()
-    assert "Panel does not fit" in report
+    assert "Panel does not fit" not in report
+    assert result["checks"][1]["code"] == "bad_fit"
     assert "Unknown detail" not in report
     assert "Checks and open inputs" not in report
 

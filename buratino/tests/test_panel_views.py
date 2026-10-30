@@ -1,3 +1,5 @@
+from xml.etree import ElementTree
+
 import cadquery as cq
 import pytest
 
@@ -18,6 +20,10 @@ def test_curved_panel_has_projected_dimensions():
     }
     view = panel_views(assembly, [part])["round"]
     assert view.count(">100.0 mm</text>") == 2
+    viewport = ElementTree.fromstring(view)
+    assert viewport.attrib["viewBox"] == "0 0 360 255"
+    assert float(viewport.attrib["width"]) == 360
+    assert float(viewport.attrib["height"]) == 255
     assert "Stock thickness: 18 mm" in view
     assert "Max stock blank" not in view
 

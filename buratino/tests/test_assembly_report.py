@@ -166,17 +166,6 @@ def test_panel_codes_are_order_independent_and_distinguish_groups():
         _coded_groups([[{"id": "new"}]], mapping)
 
 
-def test_candidate_map_legend_links_top_and_bottom_codes():
-    from buratino.build import _map_legend
-
-    codes = {"cabinet.carcass.top": "L04", "cabinet.carcass.bottom": "L03"}
-    legend = _map_legend("cabinet", codes)
-    assert "Top: L04" in legend
-    assert "Bottom: L03" in legend
-    assert "carcass" not in legend
-    assert _map_legend("other", codes) == ""
-
-
 def test_hardware_details_render_nested_data_as_readable_text():
     from buratino.build import _hardware_table
 
@@ -206,28 +195,6 @@ def test_hardware_details_render_nested_data_as_readable_text():
     assert "U01" in rendered and "300 × 400 × 18 mm" in rendered
     assert "unverified" in rendered
     assert "{'" not in rendered and "None" not in rendered
-
-
-def test_candidate_maps_group_only_matching_codes_and_content():
-    from buratino.build import _candidate_maps
-
-    cabinets = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
-    codes = {
-        f"{cabinet}.carcass.{part}": code
-        for cabinet in ("a", "b", "c")
-        for part, code in (("top", "L01"), ("bottom", "L02"))
-    }
-    maps = _candidate_maps(
-        [1, 1, 2], cabinets, codes, lambda cfg, title: f"{title}: {cfg}"
-    )
-    assert "Cabinets: a, b." in maps
-    assert "Cabinets: c." in maps
-    assert maps.count("Cabinet: 1") == 1
-    codes["b.carcass.top"] = "L03"
-    maps = _candidate_maps(
-        [1, 1, 2], cabinets, codes, lambda cfg, title: f"{title}: {cfg}"
-    )
-    assert maps.count("Cabinet: 1") == 2
 
 
 def test_group_label_includes_each_distinct_component():
@@ -435,3 +402,47 @@ def test_mortise_maps_measure_from_back_for_both_faces_and_edges():
     marks = [e for e in svg.findall("s:line", ns) if e.get("stroke-width") == "3"]
     center = (float(marks[0].get("y1")) + float(marks[0].get("y2"))) / 2
     assert (center - top) / height == pytest.approx(40 / 503, abs=0.001)
+
+
+@pytest.mark.parametrize(
+    ("project_name", "groove_width"),
+    [("two-under-window", 18), ("real-assembly-native", 12)],
+)
+def test_report_and_guide_share_part_drawings_and_machining_dimensions(
+    root, tmp_path, project_name, groove_width
+):
+    from buratino.build import render_documents
+
+    result = calculate(load_project(root / "projects" / project_name)).result
+    part = next(
+        part
+        for part in result["parts"]
+        if any(cut.get("role") == "bottom_groove" for cut in part["operations"])
+    )
+    svg = '<svg data-test="modeled-part"><path d="M0 0 L100 0"/></svg>'
+    render_documents(tmp_path, result, panel_views={part["id"]: svg})
+    report = (tmp_path / "report.html").read_text()
+    guide = (tmp_path / "assembly.html").read_text()
+    for document in (report, guide):
+        assert svg in document
+        assert f"Bottom groove: {groove_width} mm wide × 6 mm deep" in document
+        assert "bottom inset 13 mm" in document
+        assert '<a href="preview.html">Model</a>' in document
+        assert '<a href="report.html#cutlists">Cut lists</a>' in document
+        assert '<a href="assembly.html">Assembly guide</a>' in document
+        assert "Quantity:" in document and "Stock:" in document
+        assert "Hardware requirements" in document
+        for obsolete in (
+            "Resolved machining operations",
+            "Profile operations",
+            "Resolved spaces",
+            "Plan diagnostics",
+            "Physical validation",
+            "Candidate mortise layout is unavailable",
+            "Record ID",
+            "local_profile_mm",
+            "bottom_groove",
+        ):
+            assert obsolete not in document
+    assert 'id="cutlists"' in report
+    assert "Carcass mortise layout" not in guide

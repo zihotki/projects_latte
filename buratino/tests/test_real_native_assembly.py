@@ -159,7 +159,11 @@ def test_native_drawer_report_keeps_stock_and_describes_cuts(root, tmp_path):
         assert all(0 <= p[2] <= part["stock_mm"]["thickness"] for p in points)
     render_documents(tmp_path, result)
     document = (tmp_path / "assembly.html").read_text()
-    assert "bottom_groove" in document
-    assert "face polygon in stock L/W/T (mm):" in document
-    assert "depth 6 mm; inward" in document
-    assert "profile_trim" in document or "edge_bevel" in document
+    assert "Bottom groove: 12 mm wide × 6 mm deep; bottom inset 13 mm" in document
+    assert "face T+ (stock L/W/T)" in document
+    assert "Profile cut: follow the dimensioned outline shown." in document
+    assert "Bevel:" in document
+    assert "Hardware requirements" in document
+    assert "Assembly guide" in document
+    assert "Profile operations" not in document
+    assert "calculation JSON" not in document

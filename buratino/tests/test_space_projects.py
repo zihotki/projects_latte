@@ -3,11 +3,7 @@ import shutil
 
 import pytest
 
-from buratino.build import (
-    _drawer_summary,
-    _physical_validation_summary,
-    _space_model_summary,
-)
+from buratino.build import _drawer_summary
 from buratino.engine import calculate
 from buratino.environment import read_json
 from buratino.preview import latest_build
@@ -113,7 +109,6 @@ def test_space_calculation_and_reports_do_not_import_cad(root, monkeypatch):
     result = calculate(inputs).result
 
     assert result["parts"]
-    assert "Resolved spaces" in _space_model_summary(result)
     assert "198 mm" in _drawer_summary(result)
 
 
@@ -146,8 +141,9 @@ def test_build_validates_the_materialized_shape_map_once(root, tmp_path, monkeyp
         "status": "passed",
         "diagnostics": [],
     }
-    assert "Status: passed" in (directory / "report.html").read_text()
-    assert "No CAD diagnostics." in (directory / "report.html").read_text()
+    report = (directory / "report.html").read_text()
+    assert "Physical validation" not in report
+    assert "No CAD diagnostics." not in report
 
 
 def _space_dimensions(point):
@@ -204,10 +200,6 @@ def test_assembled_space_uses_one_plan_for_reports_cutlists_and_fronts(root):
         == 2
         for definition in inputs.native_project.space_cabinets
     )
-    summary = _space_model_summary(result)
-    assert "Placements" in summary
-    assert "Allocations" in summary
-    assert "hinge side left" in summary
 
     snapshot = native_snapshot(inputs)
     assert snapshot["resolved_space_assembly"]["plan_version"] == plan["plan_version"]
@@ -254,17 +246,3 @@ def test_nested_bare_and_complete_references_keep_qualified_part_ids(root):
     assert nested["parent_id"] in {item["id"] for item in instances}
     snapshot = native_snapshot(inputs)
     assert snapshot["resolved_space_plan"]["plan_version"] == plan["plan_version"]
-
-
-def test_physical_validation_report_keeps_stable_part_ids():
-    result = {
-        "physical_validation": {
-            "status": "failed",
-            "diagnostics": [{"code": "missing_contact", "part_ids": ["/a", "/b"]}],
-        }
-    }
-
-    summary = _physical_validation_summary(result)
-
-    assert "missing_contact" in summary
-    assert "/a, /b" in summary
