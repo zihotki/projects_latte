@@ -18,7 +18,8 @@ from cabineteer.spaces import (
 variables = {
     "observations": [
         "Each cabinet is 1048 mm wide, 679 mm high, and 590 mm deep including fronts.",
-        "Carcass parts use 18 mm melamine; drawer walls and fronts use 18 mm plywood.",
+        "Carcass parts use 18 mm melamine; drawer walls use 18 mm plywood and "
+        "applied fronts use separate 18 mm front-panel stock.",
         "Each cabinet has two drawers using Ferretti HDSC500V90 slides.",
     ],
     "assumptions": [
@@ -103,14 +104,14 @@ cabinet = SpaceCabinetDefinition(
             covers="/root/lower",
             attached_to="/root/lower/box-lower",
             thickness=18,
-            material="plywood",
+            material="front-panel",
         ),
         AppliedDrawerFront(
             "upper-front",
             covers="/root/upper",
             attached_to="/root/upper/box-upper",
             thickness=18,
-            material="plywood",
+            material="front-panel",
             top_reveal=3,
         ),
     ),
