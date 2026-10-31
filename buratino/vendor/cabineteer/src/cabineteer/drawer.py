@@ -175,7 +175,7 @@ class DrawerConfig:
     pull_count: int = 0
     pull_vertical: VerticalPolicy = "center"
 
-    # Full-length outer rebate below the bottom panel; zero leaves stock intact.
+    # Full-length inner rebate below the bottom panel; zero leaves stock intact.
     runner_relief_depth: float = 0.0
 
     def __post_init__(self) -> None:
@@ -226,21 +226,20 @@ class DrawerConfig:
         Delegated to the slide, because what the clearance is measured to
         differs by mounting style: an undermount runner constrains the
         drawer's INSIDE width (Blum: opening − 42 mm), so the outside grows
-        with the side stock; a side-mount slide occupies the gap beside the
+        with the finished runner land; a side-mount slide occupies the gap beside the
         box and constrains the outside directly.  See
         :class:`hardware.ClearanceReference`.
         """
-        return self.slide.drawer_box_width(self.opening_width, self.side_thickness)
+        return self.slide.drawer_box_width(self.opening_width, self.runner_zone_thickness)
 
     @property
     def box_inside_width(self) -> float:
-        """Drawer box INSIDE width — wall to wall, what goes in the drawer.
+        """Clear width above the runner relief, between the full stock sides.
 
-        For an undermount slide this is the dimension the manufacturer
-        actually constrains, so it is the one to measure a built box
-        against: Blum wants it dead on ``opening − 42``.
+        Inside-referenced slides constrain the wider clear width at the
+        relieved lower land. The bottom panel fits the upper wall grooves.
         """
-        return self.slide.drawer_inside_width(self.opening_width, self.side_thickness)
+        return self.box_width - 2 * self.side_thickness
 
     @property
     def side_gap(self) -> float:
@@ -276,7 +275,7 @@ class DrawerConfig:
 
     @property
     def runner_zone_thickness(self) -> float:
-        """Finished side thickness below the bottom, with stock sizing retained."""
+        """Finished thickness at the inner runner land below the bottom."""
         depth = self.runner_relief_depth
         if (
             isinstance(depth, bool) or not isinstance(depth, (int, float))
@@ -285,20 +284,25 @@ class DrawerConfig:
             raise ValueError("runner_relief_depth must be a nonnegative finite number")
         if depth >= self.side_thickness:
             raise ValueError("runner relief must leave positive side thickness")
+        groove = self.bottom_dado_depth
+        if (
+            isinstance(groove, bool) or not isinstance(groove, (int, float))
+            or not math.isfinite(groove) or groove < 0
+            or groove >= self.side_thickness
+        ):
+            raise ValueError("bottom groove depth must be finite, nonnegative and less than side stock")
         if depth:
-            if depth + self.bottom_dado_depth >= self.side_thickness:
-                raise ValueError("runner relief and bottom groove must leave a positive side web")
+            if groove <= depth:
+                raise ValueError("bottom groove must leave positive bottom bearing beyond the runner relief")
             inset = self.bottom_dado_inset
             if (
                 not math.isfinite(inset) or inset <= 0
-                or inset + self.bottom_thickness > self.box_height
+                # Width is needed while __post_init__ resolves an automatic
+                # bottom thickness. Check its height after that resolution.
+                or (self.bottom_thickness is not None
+                    and inset + self.bottom_thickness > self.box_height)
             ):
                 raise ValueError("runner relief requires a positive bottom inset within the side")
-            if (
-                self.joinery.engagement_x and not self.joinery.laps_front
-                and depth + self.joinery.engagement_x >= self.side_thickness
-            ):
-                raise ValueError("runner relief intersects the corner joint through the side")
         return self.side_thickness - depth
 
     @property
@@ -430,7 +434,7 @@ def drawer_recipe(cfg: DrawerConfig, prefix: str = "") -> tuple[dict, ...]:
             part["operations"].append(dict(
                 id=f"drawer/{part['id']}/runner_relief",
                 part_id=part["id"], type="pocket", source="drawer",
-                role="runner_relief", face="x-" if name == "side_L" else "x+",
+                role="runner_relief", face="x+" if name == "side_L" else "x-",
                 u=0, v=0, size_u=cfg.side_panel_length,
                 size_v=cfg.bottom_dado_inset, depth=cfg.runner_relief_depth,
             ))

@@ -38,7 +38,7 @@ variables = {
         "Check ceiling fit before construction.",
         "Hardware, joinery, wall restraint, frames, and shelf supports are unverified.",
         "One shared upper carcass and an applied back are draft choices.",
-        "Drawer sides have a modeled 2 mm outer runner rebate from the lower edge "
+        "Drawer sides have a modeled 2 mm inner runner rebate from the lower edge "
         "to the bottom panel underside (13 mm).",
         "Grain directions are design choices for these panels, not measured "
         "sheet directions. Confirm the cutting layout before ordering stock.",
@@ -111,7 +111,7 @@ lower_recipe = dict(
     side_mm=18,
     front_back_mm=18,
     bottom_mm=12,
-    bottom_dado_depth_mm=8,
+    bottom_dado_depth_mm=10,
     bottom_dado_inset_mm=13,
     runner_relief_depth_mm=2,
     material="drawer plywood",
@@ -152,7 +152,7 @@ profile = ProfileAssemblySpec(
             side_mm=18,
             front_back_mm=18,
             bottom_mm=12,
-            bottom_dado_depth_mm=8,
+            bottom_dado_depth_mm=10,
             bottom_dado_inset_mm=13,
             runner_relief_depth_mm=2,
             material="drawer plywood",

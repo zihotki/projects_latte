@@ -178,7 +178,7 @@ def test_native_drawer_report_keeps_stock_and_describes_cuts(root, tmp_path):
             assert part["operations"] == []
             continue
         groove = next(op for op in part["operations"] if op["role"] == "bottom_groove")
-        assert groove["depth_mm"] == 6
+        assert groove["depth_mm"] == 10
         assert groove["kind"] == "pocket"
         assert groove["target"] in {"thickness+", "thickness-"}
         points = groove["local_profile_mm"]
@@ -188,7 +188,7 @@ def test_native_drawer_report_keeps_stock_and_describes_cuts(root, tmp_path):
         assert all(0 <= p[2] <= part["stock_mm"]["thickness"] for p in points)
     render_documents(tmp_path, result)
     document = (tmp_path / "report.html").read_text()
-    assert "Bottom groove: 12 mm wide × 6 mm deep; bottom inset 13 mm" in document
+    assert "Bottom groove: 12 mm wide × 10 mm deep; bottom inset 13 mm" in document
     assert "face T+ (stock L/W/T)" in document
     assert "Profile cut: follow the dimensioned outline shown." in document
     assert "Bevel:" in document

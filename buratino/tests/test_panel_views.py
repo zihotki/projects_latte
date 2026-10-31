@@ -331,7 +331,7 @@ def test_real_project_groove_anchors_touch_the_actual_machined_solid(root, name)
     else:
         shape = materialize_box_part(part).translate(part["transform"]["translation"])
     feature, *rebates = groove_dimensions(part)
-    depth = 8 if name == "attic-clothing-storage" else 6
+    depth = 10 if name == "attic-clothing-storage" else 6
     assert (feature.width_mm, feature.inset_mm, feature.depth_mm) == (12, 13, depth)
     if name == "attic-clothing-storage":
         assert len(rebates) == 1

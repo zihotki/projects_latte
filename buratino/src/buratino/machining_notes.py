@@ -32,7 +32,7 @@ def machining_notes(part: dict) -> list[str]:
                     note = (
                         f"Runner rebate: {high[0] - low[0]:g} mm long × "
                         f"{high[1] - low[1]:g} mm high; depth {cut['depth_mm']:g} mm; "
-                        "from lower edge to bottom panel underside"
+                        "on inside face, from lower edge to bottom panel underside"
                     )
                 else:
                     note = (
@@ -66,7 +66,8 @@ def machining_notes(part: dict) -> list[str]:
             note = (
                 f"Runner rebate: {cut['size_u']:g} mm long × "
                 f"{cut['size_v']:g} mm high; "
-                f"depth {cut['depth']:g} mm; from lower edge to bottom panel underside"
+                f"depth {cut['depth']:g} mm; on inside face, "
+                "from lower edge to bottom panel underside"
             )
         elif cut.get("input_type") == "groove":
             groove = cut["groove"]

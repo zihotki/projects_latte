@@ -85,6 +85,29 @@ def groove_dimensions(part: dict) -> list[GrooveDimension]:
         inset_a[across] = size[across] if edge_positive else 0.0
         inset_b = inset_a.copy()
         inset_b[across] = high[across] if edge_positive else low[across]
+        if cut.get("role") == "bottom_groove":
+            for relief in part.get("operations", []):
+                if relief.get("role") != "runner_relief":
+                    continue
+                same_face = (
+                    relief.get("target") == cut.get("target")
+                    if native
+                    else relief.get("face") == cut.get("face")
+                )
+                if same_face:
+                    direction = (
+                        cut["inward_axis_local"][normal]
+                        if native
+                        else (-1 if cut["face"][1] == "+" else 1)
+                    )
+                    relief_depth = relief["depth_mm"] if native else relief["depth"]
+                    # The nominal lower groove edge has been removed. Attach
+                    # width to its floor and inset to the remaining lower land.
+                    for point in (width_a, width_b):
+                        point[normal] += direction * depth
+                    for point in (inset_a, inset_b):
+                        point[normal] += direction * relief_depth
+                    break
         result.append(
             GrooveDimension(
                 cut["id"],

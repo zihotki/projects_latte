@@ -107,10 +107,18 @@ length/width/thickness frame. Their face polygons, cut depths and inward axes
 are also shown in the `report.html#part-drawings` section. These are draft dimensions, not CNC paths.
 
 Set `runner_relief_depth_mm` on either profile drawer recipe, or
-`runner_relief_depth` on `DrawerBox` / `DrawerConfig`, to cut an outer runner
+`runner_relief_depth` on `DrawerBox` / `DrawerConfig`, to cut an inner runner
 rebate on both sides. It runs the full side length from the lower edge to the
 bottom panel underside. The default is zero. Runner limits use the remaining
-side thickness; box sizing and stock cutlists still use the full stock thickness.
+side thickness. Inside-referenced runners use that finished thickness for box
+width and placement. The clear width above the rebate and the bottom blank
+use the full side stock. Stock cutlists retain the uncut side thickness.
+
+The attic example uses 18 mm sides, a 2 mm rebate and 10 mm bottom grooves.
+The lower runner land is 16 mm thick. The groove leaves an 8 mm outer wall
+and 8 mm of bottom bearing beyond the rebate. These dimensions check the
+runner contact faces only. Rear clearance, bores and catches still need a
+separate hardware check.
 
 ## Nest modules and arrange cabinets
 

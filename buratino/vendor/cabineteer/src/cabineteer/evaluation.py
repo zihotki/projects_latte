@@ -230,10 +230,9 @@ def check_drawer_hardware_clearances(
         drawer_depth=drawer_cfg.box_depth,
         opening_width=drawer_cfg.opening_width,
         # The slide's clearance window is quoted on ITS OWN reference face —
-        # the drawer's inside face for an undermount runner — so the side
-        # stock has to travel with the outside width or the comparison is
-        # off by one wall per side.
-        side_thickness=drawer_cfg.side_thickness,
+        # the drawer's inner lower land for an undermount runner.
+        # Its finished thickness must travel with the outside box width.
+        side_thickness=drawer_cfg.runner_zone_thickness,
     )
     for msg in hw_issues:
         issues.append(Issue(
