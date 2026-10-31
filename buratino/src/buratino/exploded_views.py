@@ -27,22 +27,42 @@ def _bounds(shapes):
     return Compound.makeCompound(shapes).BoundingBox()
 
 
-def _layout(members, assembly, part_codes):
+def _is_applied_drawer_front(part):
+    return part.get("component") == "drawer_front"
+
+
+def _layout(members, assembly, part_codes, *, drawer=False):
     shapes = [assembly.objects[part["role"]].toCompound() for part in members]
-    bounds = _bounds(shapes)
+    body_shapes = [
+        shape
+        for part, shape in zip(members, shapes, strict=True)
+        if not (drawer and _is_applied_drawer_front(part))
+    ]
+    bounds = _bounds(body_shapes or shapes)
     origin = (bounds.xmin, bounds.ymin, bounds.zmin)
     rows = []
     for part, shape in zip(members, shapes, strict=True):
         box = shape.BoundingBox()
-        signature = (
-            part_codes[part["id"]],
-            *(
-                round(v - origin[i % 3], 5)
-                for i, v in enumerate(
-                    (box.xmin, box.ymin, box.zmin, box.xmax, box.ymax, box.zmax)
-                )
-            ),
-        )
+        code = part_codes[part["id"]]
+        if drawer and _is_applied_drawer_front(part):
+            # Applied fronts can have a small placement offset. Keep their
+            # code and orientation-sensitive dimensions, but ignore position.
+            signature = (
+                code,
+                round(box.xlen, 5),
+                round(box.ylen, 5),
+                round(box.zlen, 5),
+            )
+        else:
+            signature = (
+                code,
+                *(
+                    round(v - origin[i % 3], 5)
+                    for i, v in enumerate(
+                        (box.xmin, box.ymin, box.zmin, box.xmax, box.ymax, box.zmax)
+                    )
+                ),
+            )
         rows.append((signature, part, shape))
     return sorted(rows, key=lambda row: row[0])
 
@@ -171,7 +191,7 @@ def exploded_views(assembly, parts: list[dict], part_codes: dict[str, str]) -> s
         return ""
     layouts = {}
     for (_, drawer), members in _items(parts).items():
-        rows = _layout(members, assembly, part_codes)
+        rows = _layout(members, assembly, part_codes, drawer=bool(drawer))
         key = (bool(drawer), tuple(row[0] for row in rows))
         layouts.setdefault(key, []).append(rows)
     figures = []

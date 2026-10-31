@@ -112,6 +112,95 @@ def test_repeated_items_share_view_with_complete_part_coverage():
         assert 0 < float(label.get("y")) < height
 
 
+def test_drawers_group_when_applied_front_positions_differ():
+    assembly = cq.Assembly()
+    parts = []
+    codes = {}
+    for index, offset in enumerate((0, 300, 600, 900)):
+        for component, origin, code in (
+            ("bottom", (0, 0, 0), "P01"),
+            ("drawer_front", (0, -15 - index, 30 + index), "P02"),
+        ):
+            ident = f"drawer-{index}.{component}"
+            assembly.add(
+                cq.Workplane("XY")
+                .box(120, 80, 12)
+                .translate((offset + origin[0], origin[1], origin[2])),
+                name=ident,
+            )
+            parts.append(
+                {
+                    "id": ident,
+                    "role": ident,
+                    "cabinet_id": f"cabinet-{index}",
+                    "component": component,
+                    **(
+                        {"motion_group": f"drawer-{index}"}
+                        if component == "drawer_front"
+                        else {"instance_id": f"drawer-{index}"}
+                    ),
+                }
+            )
+            codes[ident] = code
+
+    root = ET.fromstring(f"<div>{exploded_views(assembly, parts, codes)}</div>")
+    figures = root.findall("figure")
+    assert len(figures) == 1
+    assert figures[0].find("figcaption").text == "Drawer ×4"
+    assert sorted(json.loads(figures[0].get("data-part-ids"))) == sorted(codes)
+    panels = root.findall(".//s:g[@data-part-id]", NS)
+    assert {panel.get("data-part-id") for panel in panels} == {
+        "drawer-0.bottom",
+        "drawer-0.drawer_front",
+    }
+    for panel in panels:
+        ids = json.loads(panel.get("data-part-ids"))
+        assert len(ids) == 4
+        assert len(set(ids)) == 4
+    assert len(root.findall(".//s:text", NS)) == 2
+
+
+def test_drawers_keep_front_codes_and_box_placement_in_signature():
+    assembly = cq.Assembly()
+    parts = []
+    codes = {}
+    for name, bottom_x, front_code in (
+        ("base", 0, "P02"),
+        ("other-front", 0, "P03"),
+        ("other-box", 8, "P02"),
+        ("shifted-front", 0, "P02"),
+    ):
+        for component, x, code in (
+            ("bottom", 0, "P01"),
+            ("side_left", bottom_x, "P04"),
+            ("drawer_front", 0, front_code),
+        ):
+            ident = f"{name}.{component}"
+            assembly.add(
+                cq.Workplane("XY").box(120, 80, 12).translate((x, 0, 0)),
+                name=ident,
+            )
+            parts.append(
+                {
+                    "id": ident,
+                    "role": ident,
+                    "cabinet_id": name,
+                    "component": component,
+                    **(
+                        {"motion_group": name}
+                        if component == "drawer_front"
+                        else {"instance_id": name}
+                    ),
+                }
+            )
+            codes[ident] = code
+    root = ET.fromstring(f"<div>{exploded_views(assembly, parts, codes)}</div>")
+    captions = sorted(
+        figure.find("figcaption").text for figure in root.findall("figure")
+    )
+    assert captions == ["Drawer", "Drawer", "Drawer ×2"]
+
+
 def test_different_placed_orientations_do_not_share_view():
     assembly = cq.Assembly()
     shape = cq.Workplane("XY").box(120, 80, 12)
