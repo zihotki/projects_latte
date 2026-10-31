@@ -63,8 +63,8 @@ lower = CabinetConfig(
     drawer_front_gap_mm=2,
     leg_count=0,
 )
-bottom_frame = Frame("frame.bottom", 1440, 506, 50, 18, "18 mm plywood")
-support_frame = Frame("frame.support", 1440, 380, 50, 18, "18 mm plywood")
+bottom_frame = Frame("frame.bottom", 1440, 506, 50, 18, "osb")
+support_frame = Frame("frame.support", 1440, 380, 50, 18, "osb")
 layout = Stack(
     "assembly",
     (
@@ -114,8 +114,8 @@ lower_recipe = dict(
     bottom_dado_depth_mm=8,
     bottom_dado_inset_mm=13,
     runner_relief_depth_mm=2,
-    material="plywood",
-    bottom_material="plywood",
+    material="drawer plywood",
+    bottom_material="drawer plywood",
 )
 profile = ProfileAssemblySpec(
     roof=RoofProfile(((0, 235), (1080, 1204), (1440, 1204)), 18),
@@ -155,8 +155,8 @@ profile = ProfileAssemblySpec(
             bottom_dado_depth_mm=8,
             bottom_dado_inset_mm=13,
             runner_relief_depth_mm=2,
-            material="plywood",
-            bottom_material="plywood",
+            material="drawer plywood",
+            bottom_material="drawer plywood",
         ),
     ),
     adjustable_shelves=(
