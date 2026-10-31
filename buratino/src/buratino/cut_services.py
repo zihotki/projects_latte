@@ -6,9 +6,11 @@ import csv
 import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
 from io import StringIO
+
+from .grouping import machining_signature
 
 
 @dataclass(frozen=True)
@@ -175,11 +177,6 @@ def _validate_config(config: dict | None, parts: list[dict]) -> dict:
             elif "size_mm" in finish:
                 raise ValueError(f"part {part_id!r} {edge}: mitre has no size_mm")
     return {"materials": materials, "parts": overrides}
-
-
-def _label(part_id: str) -> str:
-    readable = re.sub(r"[^A-Za-z0-9_-]+", "-", part_id).strip("-")[-42:] or "part"
-    return f"{readable}-{sha256(part_id.encode()).hexdigest()[:10]}"
 
 
 def _filename_hint(material: str, panel_type: str, thickness: int | float) -> str:
@@ -426,7 +423,7 @@ def _convert(
         raise ValueError("part has no valid panel type")
     return PanelOrder(
         source_id,
-        _label(source_id),
+        "",
         material,
         panel_type,
         material_config.get("provider_material"),
@@ -585,10 +582,20 @@ def _csv_text(provider: str, rows: list[list]) -> str:
     )
     writer.writerow(_ZAGEN_FIELDS if provider == "zagenzagen" else _OP_FIELDS)
     writer.writerows(rows)
-    return output.getvalue()
+    return (
+        output.getvalue().removesuffix("\n")
+        if provider == "opmaatzagen"
+        else output.getvalue()
+    )
 
 
-def plan_export(result: dict, provider: str, config: dict | None = None) -> ExportPlan:
+def plan_export(
+    result: dict,
+    provider: str,
+    config: dict | None = None,
+    *,
+    part_codes: dict[str, str] | None = None,
+) -> ExportPlan:
     """Plan provider CSVs from a captured result without I/O or CAD work."""
     if provider not in {"zagenzagen", "opmaatzagen"}:
         raise ValueError("provider must be zagenzagen or opmaatzagen")
@@ -596,10 +603,28 @@ def plan_export(result: dict, provider: str, config: dict | None = None) -> Expo
         raise ValueError("result must contain a parts list")
     parts = result["parts"]
     settings = _validate_config(config, parts)
+    if part_codes is None:
+        part_codes = result.get("report_part_codes")
+    if part_codes is None:
+        # Pure callers without report groups get stable, distinct short codes.
+        ids = sorted(
+            {
+                p["id"]
+                for p in parts
+                if isinstance(p, dict) and isinstance(p.get("id"), str) and p["id"]
+            }
+        )
+        part_codes = {ident: f"P{i:02}" for i, ident in enumerate(ids, 1)}
+    if not isinstance(part_codes, dict) or any(
+        not isinstance(code, str) for code in part_codes.values()
+    ):
+        raise ValueError("report part codes must be text")
     issues: list[dict] = []
     trace: list[dict] = []
     grouped: dict[tuple, list[tuple[PanelOrder, list]]] = {}
     seen_ids: set[str] = set()
+    signatures = {}
+    traces_by_id = {}
     for index, part in enumerate(parts):
         if not isinstance(part, dict):
             _issue(
@@ -637,6 +662,18 @@ def plan_export(result: dict, provider: str, config: dict | None = None) -> Expo
             _issue(issues, "invalid_part", str(error), source_id, "partial")
             trace.append({"source_id": source_id, "outcome": "omitted"})
             continue
+        if source_id not in part_codes:
+            raise ValueError(f"Report part code missing for {source_id}")
+        order = replace(order, label=part_codes[source_id])
+        # Exclude only placement and quantity. Exact blanks, basis, grain and
+        # requested finishes must agree even when a provider cannot encode them.
+        properties = asdict(order)
+        for field in ("source_id", "quantity", "frame_world"):
+            properties.pop(field)
+        properties["machining"] = machining_signature(part)
+        signatures[source_id] = json.dumps(
+            properties, sort_keys=True, separators=(",", ":")
+        )
         row = _row(order, provider, issues)
         key = (
             order.material,
@@ -650,6 +687,8 @@ def plan_export(result: dict, provider: str, config: dict | None = None) -> Expo
             {
                 "source_id": source_id,
                 "label": order.label,
+                "part_code": part_codes[source_id],
+                "csv_rows": [],
                 "outcome": "exported",
                 "material": order.material,
                 "quantity": order.quantity,
@@ -670,8 +709,41 @@ def plan_export(result: dict, provider: str, config: dict | None = None) -> Expo
                 "edges": order.edges,
             }
         )
+    traces_by_id = {
+        item["source_id"]: item for item in trace if item["outcome"] == "exported"
+    }
     files: dict[str, str] = {}
     groups: list[dict] = []
+    # Label variants across all material files, not just within one file.
+    by_code = {}
+    for members in grouped.values():
+        for order, _ in members:
+            by_code.setdefault(order.label, set()).add(signatures[order.source_id])
+    labels = {}
+    # Reserve safe report codes before assigning aliases or variant suffixes.
+    safe_codes = {
+        code
+        for code in part_codes.values()
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,19}", code)
+    }
+    used_labels = set(safe_codes)
+    alias_number = 0
+    for code, variants in sorted(by_code.items()):
+        for i, signature in enumerate(sorted(variants), 1):
+            label = code if code in safe_codes else None
+            if label is not None and len(variants) > 1:
+                suffix = f"-{i:02}"
+                label = code[: 20 - len(suffix)] + suffix
+                if label in used_labels:
+                    label = None
+            if label is None:
+                while True:
+                    alias_number += 1
+                    label = f"L{alias_number:02}"
+                    if label not in used_labels:
+                        break
+            used_labels.add(label)
+            labels[signature] = label
     for key in sorted(
         grouped,
         key=lambda item: tuple("" if value is None else str(value) for value in item),
@@ -679,30 +751,57 @@ def plan_export(result: dict, provider: str, config: dict | None = None) -> Expo
         group_id = sha256(json.dumps(key, separators=(",", ":")).encode()).hexdigest()[
             :12
         ]
-        chunks: list[list[tuple[str, list]]] = [[]]
-        remaining = 500 if provider == "zagenzagen" else None
+        identical = {}
         for order, row in grouped[key]:
-            quantity = order.quantity
+            identical.setdefault(signatures[order.source_id], []).append((order, row))
+        chunks = [[]]
+        remaining = 500 if provider == "zagenzagen" else None
+        for signature, members in sorted(identical.items()):
+            pending = [
+                [order.source_id, order.quantity]
+                for order, _ in sorted(members, key=lambda member: member[0].source_id)
+            ]
+            quantity = sum(count for _, count in pending)
+            label = labels[signature]
+            for source_id, _ in pending:
+                traces_by_id[source_id]["label"] = label
             while quantity:
+                if remaining == 0:
+                    chunks.append([])
+                    remaining = 500
                 take = min(quantity, remaining) if remaining is not None else quantity
-                chunk_row = list(row)
-                chunk_row[1 if provider == "zagenzagen" else 0] = take
-                chunks[-1].append((order.source_id, chunk_row))
+                row = list(members[0][1])
+                row[1 if provider == "zagenzagen" else 0] = take
+                row[0 if provider == "zagenzagen" else 3] = label
+                sources = []
+                needed = take
+                for source in pending:
+                    used = min(source[1], needed)
+                    if used:
+                        sources.append({"source_id": source[0], "quantity": used})
+                        source[1] -= used
+                        needed -= used
+                    if not needed:
+                        break
+                chunks[-1].append((row, sources))
                 quantity -= take
                 if remaining is not None:
                     remaining -= take
-                    if remaining == 0 and quantity:
-                        chunks.append([])
-                        remaining = 500
-            if remaining == 0:
-                chunks.append([])
-                remaining = 500
-        if not chunks[-1]:
-            chunks.pop()
         hint = _filename_hint(key[0], key[1], key[2])
         for number, chunk in enumerate(chunks, 1):
             filename = f"{provider}-{hint}-{group_id}-{number:03d}.csv"
-            files[filename] = _csv_text(provider, [row for _, row in chunk])
+            files[filename] = _csv_text(provider, [row for row, _ in chunk])
+            row_trace = []
+            for row_number, (_, sources) in enumerate(chunk, 2):
+                row_trace.append({"row": row_number, "sources": sources})
+                for source in sources:
+                    traces_by_id[source["source_id"]]["csv_rows"].append(
+                        {
+                            "file": filename,
+                            "row": row_number,
+                            "quantity": source["quantity"],
+                        }
+                    )
             groups.append(
                 {
                     "file": filename,
@@ -712,9 +811,16 @@ def plan_export(result: dict, provider: str, config: dict | None = None) -> Expo
                     "provider_material": key[3],
                     "purchase_type": key[4],
                     "quantity": sum(
-                        row[1 if provider == "zagenzagen" else 0] for _, row in chunk
+                        row[1 if provider == "zagenzagen" else 0] for row, _ in chunk
                     ),
-                    "source_ids": [source_id for source_id, _ in chunk],
+                    "source_ids": sorted(
+                        {
+                            source["source_id"]
+                            for _, sources in chunk
+                            for source in sources
+                        }
+                    ),
+                    "rows": row_trace,
                 }
             )
     status = (

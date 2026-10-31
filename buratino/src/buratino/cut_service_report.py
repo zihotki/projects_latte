@@ -16,7 +16,7 @@ def write_cutlists(
     part_codes = part_codes or {}
     sections = []
     for provider in ("zagenzagen", "opmaatzagen"):
-        plan = plan_export(result, provider)
+        plan = plan_export(result, provider, part_codes=part_codes or None)
         output = directory / "cutlists" / provider
         output.mkdir(parents=True, exist_ok=True)
         for name, content in plan.files.items():

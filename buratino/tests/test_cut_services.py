@@ -53,8 +53,10 @@ def test_zagen_exact_header_shorter_grain_and_unchanged_band_dimensions():
     assert content.startswith("Naam;Aantal;Lengte;Breedte;LV;LA;BL;BR\n")
     parsed = rows(result, delimiter=";")[0]
     assert parsed[1][2:4] == parsed[2][2:4] == ["180", "400"]
-    assert parsed[1][4:] == ["", "", "", ""]
-    assert parsed[2][4:] == ["7", "7", "", ""]
+    assert sorted(row[4:] for row in parsed[1:]) == [
+        ["", "", "", ""],
+        ["7", "7", "", ""],
+    ]
     assert result.status == "review"  # Supplier product eligibility remains open.
     assert result.summary["trace"][1]["original_stock_mm"]["thickness"] == 18
     assert result.summary["trace"][1]["edges"]["y-"]["kind"] == "band"
@@ -99,7 +101,7 @@ def test_op_multi_edge_is_quoted_one_row_with_uniform_finish():
         "Aantal,Lengte (mm),Breedte (mm),Eigen kenmerk,"
         "Afwerking zijdes,Afwerking type\n"
     )
-    assert '"Long side 2, Short side 2",Edge band matching - 1mm\n' in content
+    assert '"Long side 2, Short side 2",Edge band matching - 1mm' in content
     assert len(rows(plan, delimiter=",")[0]) == 2
     assert plan.status == "review"
     assert "opmaatzagen_multi_edge_unverified" in {
@@ -247,8 +249,7 @@ def test_fractional_space_blank_rounds_up_without_band_compensation():
     plan = plan_export({"parts": [plain, banded]}, "zagenzagen")
     data = rows(plan, delimiter=";")[0]
     assert data[1][2:4] == data[2][2:4] == ["1451", "500"]
-    assert data[1][4:] == ["", "", "", ""]
-    assert data[2][4:] == ["7", "", "", ""]
+    assert sorted(row[4:] for row in data[1:]) == [["", "", "", ""], ["7", "", "", ""]]
     assert plan.summary["trace"][0]["original_stock_mm"]["length"] == 1450.2
     assert plan.summary["trace"][0]["order_dimensions_mm"]["length"] == 1451
     assert plan.summary["trace"][0]["rounding_allowance_mm"]["length"] == 0.8
@@ -394,3 +395,168 @@ def test_huge_json_integer_in_global_finish_size_is_value_error():
 def test_invalid_global_config_is_rejected(config):
     with pytest.raises(ValueError):
         plan_export({"parts": [space_part()]}, "zagenzagen", config)
+
+
+@pytest.mark.parametrize(
+    "provider,delimiter,qindex,lindex",
+    [
+        ("opmaatzagen", ",", 0, 3),
+        ("zagenzagen", ";", 1, 0),
+    ],
+)
+def test_report_codes_merge_identical_parts_and_trace_chunk_sources(
+    provider, delimiter, qindex, lindex
+):
+    parts = [space_part("a"), space_part("b"), space_part("c")]
+    parts[0]["quantity"] = 300
+    parts[1]["quantity"] = 301
+    parts[2]["quantity"] = 1
+    captured = {"parts": parts, "report_part_codes": {p["id"]: "P07" for p in parts}}
+    plan = plan_export(captured, provider)
+    reverse = plan_export({**captured, "parts": list(reversed(parts))}, provider)
+    assert plan.files == reverse.files
+    parsed = [row for chunk in rows(plan, delimiter=delimiter) for row in chunk[1:]]
+    assert [int(row[qindex]) for row in parsed] == (
+        [500, 102] if provider == "zagenzagen" else [602]
+    )
+    assert {row[lindex] for row in parsed} == {"P07"}
+    for source in plan.summary["trace"]:
+        assert (
+            sum(item["quantity"] for item in source["csv_rows"]) == source["quantity"]
+        )
+        for location in source["csv_rows"]:
+            data = list(
+                csv.reader(StringIO(plan.files[location["file"]]), delimiter=delimiter)
+            )
+            assert data[location["row"] - 1][lindex] == source["label"]
+    for group in plan.summary["groups"]:
+        assert (
+            sum(
+                source["quantity"] for row in group["rows"] for source in row["sources"]
+            )
+            == group["quantity"]
+        )
+    if provider == "opmaatzagen":
+        content = next(iter(plan.files.values()))
+        assert len(content.split("\n")) == 2
+        assert all(len(record.split(",")) == 6 for record in content.split("\n"))
+    else:
+        assert all(group["quantity"] <= 500 for group in plan.summary["groups"])
+        assert len(plan.summary["trace"][1]["csv_rows"]) == 2
+
+
+@pytest.mark.parametrize(
+    "difference", ["grain", "finish", "machining", "exact_blank", "material", "code"]
+)
+def test_matching_code_does_not_merge_different_order_requirements(difference):
+    first, second = space_part("a"), space_part("b")
+    codes = {"a": "P01", "b": "P01"}
+    config = None
+    if difference == "grain":
+        second["grain_axis_local"] = "y"
+    elif difference == "finish":
+        # Unsupported finishes produce equal CSV blanks, but remain distinct orders.
+        config = {
+            "parts": {
+                "b": {"edge_finishes": {"y-": {"kind": "roundover", "size_mm": 3}}}
+            }
+        }
+    elif difference == "machining":
+        second["operations"] = [{"type": "drill", "diameter": 5}]
+    elif difference == "exact_blank":
+        second["stock"]["dimensions"][0] = 179.9
+        second["stock_mm"]["width"] = 179.9
+    elif difference == "material":
+        second["material"] = "oak"
+    else:
+        codes["b"] = "P02"
+    plan = plan_export(
+        {"parts": [first, second]}, "opmaatzagen", config, part_codes=codes
+    )
+    assert plan.summary["row_count"] == 2
+    trace = plan.summary["trace"]
+    assert len({entry["label"] for entry in trace}) == 2
+    assert all(len(entry["label"]) <= 24 for entry in trace)
+    assert {entry["part_code"] for entry in trace} == set(codes.values())
+
+
+def test_native_copy_placement_does_not_split_report_group():
+    first = {
+        "id": "a",
+        "material": "oak",
+        "quantity": 1,
+        "stock_mm": {"length": 400, "width": 180, "thickness": 18},
+        "grain_direction": "none",
+        "grain_status": "nondirectional",
+        "local_frame": {
+            "origin_mm": [0, 0, 0],
+            "length_axis": [1, 0, 0],
+            "width_axis": [0, 1, 0],
+            "thickness_axis": [0, 0, 1],
+        },
+    }
+    second = deepcopy(first)
+    second["id"] = "b"
+    second["local_frame"]["origin_mm"] = [100, 200, 300]
+    plan = plan_export(
+        {"parts": [first, second]}, "opmaatzagen", part_codes={"a": "P01", "b": "P01"}
+    )
+    assert rows(plan, delimiter=",")[0][1][:4] == ["2", "400", "180", "P01"]
+    assert plan.summary["trace"][1]["frame_world"]["origin_mm"] == [100, 200, 300]
+
+
+def test_chunk_boundary_can_split_one_row_after_a_different_row():
+    first, second = space_part("a"), space_part("b")
+    first["quantity"], second["quantity"] = 499, 3
+    plan = plan_export({"parts": [first, second]}, "zagenzagen")
+    assert [group["quantity"] for group in plan.summary["groups"]] == [500, 2]
+    assert sorted(
+        item["quantity"] for item in plan.summary["trace"][1]["csv_rows"]
+    ) == [1, 2]
+    assert (
+        sum(int(row[1]) for chunk in rows(plan, delimiter=";") for row in chunk[1:])
+        == 502
+    )
+
+
+@pytest.mark.parametrize(
+    "provider,delimiter,lindex",
+    [
+        ("opmaatzagen", ",", 3),
+        ("zagenzagen", ";", 0),
+    ],
+)
+def test_csv_aliases_preserve_custom_report_codes_and_bound_variants(
+    provider, delimiter, lindex
+):
+    codes = {
+        "a": "LEFT SIDE",
+        "b": "a" * 20 + "-01",
+        "c": "L01",
+        "d": "P07",
+        "e": "x" * 20,
+        "f": "x" * 20,
+        "g": "x" * 17 + "-01",
+    }
+    parts = [space_part(ident) for ident in codes]
+    # Two different order variants of a report code at the label-length boundary.
+    config = {"parts": {"f": {"show_face": "b"}}}
+    captured = {"parts": parts, "report_part_codes": codes}
+    plan = plan_export(captured, provider, config)
+    reverse = plan_export(
+        {**captured, "parts": list(reversed(parts))}, provider, config
+    )
+    assert plan.files == reverse.files
+    labels = {item["source_id"]: item["label"] for item in plan.summary["trace"]}
+    assert len(set(labels.values())) == len(parts)
+    assert labels["c"] == "L01"
+    assert labels["d"] == "P07"
+    assert labels["g"] == codes["g"]
+    assert all(0 < len(label) <= 20 and " " not in label for label in labels.values())
+    assert {
+        item["source_id"]: item["part_code"] for item in plan.summary["trace"]
+    } == codes
+    assert captured["report_part_codes"] == codes
+    assert {
+        row[lindex] for chunk in rows(plan, delimiter=delimiter) for row in chunk[1:]
+    } == set(labels.values())

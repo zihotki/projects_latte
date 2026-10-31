@@ -7,6 +7,19 @@ including omitted source records. The CSV files and their `index.json` source
 traces are captured under `build/REVISION/cutlists/PROVIDER/` and remain with
 that build. `parts.csv` is secondary internal parts data.
 
+CSV names use report part codes, for example `P07`. Repeated parts with the
+same code, exact blank, machining, grain and requested finishes share one row
+with a summed quantity. Different order requirements get separate names, such
+as `P07-01`. CSV labels have at most 20 letters, digits, hyphens or underscores.
+Long report codes or codes with other characters use short aliases such as
+`L01`. The trace preserves the exact report code for each label. Aliases and
+variant names avoid collisions with existing report codes.
+The index keeps each full source ID, its quantity, and each CSV
+file and row number (header is row 1). A source can span several files.
+The build captures the exact report code map in `result.json` as
+`report_part_codes`; CLI exports reuse it. Rebuild older captures that do not
+have this map.
+
 Report downloads use the default export configuration. To set custom material,
 grain or finish options, use the CLI below with `--config`. These settings do
 not change existing report downloads. Select and check the actual material
@@ -113,6 +126,7 @@ ZAGENZAGEN uses the semicolon header
 
 OPMAATZAGEN uses the comma header
 `Aantal,Lengte (mm),Breedte (mm),Eigen kenmerk,Afwerking zijdes,Afwerking type`.
+The UTF-8 CSV has no final newline or empty terminal record.
 Matching band intent uses the template option `Edge band matching - 1mm`.
 This is a provider option; it does not change display geometry. The current
 best-effort multi-edge encoding puts comma-separated side labels in one quoted
@@ -124,7 +138,7 @@ Existing declared EdgeBand metadata is matching band intent for export.
 Color does not select a product. Services trim before banding, so dimensions
 stay unchanged. Other machining remains in the report part drawings.
 
-No supplier import or order has been tested. Check the CSV in the provider
-import UI before use. ZAGENZAGEN panel limit is 500 physical panels per CSV;
+A successful live import of the regenerated files is not yet confirmed.
+Check the CSV in the provider import UI before use. ZAGENZAGEN panel limit is 500 physical panels per CSV;
 larger quantities split across files. Provider product eligibility and
 OPMAATZAGEN multi-edge parsing remain unverified.

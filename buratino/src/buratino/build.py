@@ -257,6 +257,7 @@ def render_documents(
         result.get("variables", {}).get("part_codes") if panel_groups else None,
     )
     part_codes = {part["id"]: code for code, members in groups for part in members}
+    result["report_part_codes"] = part_codes
     parts_by_id = {part["id"]: part for part in result["parts"]}
     if result.get("space_model"):
         cut_groups = [
@@ -637,6 +638,7 @@ def build_project(
             raise InputError(
                 "inputs_changed", "Inputs changed during the build; rebuild."
             )
+        write_json(stage / "result.json", calculation.result)
         manifest = {
             "schema_version": 1,
             "revision": revision,

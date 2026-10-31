@@ -202,6 +202,11 @@ def export_cutlist(
             "build_unavailable",
             "Run build first. Result identity does not match manifest.",
         )
+    if "report_part_codes" not in result:
+        raise InputError(
+            "build_unavailable",
+            "Run build first. Captured report part codes are missing.",
+        )
     result = {**result, "source_revision": manifest["revision"]}
     plan = plan_export(result, provider, _read_config(config_path))
 

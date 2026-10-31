@@ -17,6 +17,7 @@ def _captured_project(tmp_path, monkeypatch, *, quantity=501):
     build.mkdir(parents=True)
     result = {
         "input_identity": identity,
+        "report_part_codes": {"panel.one": "P07"},
         "parts": [
             {
                 "id": "panel.one",
@@ -232,3 +233,30 @@ def test_core_summary_is_used_for_file_context():
     )
     assert planned.summary["provider_product_selection_required"] is True
     assert planned.summary["groups"][0]["thickness_mm"] == 18
+
+
+@pytest.mark.parametrize(
+    "code,label", [("P07", "P07"), ("LEFT SIDE", "L01"), ("a" * 23, "L01")]
+)
+def test_cli_reuses_captured_report_codes_without_cad(
+    tmp_path, monkeypatch, code, label
+):
+    project, build, _, revision = _captured_project(tmp_path, monkeypatch, quantity=2)
+    result = json.loads((build / "result.json").read_text())
+    result["report_part_codes"]["panel.one"] = code
+    (build / "result.json").write_text(json.dumps(result))
+    from buratino.cut_service_report import write_cutlists
+
+    write_cutlists(build, result, result["report_part_codes"])
+    cut_service_export.export_cutlist(project, "opmaatzagen")
+    exported = project / "exports" / revision / "opmaatzagen"
+    expected = next((build / "cutlists/opmaatzagen").glob("*.csv"))
+    actual = next(exported.glob("*.csv"))
+    assert actual.read_bytes() == expected.read_bytes()
+    assert f",{label}," in actual.read_text()
+    index = json.loads((exported / "index.json").read_text())
+    assert index["trace"][0]["part_code"] == code
+    del result["report_part_codes"]
+    (build / "result.json").write_text(json.dumps(result))
+    with pytest.raises(InputError, match="report part codes"):
+        cut_service_export.export_cutlist(project, "opmaatzagen")
