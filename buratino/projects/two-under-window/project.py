@@ -57,7 +57,7 @@ variables = {
 calculated = {}
 
 _drawer = {
-    "height": 270,
+    "height": 260,
     "depth": 544,
     "bottom_clearance": 10,
     "top_clearance": 10,
