@@ -402,7 +402,8 @@ def render_documents(
             else ""
         )
         panel_sections.append(
-            f"<section class='panel'><h5>{html.escape(code)} — "
+            f"<section class='panel' "
+            f"id='part-{html.escape(code, quote=True)}'><h5>{html.escape(code)} — "
             f"{html.escape(_group_label(members))}{count}</h5>"
             f"<p>Quantity: {quantity}. Stock: {blank['length']:g} × "
             f"{blank['width']:g} × {blank['thickness']:g} mm.</p>"

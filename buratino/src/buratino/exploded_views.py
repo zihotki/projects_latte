@@ -447,18 +447,27 @@ def exploded_views(assembly, parts: list[dict], part_codes: dict[str, str]) -> s
             for part, _ in panels
             if _report(part)["member"] in {"divider", "shelf"}
         }
+        separate_interior = len(interior) > 1
         direction, x_direction = _world(_DIRECTION, axes), _world(_X_DIRECTION, axes)
         views = []
-        svg, covered = _drawing(
-            rows,
-            copies,
-            panels,
-            ids - interior,
-            direction=direction,
-            x_direction=x_direction,
-        )
-        views.append(("Overview", svg))
-        if interior:
+        overview_panels = [
+            (part, shape)
+            for part, shape in panels
+            if not separate_interior or part["id"] not in interior
+        ]
+        covered = set()
+        if overview_panels:
+            svg, visible = _drawing(
+                rows,
+                copies,
+                overview_panels,
+                ids if not separate_interior else ids - interior,
+                direction=direction,
+                x_direction=x_direction,
+            )
+            covered |= visible
+            views.append(("Exterior", svg))
+        if separate_interior:
             detail = [
                 (part, shape)
                 for part, shape in panels
@@ -475,23 +484,9 @@ def exploded_views(assembly, parts: list[dict], part_codes: dict[str, str]) -> s
             )
             covered |= visible
             views.append(("Interior", svg))
-        # The last fallback shows each remaining whole component on its own.
-        for part, shape in panels:
-            if part["id"] not in covered:
-                svg, visible = _drawing(
-                    rows,
-                    copies,
-                    [(part, shape)],
-                    {part["id"]},
-                    direction=direction,
-                    x_direction=x_direction,
-                )
-                covered |= visible
-                views.append((f"Part {part_codes[part['id']]}", svg))
-        if missing := ids - covered:
-            raise ValueError(
-                "Exploded view: unreadable parts: " + ", ".join(sorted(missing))
-            )
+        # A readable label identifies a member. Other members link to their
+        # existing dimensioned drawing instead of repeating its image.
+        references = sorted({part_codes[ident] for ident in ids - covered})
         physical_ids = [row[1]["id"] for copy in copies for row in copy]
         figures.append(
             '<figure class="exploded-item" style="margin:1em 0;break-inside:avoid" '
@@ -499,8 +494,20 @@ def exploded_views(assembly, parts: list[dict], part_codes: dict[str, str]) -> s
             f"<figcaption>{title}</figcaption>"
             + "".join(
                 f'<div class="exploded-view" data-view="{caption}">'
-                f"<p>{caption}</p>{svg}</div>"
+                + (f"<p>{caption}</p>" if len(views) > 1 else "")
+                + f"{svg}</div>"
                 for caption, svg in views
+            )
+            + (
+                '<p class="part-drawing-references">Part drawings: '
+                + ", ".join(
+                    f'<a href="report.html#part-{escape(code, quote=True)}">'
+                    f"{escape(code)}</a>"
+                    for code in references
+                )
+                + "</p>"
+                if references
+                else ""
             )
             + "</figure>"
         )

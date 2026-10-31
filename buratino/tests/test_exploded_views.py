@@ -227,7 +227,10 @@ def test_context_occludes_normally_and_is_not_labelled_or_counted_twice():
     assert covered == set()
     assert root.find(".//s:g[@data-part-id='rear']/s:path", NS).get("d") == ""
     result = _root(assembly, parts, {"rear": "P01", "front": "P02"})
-    assert {e.text for e in result.findall(".//s:text", NS)} == {"P01", "P02"}
+    assert {e.text for e in result.findall(".//s:text", NS)} == {"P02"}
+    assert [link.get("href") for link in result.findall(".//a")] == [
+        "report.html#part-P01"
+    ]
     assert json.loads(result.find("figure").get("data-part-ids")).count("rear") == 1
 
 
@@ -370,7 +373,7 @@ def test_space_frames_publish_members_and_rotated_space_axes_remain_unsupported(
         materialize_model(plan)
 
 
-def test_two_thin_visible_strips_use_whole_component_fallback(monkeypatch):
+def test_two_thin_visible_strips_link_to_part_drawing_without_new_view(monkeypatch):
     import buratino.exploded_views as views
 
     monkeypatch.setattr(views, "_DIRECTION", (0, 0, 1))
@@ -383,8 +386,47 @@ def test_two_thin_visible_strips_use_whole_component_fallback(monkeypatch):
     parts = [_part("rear", "divider"), _part("front", "divider")]
     before = _state(assembly)
     root = _root(assembly, parts, {"rear": "P01", "front": "P02"})
-    detail = root.find(".//div[@data-view='Part P01']")
-    assert detail is not None
-    assert [label.text for label in detail.findall(".//s:text", NS)] == ["P01"]
-    assert {label.text for label in root.findall(".//s:text", NS)} == {"P01", "P02"}
+    assert len(root.findall(".//div[@class='exploded-view']")) == 1
+    assert not root.findall(".//div/p")
+    assert [link.get("href") for link in root.findall(".//a")] == [
+        "report.html#part-P01"
+    ]
+    assert {label.text for label in root.findall(".//s:text", NS)} == {"P02"}
     assert _state(assembly) == before
+
+
+def test_single_interior_member_uses_the_only_assembly_view():
+    assembly = cq.Assembly()
+    assembly.add(cq.Workplane("XY").box(100, 80, 12), name="shelf")
+    parts = [_part("shelf", "shelf")]
+
+    root = _root(assembly, parts, {"shelf": "P01"})
+
+    assert len(root.findall(".//div[@class='exploded-view']")) == 1
+    assert root.find(".//div[@class='exploded-view']/p") is None
+    assert [label.text for label in root.findall(".//s:text", NS)] == ["P01"]
+
+
+def test_multiple_interior_members_are_absent_from_exterior_view():
+    assembly = cq.Assembly()
+    parts = [
+        _part("left", "side_left"),
+        _part("shelf", "shelf"),
+        _part("divider", "divider"),
+    ]
+    for part, x in zip(parts, (0, 20, 40), strict=True):
+        assembly.add(
+            cq.Workplane("XY").box(20, 80, 60).translate((x, 0, 0)),
+            name=part["id"],
+        )
+
+    root = _root(assembly, parts, {"left": "P01", "shelf": "P02", "divider": "P03"})
+
+    exterior = root.find(".//div[@data-view='Exterior']")
+    interior = root.find(".//div[@data-view='Interior']")
+    assert exterior is not None
+    assert interior is not None
+    assert exterior.find(".//s:g[@data-part-id='shelf']", NS) is None
+    assert exterior.find(".//s:g[@data-part-id='divider']", NS) is None
+    assert interior.find(".//s:g[@data-part-id='shelf']", NS) is not None
+    assert interior.find(".//s:g[@data-part-id='divider']", NS) is not None
