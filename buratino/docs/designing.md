@@ -21,7 +21,7 @@ and export frames. Read it before adding geometry or machining logic.
 Use a Space model for rectangular, butt-joined carcasses with an applied back.
 It does not define sloped or changing-height clear spaces. Use
 `ProfileAssemblySpec` for supported profiled assemblies. See the larger
-[native profile draft](../projects/real-assembly-native/project.py) for a
+[attic clothing storage design](../projects/attic-clothing-storage/project.py) for a
 complete example.
 
 Space projects can also define explicit local machining and paired Domino

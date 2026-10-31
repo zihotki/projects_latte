@@ -96,9 +96,9 @@ def test_build_captures_consistent_outputs_without_editing_inputs(root, project)
 
 
 def test_native_real_assembly_build_reports_resolved_contents(root, tmp_path):
-    project = tmp_path / "real-assembly-native"
+    project = tmp_path / "attic-clothing-storage"
     shutil.copytree(
-        root / "projects/real-assembly-native",
+        root / "projects/attic-clothing-storage",
         project,
         ignore=shutil.ignore_patterns("build", "exports"),
     )

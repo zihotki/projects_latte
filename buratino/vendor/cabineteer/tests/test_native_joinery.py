@@ -20,7 +20,7 @@ from cabineteer.profiles import (
 @pytest.fixture(scope="module")
 def models():
     root = Path(__file__).resolve().parents[3]
-    project = runpy.run_path(str(root / "projects/real-assembly-native/project.py"))[
+    project = runpy.run_path(str(root / "projects/attic-clothing-storage/project.py"))[
         "project"
     ]
     machined = project.resolved_assembly()

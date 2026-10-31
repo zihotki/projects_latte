@@ -12,7 +12,7 @@ from cabineteer.profiles import assembly_records, lower_drawer_parts, resolved_p
 @pytest.fixture(scope="module")
 def assembly():
     root = Path(__file__).resolve().parents[3]
-    project = runpy.run_path(str(root / "projects/real-assembly-native/project.py"))[
+    project = runpy.run_path(str(root / "projects/attic-clothing-storage/project.py"))[
         "project"
     ]
     return project.resolved_assembly()
@@ -147,7 +147,7 @@ def test_nine_drawers_and_clear_upper_shelves(assembly):
 
 def test_invalid_shared_layout_and_drawer_recipe(assembly):
     root = Path(__file__).resolve().parents[3]
-    project = runpy.run_path(str(root / "projects/real-assembly-native/project.py"))[
+    project = runpy.run_path(str(root / "projects/attic-clothing-storage/project.py"))[
         "project"
     ]
     spec = project.profile_assembly
@@ -173,7 +173,7 @@ def test_invalid_shared_layout_and_drawer_recipe(assembly):
 
 def test_continuous_bottom_is_opt_in_and_requires_shared_owner(assembly):
     root = Path(__file__).resolve().parents[3]
-    project = runpy.run_path(str(root / "projects/real-assembly-native/project.py"))[
+    project = runpy.run_path(str(root / "projects/attic-clothing-storage/project.py"))[
         "project"
     ]
     sectioned = replace(project.profile_assembly, continuous_bottom=False)
@@ -218,7 +218,7 @@ def test_continuous_bottom_is_opt_in_and_requires_shared_owner(assembly):
 def test_single_lower_cabinet_keeps_two_outer_reveals(assembly):
     root = Path(__file__).resolve().parents[3]
     project = runpy.run_path(
-        str(root / "projects/real-assembly-native/project.py")
+        str(root / "projects/attic-clothing-storage/project.py")
     )["project"]
     placement = next(item for item in assembly.layout.placements
                      if item.name == "left-drawers")

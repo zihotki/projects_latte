@@ -29,7 +29,7 @@ from buratino.project import load_project
             },
         ),
         (
-            "real-assembly-native",
+            "attic-clothing-storage",
             91,
             {
                 "upper.side_left": "x",
@@ -64,7 +64,7 @@ def test_actual_project_grain_round_trip_and_result(
     assert rows
     assert all(row["grain_direction"] in {"length", "width"} for row in rows)
     assert all(row["grain_status"] == "confirmed" for row in rows)
-    if name == "real-assembly-native":
+    if name == "attic-clothing-storage":
         assert {row["id"] for row in rows} == set(parts)
         assert all(row["grain_axis_local"] in {"x", "y"} for row in rows)
         assembly_parts = {part["id"]: part for part in result["assembly"]["parts"]}
@@ -141,7 +141,7 @@ def test_native_glb_marks_follow_real_stock_faces(root, tmp_path):
     import cadquery as cq
     from cabineteer.visualize import export_glb
 
-    source = load_project(root / "projects/real-assembly-native")
+    source = load_project(root / "projects/attic-clothing-storage")
     calculation = calculate(source)
     selected = (
         "upper.side_left",

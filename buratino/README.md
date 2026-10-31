@@ -33,7 +33,7 @@ to build a new project. Start from a runnable example:
 - [Cabinet row with doors and a drawer front](projects/space-assembly-fronts/project.py)
 - [Nested bare insert and complete cabinet](projects/space-nested-inserts/project.py)
 - [Profiled assembly with a sloped roof](projects/profile-row-sloped/project.py)
-- [Larger native profile assembly draft](projects/real-assembly-native/project.py)
+- [Attic clothing storage](projects/attic-clothing-storage/project.py)
 
 The [coordinate contract](docs/coordinates.md) describes model axes, local
 stock frames, placement, and the CAD-to-viewer boundary.

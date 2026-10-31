@@ -335,7 +335,7 @@ def test_mortise_maps_measure_from_back_for_both_faces_and_edges():
 
 @pytest.mark.parametrize(
     ("project_name", "groove_width"),
-    [("two-under-window", 12), ("real-assembly-native", 12)],
+    [("two-under-window", 12), ("attic-clothing-storage", 12)],
 )
 def test_single_report_has_drawings_and_exploded_assembly_anchor(
     root, tmp_path, project_name, groove_width
@@ -357,9 +357,9 @@ def test_single_report_has_drawings_and_exploded_assembly_anchor(
     notes = machining_notes(part)
     assert any(f"Bottom groove: {groove_width} mm wide" in note for note in notes)
     assert all(note in report for note in notes)
-    assert '<a href="#cutlists">Cut lists</a>' in report
-    assert '<a href="#part-drawings">Part drawings</a>' in report
-    assert '<a href="#assembly">Assembly</a>' in report
+    assert '<a href="report.html#cutlists">Cut lists</a>' in report
+    assert '<a href="report.html#part-drawings">Part drawings</a>' in report
+    assert '<a href="report.html#assembly">Assembly</a>' in report
     assert 'id="cutlists"' in report
     assert 'id="part-drawings"' in report
     assert 'id="assembly"' in report

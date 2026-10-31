@@ -11,7 +11,7 @@ from buratino.project import load_project, native_snapshot
 
 
 def test_real_native_report_has_cabinet_and_drawer_summaries(root):
-    project = load_project(root / "projects/real-assembly-native")
+    project = load_project(root / "projects/attic-clothing-storage")
     result = calculate(project).result
     assert result["overall_dimensions_mm"]["width"] == 1440
     assert result["overall_dimensions_mm"]["depth"] == 526
@@ -92,7 +92,7 @@ def test_real_native_report_has_cabinet_and_drawer_summaries(root):
 
 
 def test_mixed_opening_runner_selection_is_reported_without_false_single_key(root):
-    inputs = load_project(root / "projects/real-assembly-native")
+    inputs = load_project(root / "projects/attic-clothing-storage")
     native = inputs.native_project
     left = native.cabinets[0]
     opening_height = left.config.interior_height / 4
@@ -169,7 +169,7 @@ def test_mixed_opening_runner_selection_is_reported_without_false_single_key(roo
 def test_native_drawer_report_keeps_stock_and_describes_cuts(root, tmp_path):
     from buratino.build import render_documents
 
-    result = calculate(load_project(root / "projects/real-assembly-native")).result
+    result = calculate(load_project(root / "projects/attic-clothing-storage")).result
     drawer_parts = [part for part in result["parts"] if ".drawer." in part["id"]]
     assert len(drawer_parts) == 45
     for part in drawer_parts:
@@ -235,7 +235,7 @@ def test_exploded_view_receives_native_group_metadata_without_mutating_result(
     from buratino import exploded_views
     from buratino.build import render_documents
 
-    result = calculate(load_project(root / "projects/real-assembly-native")).result
+    result = calculate(load_project(root / "projects/attic-clothing-storage")).result
     original = deepcopy(result["parts"])
     captured = {}
 

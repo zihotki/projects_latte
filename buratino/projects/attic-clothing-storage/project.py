@@ -56,7 +56,7 @@ lower = CabinetConfig(
     back_capture="overlay",
     back_style="full_height",
     carcass_material="Melamine-faced board",
-    face_material="Melamine-faced board",
+    face_material="front-panel",
     face_gap_mm=2,
     door_gap_mm=2,
     drawer_front_gap_mm=2,
@@ -135,7 +135,7 @@ profile = ProfileAssemblySpec(
         roof_reveal_mm=2,
         depth_offset_mm=2,
         thickness_mm=18,
-        material="Melamine-faced board",
+        material="front-panel",
     ),
     lower_drawers=(
         ProfileLowerDrawerSpec(cabinet="left-drawers", **lower_recipe),
@@ -181,7 +181,7 @@ profile = ProfileAssemblySpec(
     ),
 )
 project = CabinetProject(
-    "real-assembly-native",
+    "attic-clothing-storage",
     (ProjectCabinet("left-drawers", lower), ProjectCabinet("right-drawers", lower)),
     layout=layout,
     profile_assembly=profile,

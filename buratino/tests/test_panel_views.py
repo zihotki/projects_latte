@@ -310,7 +310,7 @@ def test_mortise_notes_keep_all_centers_and_separate_faces_and_depths():
     assert "depth 28 mm" in notes[2]
 
 
-@pytest.mark.parametrize("name", ["machined-drawer", "real-assembly-native"])
+@pytest.mark.parametrize("name", ["machined-drawer", "attic-clothing-storage"])
 def test_real_project_groove_anchors_touch_the_actual_machined_solid(root, name):
     from cabineteer.space_adapter import materialize_box_part
 

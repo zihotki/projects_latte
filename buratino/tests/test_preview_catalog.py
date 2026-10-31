@@ -9,7 +9,7 @@ def test_catalog_reads_metadata_and_lists_projects_without_loading_them(root):
     by_name = {entry["name"]: entry for entry in entries}
     assert by_name["two-under-window"]["kind"] == "design"
     assert by_name["two-under-window"]["title"] == "Two under window"
-    assert by_name["real-assembly-native"]["kind"] == "design"
+    assert by_name["attic-clothing-storage"]["kind"] == "design"
     assert by_name["spaces-fixed-open"]["kind"] == "example"
     assert all(entry["path"].is_dir() for entry in entries)
 
@@ -18,7 +18,7 @@ def test_catalog_html_groups_designs_and_examples(root):
     page = preview._catalog_html(preview.catalog_projects(root)).decode()
     assert page.index("<h2>Designs</h2>") < page.index("<h2>Examples and tests</h2>")
     assert "Two under window" in page
-    assert "Real assembly native" in page
+    assert "Attic clothing storage" in page
     assert "spaces-fixed-open" in page
     assert "Assembly</a>" not in page
 

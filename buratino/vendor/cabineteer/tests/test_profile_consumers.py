@@ -95,7 +95,7 @@ def test_real_native_project_consumers(monkeypatch, tmp_path):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     root = Path(__file__).resolve().parents[3]
     project = runpy.run_path(
-        str(root / "projects/real-assembly-native/project.py")
+        str(root / "projects/attic-clothing-storage/project.py")
     )["project"]
     payload = json.loads(json.dumps(project_to_dict(project)))
 
