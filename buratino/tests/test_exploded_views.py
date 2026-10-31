@@ -42,7 +42,14 @@ def test_exploded_views_uses_machined_profile_solids_without_mutation():
     parts = []
     for ident, shape in (("left", machined), ("right", mirrored)):
         assembly.add(shape.translate((600, -120, 900)), name=ident)
-        parts.append({"id": ident, "role": ident, "cabinet_id": "cab"})
+        parts.append(
+            {
+                "id": ident,
+                "role": ident,
+                "cabinet_id": "cab",
+                "component": "side_left" if ident == "left" else "side_right",
+            }
+        )
     before = _shape_state(assembly)
     rows = _layout(parts, assembly, {"left": "P01", "right": "P02"})
     exploded = _explode(rows)
@@ -69,7 +76,7 @@ def test_repeated_items_share_view_with_complete_part_coverage():
     for instance, offset in (("a", 0), ("b", 500)):
         for component, origin, code in (
             ("bottom", (0, 0, 0), "P01"),
-            ("front", (0, -15, 30), "P02"),
+            ("drawer_front", (0, -15, 30), "P02"),
         ):
             ident = f"{instance}.{component}"
             assembly.add(
@@ -83,10 +90,10 @@ def test_repeated_items_share_view_with_complete_part_coverage():
                     "id": ident,
                     "role": ident,
                     "cabinet_id": instance,
-                    # The front must join the drawer through its motion group.
+                    "component": component,
                     **(
                         {"motion_group": instance}
-                        if component == "front"
+                        if component == "drawer_front"
                         else {"instance_id": instance}
                     ),
                 }
@@ -98,11 +105,11 @@ def test_repeated_items_share_view_with_complete_part_coverage():
     figures = root.findall("figure")
     assert len(figures) == 1
     assert figures[0].find("figcaption").text == "Drawer ×2"
-    assert set(json.loads(figures[0].get("data-part-ids"))) == set(codes)
+    assert set(json.loads(figures[0].get("data-part-ids"))) == {"a.bottom", "b.bottom"}
     panels = root.findall(".//s:g[@data-part-id]", NS)
     all_ids = [ident for p in panels for ident in json.loads(p.get("data-part-ids"))]
-    assert sorted(all_ids) == sorted(codes)
-    assert len(root.findall(".//s:text", NS)) == 2
+    assert sorted(all_ids) == ["a.bottom", "b.bottom"]
+    assert len(root.findall(".//s:text", NS)) == 1
     assert _shape_state(assembly) == before
     svg = root.find(".//s:svg", NS)
     _, _, width, height = map(float, svg.get("viewBox").split())
@@ -112,14 +119,15 @@ def test_repeated_items_share_view_with_complete_part_coverage():
         assert 0 < float(label.get("y")) < height
 
 
-def test_drawers_group_when_applied_front_positions_differ():
+def test_drawer_boxes_group_after_applied_fronts_are_removed():
     assembly = cq.Assembly()
     parts = []
     codes = {}
     for index, offset in enumerate((0, 300, 600, 900)):
         for component, origin, code in (
             ("bottom", (0, 0, 0), "P01"),
-            ("drawer_front", (0, -15 - index, 30 + index), "P02"),
+            ("side_left", (10, 0, 0), "P02"),
+            ("drawer_front", (0, -15 - index, 30 + index), "P03"),
         ):
             ident = f"drawer-{index}.{component}"
             assembly.add(
@@ -147,11 +155,15 @@ def test_drawers_group_when_applied_front_positions_differ():
     figures = root.findall("figure")
     assert len(figures) == 1
     assert figures[0].find("figcaption").text == "Drawer ×4"
-    assert sorted(json.loads(figures[0].get("data-part-ids"))) == sorted(codes)
+    assert sorted(json.loads(figures[0].get("data-part-ids"))) == sorted(
+        f"drawer-{index}.{component}"
+        for index in range(4)
+        for component in ("bottom", "side_left")
+    )
     panels = root.findall(".//s:g[@data-part-id]", NS)
     assert {panel.get("data-part-id") for panel in panels} == {
         "drawer-0.bottom",
-        "drawer-0.drawer_front",
+        "drawer-0.side_left",
     }
     for panel in panels:
         ids = json.loads(panel.get("data-part-ids"))
@@ -160,20 +172,20 @@ def test_drawers_group_when_applied_front_positions_differ():
     assert len(root.findall(".//s:text", NS)) == 2
 
 
-def test_drawers_keep_front_codes_and_box_placement_in_signature():
+def test_drawer_box_layout_dedup_ignores_fronts_but_keeps_body_differences():
     assembly = cq.Assembly()
     parts = []
     codes = {}
-    for name, bottom_x, front_code in (
-        ("base", 0, "P02"),
-        ("other-front", 0, "P03"),
-        ("other-box", 8, "P02"),
-        ("shifted-front", 0, "P02"),
+    for name, side_x, front_x in (
+        ("base", 0, 0),
+        ("other-front", 0, 100),
+        ("other-box", 8, 0),
+        ("shifted-front", 0, 200),
     ):
         for component, x, code in (
             ("bottom", 0, "P01"),
-            ("side_left", bottom_x, "P04"),
-            ("drawer_front", 0, front_code),
+            ("side_left", side_x, "P04"),
+            ("drawer_front", front_x, "P02" if front_x < 200 else "P03"),
         ):
             ident = f"{name}.{component}"
             assembly.add(
@@ -198,7 +210,7 @@ def test_drawers_keep_front_codes_and_box_placement_in_signature():
     captions = sorted(
         figure.find("figcaption").text for figure in root.findall("figure")
     )
-    assert captions == ["Drawer", "Drawer", "Drawer ×2"]
+    assert captions == ["Drawer", "Drawer ×3"]
 
 
 def test_different_placed_orientations_do_not_share_view():
@@ -214,6 +226,71 @@ def test_different_placed_orientations_do_not_share_view():
 def test_missing_geometry_has_no_invented_diagram():
     assert exploded_views(None, [{"id": "panel"}], {}) == ""
     assert exploded_views(cq.Assembly(), [], {}) == ""
+
+
+def test_explicit_roof_component_keeps_a_clear_separate_caption():
+    assembly = cq.Assembly()
+    shape = cq.Workplane("XY").box(120, 80, 12)
+    assembly.add(shape, name="body")
+    assembly.add(shape.translate((0, 100, 0)), name="roof")
+    parts = [
+        {"id": "body", "role": "body", "cabinet_id": "upper", "component": "side_left"},
+        {"id": "roof", "role": "roof", "cabinet_id": "upper.roof", "component": "roof"},
+    ]
+    html = exploded_views(assembly, parts, {"body": "P01", "roof": "P01"})
+    root = ET.fromstring(f"<div>{html}</div>")
+    captions = sorted(
+        figure.find("figcaption").text for figure in root.findall("figure")
+    )
+    assert captions == ["Cabinet body", "Cabinet roof"]
+
+
+def test_space_carcass_moves_but_structural_divider_stays_assembled():
+    assembly = cq.Assembly()
+    wall = cq.Workplane("XY").box(18, 120, 80).translate((-100, 0, 0))
+    divider = cq.Workplane("XY").box(18, 120, 80).translate((0, 0, 0))
+    assembly.add(wall, name="wall")
+    assembly.add(divider, name="divider")
+    axes = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    parts = [
+        {
+            "id": "wall",
+            "role": "wall",
+            "cabinet_id": "cabinet",
+            "kind": "carcass",
+            "stock": {"thickness_axis": 0},
+            "transform": {"axes": axes},
+        },
+        {
+            "id": "divider",
+            "role": "divider",
+            "cabinet_id": "cabinet",
+            "kind": "divider",
+            "stock": {"thickness_axis": 0},
+            "transform": {"axes": axes},
+        },
+    ]
+    rows = _layout(parts, assembly, {"wall": "P01", "divider": "P02"})
+    exploded = dict((part["id"], shape) for part, shape in _explode(rows))
+    wall_shift = tuple(
+        b - a
+        for a, b in zip(
+            wall.val().Center().toTuple(),
+            exploded["wall"].Center().toTuple(),
+            strict=True,
+        )
+    )
+    divider_shift = tuple(
+        b - a
+        for a, b in zip(
+            divider.val().Center().toTuple(),
+            exploded["divider"].Center().toTuple(),
+            strict=True,
+        )
+    )
+    assert wall_shift[0] < 0
+    assert wall_shift[1:] == pytest.approx((0, 0))
+    assert divider_shift == pytest.approx((0, 0, 0))
 
 
 def test_profile_records_use_owner_and_explicit_drawer_metadata():
@@ -247,7 +324,6 @@ def test_profile_records_use_owner_and_explicit_drawer_metadata():
     }
     assert {p["id"] for p in groups[("upper", "upper.section-1.drawer")]} == {
         "upper.section-1.drawer.bottom",
-        "upper.section-1.drawer_front",
     }
 
 
@@ -297,30 +373,74 @@ def test_exploded_projection_keeps_world_z_up_and_matches_cad_edges():
     assert max(y for _, y in corners) == pytest.approx(bounds.ylen, abs=1e-6)
 
 
-def test_applied_front_and_subfront_explode_into_separate_layers():
+def test_inclined_shell_uses_world_stock_normal_for_explosion():
+    from buratino.exploded_views import _world_normal
+
+    angle = 30
+    shape = (
+        cq.Workplane("XY").box(120, 80, 18).rotate((0, 0, 0), (0, 1, 0), angle).val()
+    )
+    normal = (0.5, 0, 3**0.5 / 2)
+    part = {
+        "id": "roof",
+        "role": "roof",
+        "component": "roof",
+        "local_frame": {"thickness_axis": normal},
+    }
+    assert _world_normal(part, shape) == pytest.approx(normal)
+    row = (("P01",), part, shape)
+    _, exploded = _explode([row])[0]
+    shift = tuple(
+        b - a
+        for a, b in zip(
+            shape.Center().toTuple(), exploded.Center().toTuple(), strict=False
+        )
+    )
+    expected_shift = tuple(shift[0] * value / normal[0] for value in normal)
+    assert shift == pytest.approx(expected_shift)
+
+
+def test_facades_are_removed_and_structural_subfront_stays_in_the_cabinet():
     assembly = cq.Assembly()
-    parts = []
-    for ident, y, width, height in (
-        ("applied-front", 0, 200, 100),
-        ("subfront", 18, 170, 80),
-        ("back", 250, 170, 80),
-    ):
+    parts = [
+        {"id": "door", "role": "door", "component": "door"},
+        {"id": "front", "role": "front", "kind": "drawer_front"},
+        {
+            "id": "legacy-face",
+            "role": "legacy-face",
+            "component": "face",
+            "instance_id": "legacy-drawer",
+        },
+        {"id": "subfront", "role": "subfront", "component": "subfront"},
+        {"id": "back", "role": "back", "component": "back"},
+        {"id": "faceboard", "role": "faceboard", "kind": "applied_faceboard"},
+    ]
+    for part, y in zip(parts, (0, 10, 15, 18, 250, 300), strict=True):
+        if part["id"] in {"door", "front", "legacy-face", "faceboard"}:
+            continue
+        ident = part["id"]
         assembly.add(
-            cq.Workplane("XY").box(width, 18, height).translate((0, y, 0)),
+            cq.Workplane("XY").box(170, 18, 80).translate((0, y, 0)),
             name=ident,
         )
-        parts.append({"id": ident, "role": ident})
-    rows = _layout(parts, assembly, {p["id"]: p["id"] for p in parts})
+    remaining = [part for part in parts if part["id"] in {"subfront", "back"}]
+    rows = _layout(remaining, assembly, {p["id"]: p["id"] for p in remaining})
     original = {part["id"]: shape for _, part, shape in rows}
     copies = dict((part["id"], shape) for part, shape in _explode(rows))
     shifts = {
         ident: copies[ident].Center().y - shape.Center().y
         for ident, shape in original.items()
     }
-    assert shifts["subfront"] < 0
-    assert shifts["applied-front"] == pytest.approx(2 * shifts["subfront"])
-    assert copies["applied-front"].BoundingBox().ymax < (
-        copies["subfront"].BoundingBox().ymin - 50
-    )
+    assert shifts["subfront"] == pytest.approx(0)
+    assert shifts["back"] > 0
+    assert {p["id"] for p in _items(parts)[("cabinet", None)]} == {"subfront", "back"}
+    html = exploded_views(assembly, parts, {p["id"]: p["id"] for p in parts})
+    root = ET.fromstring(f"<div>{html}</div>")
+    rendered_ids = {
+        ident
+        for figure in root.findall("figure")
+        for ident in json.loads(figure.get("data-part-ids"))
+    }
+    assert rendered_ids == {"subfront", "back"}
     for ident, shape in copies.items():
         assert shape.Volume() == pytest.approx(original[ident].Volume())

@@ -29,6 +29,11 @@ def test_real_native_report_has_cabinet_and_drawer_summaries(root):
     assert len(result["upper_cabinets"]) == 1
     assert result["upper_cabinets"][0]["id"] == "upper"
     assert len(result["parts"]) == 91
+    assert len(result["joints"]) == 136
+    assert all(len(joint["mortises"]) == 2 for joint in result["joints"])
+    assert any(
+        check["code"] == "joinery.sloped_cap_unverified" for check in result["checks"]
+    )
     assert len(result["drawers"]) == len(result["hardware"]) == 9
     assert {item["slide_key"] for item in result["drawers"]} == {
         "buratino_hettich_quadro_v6_eb20_480",
@@ -163,11 +168,39 @@ def test_native_drawer_report_keeps_stock_and_describes_cuts(root, tmp_path):
     assert "face T+ (stock L/W/T)" in document
     assert "Profile cut: follow the dimensioned outline shown." in document
     assert "Bevel:" in document
+    assert "20 × 6 mm; depth 12 mm" in document
+    assert "20 × 6 mm; depth 28 mm" in document
     assert "Hardware requirements" not in document
     assert 'id="assembly"' in document
     assert "Profile operations" not in document
     assert "calculation JSON" not in document
     assert not (tmp_path / "assembly.html").exists()
+
+
+def test_native_mortise_notes_use_the_stock_plane_axes():
+    from buratino.machining_notes import machining_notes
+
+    notes = machining_notes(
+        {
+            "operations": [
+                {
+                    "type": "mortise",
+                    "coordinate_frame": "stock_lwt",
+                    "face": "x-",
+                    "axis": "u",
+                    "u": 50,
+                    "v": 9,
+                    "length": 20,
+                    "width": 6,
+                    "depth": 28,
+                }
+            ]
+        }
+    )
+    assert notes == [
+        "Mortise: 20 × 6 mm; depth 28 mm; center W 50, T 9 mm; "
+        "length along W; face L- (stock L/W/T)."
+    ]
 
 
 def test_exploded_view_receives_native_group_metadata_without_mutating_result(

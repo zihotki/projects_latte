@@ -409,9 +409,10 @@ def _calculate_native_assembly(project: ProjectInputs) -> Calculation:
         "upper_cabinets": upper_cabinets,
         "parts": parts,
         "drawers": drawers,
-        "joints": [],
+        "joints": list(native.joints),
         "hardware": data["hardware"],
         "checks": [
+            *native.joinery_checks,
             *[
                 {**issue, "message": "Native cap contact or overlap check failed."}
                 for issue in geometry_issues

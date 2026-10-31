@@ -1,6 +1,7 @@
 """Native draft of the measured real assembly; joinery remains unverified."""
 
 from cabineteer.cabinet import CabinetConfig
+from cabineteer.joinery import DominoJoinery
 from cabineteer.layout import Frame, LayoutLeaf, Row, Stack
 from cabineteer.profiles import (
     ProfileAssemblySpec,
@@ -126,6 +127,8 @@ profile = ProfileAssemblySpec(
     cap_material="Melamine-faced board",
     shared_owner="upper",
     continuous_bottom=True,
+    joinery=DominoJoinery(),
+    corner_joinery=DominoJoinery(spacing=90),
     roof_joint="level_over_divider",
     faces=ProfileFaceSpec(
         outer_reveal_mm=2,

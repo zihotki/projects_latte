@@ -8,14 +8,41 @@ from .panel_views import _projected_geometry, _svg_projector
 
 _DIRECTION = (1, -1.5, 1.1)
 _X_DIRECTION = (1.5, 1, 0)
+_FACADE_KINDS = {
+    "applied_faceboard",
+    "applied_drawer_front",
+    "door",
+    "drawer_face",
+    "drawer_front",
+}
+_SHELL_COMPONENTS = {
+    "back",
+    "bottom",
+    "cap",
+    "carcass",
+    "left_side",
+    "roof",
+    "roof_cap",
+    "right_side",
+    "side",
+    "side_left",
+    "side_right",
+    "top",
+}
+
+
+def _is_facade(part):
+    return any(part.get(key) in _FACADE_KINDS for key in ("component", "kind")) or (
+        part.get("component") == "face" and bool(part.get("instance_id"))
+    )
 
 
 def _items(parts):
     groups = defaultdict(list)
     for part in parts:
+        if _is_facade(part):
+            continue
         drawer = part.get("instance_id") or part.get("motion_group")
-        if part.get("component") == "door":
-            drawer = None
         cabinet = part.get("cabinet_id") or part.get("owner") or "cabinet"
         groups[(cabinet, drawer)].append(part)
     return groups
@@ -27,76 +54,102 @@ def _bounds(shapes):
     return Compound.makeCompound(shapes).BoundingBox()
 
 
-def _is_applied_drawer_front(part):
-    return part.get("component") == "drawer_front"
-
-
-def _layout(members, assembly, part_codes, *, drawer=False):
+def _layout(members, assembly, part_codes):
     shapes = [assembly.objects[part["role"]].toCompound() for part in members]
-    body_shapes = [
-        shape
-        for part, shape in zip(members, shapes, strict=True)
-        if not (drawer and _is_applied_drawer_front(part))
-    ]
-    bounds = _bounds(body_shapes or shapes)
+    bounds = _bounds(shapes)
     origin = (bounds.xmin, bounds.ymin, bounds.zmin)
     rows = []
     for part, shape in zip(members, shapes, strict=True):
         box = shape.BoundingBox()
         code = part_codes[part["id"]]
-        if drawer and _is_applied_drawer_front(part):
-            # Applied fronts can have a small placement offset. Keep their
-            # code and orientation-sensitive dimensions, but ignore position.
-            signature = (
-                code,
-                round(box.xlen, 5),
-                round(box.ylen, 5),
-                round(box.zlen, 5),
-            )
-        else:
-            signature = (
-                code,
-                *(
-                    round(v - origin[i % 3], 5)
-                    for i, v in enumerate(
-                        (box.xmin, box.ymin, box.zmin, box.xmax, box.ymax, box.zmax)
-                    )
-                ),
-            )
+        signature = (
+            code,
+            *(
+                round(v - origin[i % 3], 5)
+                for i, v in enumerate(
+                    (box.xmin, box.ymin, box.zmin, box.xmax, box.ymax, box.zmax)
+                )
+            ),
+        )
         rows.append((signature, part, shape))
     return sorted(rows, key=lambda row: row[0])
 
 
-def _explode(rows):
+def _axis_vector(value):
+    if isinstance(value, str) and value in "xyz" and len(value) == 1:
+        return tuple(float(value == axis) for axis in "xyz")
+    if isinstance(value, list | tuple) and len(value) == 3:
+        vector = tuple(float(v) for v in value)
+        if sum(v * v for v in vector) > 1e-12:
+            length = sum(v * v for v in vector) ** 0.5
+            return tuple(v / length for v in vector)
+    return None
+
+
+def _world_normal(part, shape):
+    frame = part.get("local_frame")
+    if isinstance(frame, dict):
+        normal = _axis_vector(frame.get("thickness_axis"))
+        if normal:
+            return normal
+    stock = part.get("stock")
+    transform = part.get("transform")
+    if isinstance(stock, dict) and isinstance(transform, dict):
+        thickness_axis = stock.get("thickness_axis")
+        axes = transform.get("axes")
+        if (
+            type(thickness_axis) is int
+            and 0 <= thickness_axis < 3
+            and isinstance(axes, list | tuple)
+            and len(axes) == 3
+        ):
+            normal = _axis_vector(axes[thickness_axis])
+            if normal:
+                return normal
+    normal = _axis_vector(part.get("surface_normal_axis_local"))
+    if normal:
+        return normal
+    # Use the broad planar face normal for records without a usable stock frame.
+    faces = sorted(shape.Faces(), key=lambda face: face.Area(), reverse=True)
+    if faces:
+        return _axis_vector(faces[0].normalAt().toTuple())
+    return (0.0, 0.0, 1.0)
+
+
+def _is_shell_component(part):
+    component = part.get("component") or part.get("kind")
+    return component in _SHELL_COMPONENTS
+
+
+def _explode(rows, *, drawer=False):
     bounds = _bounds([row[2] for row in rows])
     center = bounds.center.toTuple()
-    gap = max(bounds.xlen, bounds.ylen, bounds.zlen) * 0.28
-    layers = defaultdict(list)
-    for index, (_, _, shape) in enumerate(rows):
-        box = shape.BoundingBox()
-        axis = min(range(3), key=lambda i: (box.xlen, box.ylen, box.zlen)[i])
-        distance = box.center.toTuple()[axis] - center[axis]
-        layers[(axis, 1 if distance >= 0 else -1)].append((abs(distance), index))
-    offsets = {}
-    for (axis, direction), members in layers.items():
-        for layer, (_, index) in enumerate(sorted(members), start=1):
-            offset = [0.0, 0.0, 0.0]
-            offset[axis] = gap * direction * layer
-            offsets[index] = tuple(offset)
-    return [
-        (part, shape.translate(offsets[index]))
-        for index, (_, part, shape) in enumerate(rows)
-    ]
+    gap = max(bounds.xlen, bounds.ylen, bounds.zlen) * 0.08
+    panels = []
+    for _, part, shape in rows:
+        if not drawer and not _is_shell_component(part):
+            panels.append((part, shape))
+            continue
+        normal = _world_normal(part, shape)
+        delta = tuple(
+            a - b for a, b in zip(shape.Center().toTuple(), center, strict=True)
+        )
+        direction = (
+            1 if sum(a * b for a, b in zip(delta, normal, strict=True)) >= 0 else -1
+        )
+        offset = tuple(direction * gap * value for value in normal)
+        panels.append((part, shape.translate(offset)))
+    return panels
 
 
 def _front_facing(a, b, c):
     return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) < -1e-8
 
 
-def _drawing(rows, copies):
+def _drawing(rows, copies, *, drawer=False):
     from cadquery.occ_impl.exporters.svg import makeSVGedge
 
-    panels = _explode(rows)
+    panels = _explode(rows, drawer=drawer)
     projections = [
         _projected_geometry(shape, _DIRECTION, _X_DIRECTION) for _, shape in panels
     ]
@@ -191,12 +244,22 @@ def exploded_views(assembly, parts: list[dict], part_codes: dict[str, str]) -> s
         return ""
     layouts = {}
     for (_, drawer), members in _items(parts).items():
-        rows = _layout(members, assembly, part_codes, drawer=bool(drawer))
-        key = (bool(drawer), tuple(row[0] for row in rows))
+        rows = _layout(members, assembly, part_codes)
+        components = {row[1].get("component") or row[1].get("kind") for row in rows}
+        kind = (
+            "drawer"
+            if drawer
+            else "roof"
+            if components and components <= {"cap", "roof", "roof_cap"}
+            else "body"
+        )
+        key = (kind, tuple(row[0] for row in rows))
         layouts.setdefault(key, []).append(rows)
     figures = []
-    for (drawer, _), copies in layouts.items():
-        title = "Drawer" if drawer else "Cabinet body"
+    for (kind, _), copies in layouts.items():
+        title = {"drawer": "Drawer", "roof": "Cabinet roof", "body": "Cabinet body"}[
+            kind
+        ]
         if len(copies) > 1:
             title += f" ×{len(copies)}"
         ids = [row[1]["id"] for copy in copies for row in copy]
@@ -204,7 +267,7 @@ def exploded_views(assembly, parts: list[dict], part_codes: dict[str, str]) -> s
             '<figure class="exploded-item" style="margin:1em 0;break-inside:avoid" '
             f'data-part-ids="{escape(json.dumps(ids), quote=True)}">'
             f"<figcaption>{title}</figcaption>"
-            + _drawing(copies[0], copies)
+            + _drawing(copies[0], copies, drawer=kind == "drawer")
             + "</figure>"
         )
     return "".join(figures)

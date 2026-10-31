@@ -255,7 +255,7 @@ def panel_groups(
         for joint in joints or []:
             # Space joints are already modeled and included in machining_signature.
             # Their report graph contains per-instance IDs, not extra processing.
-            if joint.get("type") == "space_domino":
+            if joint.get("type") in {"space_domino", "native_domino"}:
                 continue
             if part["id"] not in joint.get("parts", []):
                 continue

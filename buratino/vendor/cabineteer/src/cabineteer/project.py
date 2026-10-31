@@ -471,8 +471,13 @@ class CabinetProject:
             }
             for item in spec.upper_drawers
         )
-        return ProfileAssembly(
-            result.layout, parts, hardware=hardware, part_grain=tuple(self.part_grain)
+        from .native_joinery import apply_native_joinery
+
+        return apply_native_joinery(
+            ProfileAssembly(
+                result.layout, parts, hardware=hardware, part_grain=tuple(self.part_grain)
+            ),
+            spec,
         )
 
 

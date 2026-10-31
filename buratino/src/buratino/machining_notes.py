@@ -43,7 +43,13 @@ def machining_notes(part: dict) -> list[str]:
                 notes.append("Profile cut: follow the dimensioned outline shown.")
             continue
         face = cut.get("face", "")
-        suffix = f"; face {face} (stock XYZ)."
+        frame = "L/W/T" if cut.get("coordinate_frame") == "stock_lwt" else "XYZ"
+        uv_names = ("U", "V")
+        if frame == "L/W/T":
+            normal = "xyz".index(face[0])
+            uv_names = tuple("LWT"[i] for i in range(3) if i != normal)
+            face = "LWT"[normal] + face[1:]
+        suffix = f"; face {face} (stock {frame})."
         if cut.get("role") == "bottom_groove":
             note = (
                 f"Bottom groove: {cut['size_v']:g} mm wide × {cut['depth']:g} mm deep; "
@@ -75,12 +81,14 @@ def machining_notes(part: dict) -> list[str]:
             if members is None:
                 continue
             if len(members) == 1:
-                centers = f"center U {cut['u']:g}, V {cut['v']:g} mm"
+                centers = (
+                    f"center {uv_names[0]} {cut['u']:g}, {uv_names[1]} {cut['v']:g} mm"
+                )
             else:
                 rows = {}
                 for member in members:
                     rows.setdefault(member["u"], []).append(member["v"])
-                centers = "centers U/V (mm): " + "; ".join(
+                centers = f"centers {'/'.join(uv_names)} (mm): " + "; ".join(
                     f"{u:g}/(" + ", ".join(f"{v:g}" for v in values) + ")"
                     for u, values in rows.items()
                 )
@@ -88,7 +96,7 @@ def machining_notes(part: dict) -> list[str]:
             note = (
                 f"{count}: {cut['length']:g} × {cut['width']:g} mm; "
                 f"depth {cut['depth']:g} mm; {centers}; "
-                f"length along {cut['axis'].upper()}"
+                f"length along {uv_names[0 if cut['axis'] == 'u' else 1]}"
             )
         elif kind in {"rabbet", "bevel"}:
             size = (

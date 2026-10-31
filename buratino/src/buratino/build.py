@@ -340,7 +340,6 @@ def render_documents(
             "grain_direction",
             "grain_status",
             "surface_normal_axis_local",
-            "geometry",
             "profile_mm",
             "extrusion_mm",
             "operations",
@@ -355,6 +354,7 @@ def render_documents(
                     if isinstance(value, dict | list | tuple)
                     else value
                     for key, value in part.items()
+                    if key in fields
                 }
             )
         (directory / "parts.csv").write_text(buffer.getvalue(), encoding="utf-8")

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 
 from .allocation import Fixed, Fr, Natural
 from .inclined import prism
+from .joinery import DominoJoinery, validate_domino_joinery
 from .layout import (
     Bounds3D,
     Frame,
@@ -91,6 +92,7 @@ class ProfilePart:
     world_offset_mm: tuple[float, float, float] = (0, 0, 0)
     operations: tuple = ()
     mounting: str = ""
+    machined_shape: object = field(default=None, compare=False, repr=False)
 
     @property
     def local_frame(self) -> LocalFrame:
@@ -157,9 +159,15 @@ class ProfilePart:
         )
 
     def placed(self, offset_mm: tuple[float, float, float]) -> ProfilePart:
-        return replace(self, world_offset_mm=offset_mm)
+        shape = self.machined_shape
+        if shape is not None:
+            shift = tuple(new - old for new, old in zip(offset_mm, self.world_offset_mm))
+            shape = shape.translate(shift)
+        return replace(self, world_offset_mm=offset_mm, machined_shape=shape)
 
     def solid(self):
+        if self.machined_shape is not None:
+            return self.machined_shape
         x, y, z = self.world_offset_mm
         return prism(self.profile_xz_mm, self.extrusion_mm).translate(
             (x, y + self.y_mm, z)
@@ -328,6 +336,8 @@ class ProfileAssembly:
     hardware_status: str = "unverified"
     hardware: tuple[dict, ...] = ()
     part_grain: tuple = ()
+    joints: tuple[dict, ...] = ()
+    joinery_checks: tuple[dict, ...] = ()
 
 
 def _layout_with_profile_heights(
@@ -922,6 +932,12 @@ class ProfileAssemblySpec:
     lower_drawers: tuple[ProfileLowerDrawerSpec, ...] = ()
     lower_back_material: str = ""
     continuous_bottom: bool = False
+    joinery: DominoJoinery | None = None
+    corner_joinery: DominoJoinery | None = None
+
+    def __post_init__(self):
+        validate_domino_joinery(self.joinery, "profile_assembly.joinery")
+        validate_domino_joinery(self.corner_joinery, "profile_assembly.corner_joinery")
 
 
 def resolved_profile_spec(spec: ProfileAssemblySpec) -> ProfileAssemblySpec:
@@ -983,6 +999,11 @@ def profile_spec_from_dict(data: dict) -> ProfileAssemblySpec:
         ),
         lower_back_material=data.get("lower_back_material", ""),
         continuous_bottom=data.get("continuous_bottom", False),
+        joinery=DominoJoinery(**data["joinery"]) if data.get("joinery") else None,
+        corner_joinery=(
+            DominoJoinery(**data["corner_joinery"])
+            if data.get("corner_joinery") else None
+        ),
     )
 
 
@@ -1876,7 +1897,7 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
     viewer_parts = {}
     for part in assembly.parts:
         geometry = None
-        if isinstance(part, NativeCarcassPart):
+        if isinstance(part, NativeCarcassPart) or part.machined_shape is not None:
             vertices, triangles = part.solid().val().tessellate(0.01)
             geometry = {
                 "kind": "world_mesh",
@@ -2056,6 +2077,8 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
         },
         "hardware_status": assembly.hardware_status,
         "hardware": assembly.hardware,
+        "joints": assembly.joints,
+        "joinery_checks": assembly.joinery_checks,
         "status": "draft",
         "manufacturing_ready": False,
     }

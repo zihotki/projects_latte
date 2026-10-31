@@ -194,14 +194,16 @@ def test_continuous_bottom_is_opt_in_and_requires_shared_owner(assembly):
     assert len(legacy_bottoms) == 4
     upper_carcass_components = {"side_left", "side_right", "divider", "bottom", "back"}
     old_volume = sum(
-        part.solid().val().Volume()
+        replace(part, machined_shape=None).solid().val().Volume()
         for part in legacy.parts
         if part.owner == "upper" and part.component in upper_carcass_components
+        and ".drawer." not in part.id
     )
     new_volume = sum(
-        part.solid().val().Volume()
+        replace(part, machined_shape=None).solid().val().Volume()
         for part in assembly.parts
         if part.owner == "upper" and part.component in upper_carcass_components
+        and ".drawer." not in part.id
     )
     assert new_volume == pytest.approx(old_volume)
     with pytest.raises(ValueError, match="requires a shared carcass"):

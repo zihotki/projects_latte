@@ -75,3 +75,22 @@ The project tools work on both cabinet configs and native project inputs.
 `evaluate_project` resolves and checks the project; project cutlists and
 visualizations consume the saved project. See the
 [MCP reference](mcp.md) for the tool names and schemas.
+
+Profile assemblies can set `joinery=DominoJoinery()` for carcass contacts and
+`corner_joinery=DominoJoinery(spacing=90)` for drawer box corners. Both recipes
+are optional. They use the same row resolver and oval mortise cutters as Space
+components. The recipe cuts the existing solids and retains stock sizes, grain,
+profiles and placement frames.
+
+Supported carcass contacts are walls against fixed bottoms, floors and tops,
+and walls against a level roof cap. Drawer corners join each side to its inner
+front and back. Back panels, adjustable shelves, facades and support frames do
+not receive these cuts. Each paired mortise has one shared world center and
+separate local stock L/W/T machining coordinates. The default 20 × 6 mm slot
+uses 12 mm face depth and 28 mm end depth. Depth and finished-profile fit are
+checked before cuts are accepted.
+
+Sloped cap joints remain unverified. They require an oblique mating frame and
+matched paired mortise centers; the axis-aligned recipe does not cut them. This
+limit is recorded as `joinery.sloped_cap_unverified`. Modeled joints do not make
+the draft assembly ready for manufacture.
