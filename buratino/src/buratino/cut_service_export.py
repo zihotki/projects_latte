@@ -227,6 +227,15 @@ def export_cutlist(
     index = {
         "schema_version": 1,
         "provider": provider,
+        **{
+            key: plan.summary[key]
+            for key in (
+                "project_name",
+                "label_prefix",
+                "label_prefix_source",
+                "blank_mapping",
+            )
+        },
         "status": plan.status,
         "source_revision": manifest["revision"],
         "provider_product_selection_required": plan.summary.get(

@@ -95,6 +95,15 @@ def write_cutlists(
             + f": {html.escape(issue['message'])}</li>"
             for issue in issues
         )
+        mapping_rows = "".join(
+            f"<tr><td><code>{html.escape(item['label'])}</code></td><td>"
+            + ", ".join(
+                f"{html.escape(part['part_code'])} × {part['quantity']}"
+                for part in item["parts"]
+            )
+            + "</td></tr>"
+            for item in plan.summary["blank_mapping"]
+        )
         sections.append(
             f"<h3>{provider.upper()}</h3><p>{coverage}"
             + (
@@ -109,6 +118,14 @@ def write_cutlists(
                 "</thead><tbody>" + "".join(rows) + "</tbody></table>"
                 if rows
                 else "<p>No CSV files available.</p>"
+            )
+            + (
+                "<details><summary>Supplier blanks and drawing codes</summary>"
+                "<table><thead><tr><th>Supplier blank</th>"
+                "<th>Drawing codes × quantity</th>"
+                "</tr></thead><tbody>" + mapping_rows + "</tbody></table></details>"
+                if mapping_rows
+                else ""
             )
             + (
                 f'<details id="{issue_id}"'

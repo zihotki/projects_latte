@@ -236,7 +236,7 @@ def test_core_summary_is_used_for_file_context():
 
 
 @pytest.mark.parametrize(
-    "code,label", [("P07", "P07"), ("LEFT SIDE", "L01"), ("a" * 23, "L01")]
+    "code,label", [("P07", "PRJ-B01"), ("LEFT SIDE", "PRJ-B01"), ("a" * 23, "PRJ-B01")]
 )
 def test_cli_reuses_captured_report_codes_without_cad(
     tmp_path, monkeypatch, code, label
@@ -260,3 +260,53 @@ def test_cli_reuses_captured_report_codes_without_cad(
     (build / "result.json").write_text(json.dumps(result))
     with pytest.raises(InputError, match="report part codes"):
         cut_service_export.export_cutlist(project, "opmaatzagen")
+
+
+@pytest.mark.parametrize("prefix", [None, "CUSTOM"])
+def test_cli_index_keeps_blank_metadata_and_prefix_override(
+    tmp_path, monkeypatch, prefix
+):
+    project, build, identity, revision = _captured_project(
+        tmp_path, monkeypatch, quantity=2
+    )
+    result = json.loads((build / "result.json").read_text())
+    result["name"] = "two-under-window"
+    result["parts"].append({**result["parts"][0], "id": "panel.two", "quantity": 3})
+    result["report_part_codes"]["panel.two"] = "P08"
+    (build / "result.json").write_text(json.dumps(result))
+    config = {"label_prefix": prefix} if prefix else None
+    config_path = tmp_path / "export-config.json" if config else None
+    if config_path:
+        config_path.write_text(json.dumps(config))
+    cut_service_export.export_cutlist(project, "opmaatzagen", config_path=config_path)
+    exported = project / "exports" / revision / "opmaatzagen"
+    index = json.loads((exported / "index.json").read_text())
+    planned = plan_export(result, "opmaatzagen", config)
+    for key in ("project_name", "label_prefix", "label_prefix_source", "blank_mapping"):
+        assert index[key] == planned.summary[key]
+    assert index["label_prefix"] == (prefix or "TUW")
+    assert index["label_prefix_source"] == ("config" if prefix else "project_name")
+    assert index["blank_mapping"] == [
+        {
+            "label": f"{prefix or 'TUW'}-B01",
+            "parts": [
+                {"part_code": "P07", "quantity": 2},
+                {"part_code": "P08", "quantity": 3},
+            ],
+        }
+    ]
+    assert index["source_input_identity"] == identity
+    assert index["source_revision"] == revision
+    assert index["file_context"]
+    if prefix is None:
+        from buratino.cut_service_report import write_cutlists
+
+        write_cutlists(build, result)
+        captured = json.loads((build / "cutlists/opmaatzagen/index.json").read_text())
+        for key in (
+            "project_name",
+            "label_prefix",
+            "label_prefix_source",
+            "blank_mapping",
+        ):
+            assert index[key] == captured[key]

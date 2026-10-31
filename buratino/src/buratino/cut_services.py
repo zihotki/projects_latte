@@ -6,11 +6,9 @@ import csv
 import json
 import math
 import re
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass
 from hashlib import sha256
 from io import StringIO
-
-from .grouping import machining_signature
 
 
 @dataclass(frozen=True)
@@ -96,9 +94,20 @@ def _round_up_mm(value: int | float) -> int:
 
 def _validate_config(config: dict | None, parts: list[dict]) -> dict:
     if config is None:
-        return {"materials": {}, "parts": {}}
-    if not isinstance(config, dict) or set(config) - {"materials", "parts"}:
-        raise ValueError("config must contain only materials and parts maps")
+        return {"materials": {}, "parts": {}, "label_prefix": None}
+    if not isinstance(config, dict) or set(config) - {
+        "materials",
+        "parts",
+        "label_prefix",
+    }:
+        raise ValueError("config must contain only materials, parts and label_prefix")
+    prefix = config.get("label_prefix")
+    if prefix is not None and (
+        not isinstance(prefix, str) or not re.fullmatch(r"[A-Z0-9]{1,10}", prefix)
+    ):
+        raise ValueError(
+            "label_prefix must contain 1 to 10 uppercase letters or digits"
+        )
     materials = config.get("materials", {})
     overrides = config.get("parts", {})
     if not isinstance(materials, dict) or not isinstance(overrides, dict):
@@ -176,7 +185,7 @@ def _validate_config(config: dict | None, parts: list[dict]) -> dict:
                     )
             elif "size_mm" in finish:
                 raise ValueError(f"part {part_id!r} {edge}: mitre has no size_mm")
-    return {"materials": materials, "parts": overrides}
+    return {"materials": materials, "parts": overrides, "label_prefix": prefix}
 
 
 def _filename_hint(material: str, panel_type: str, thickness: int | float) -> str:
@@ -664,29 +673,26 @@ def plan_export(
             continue
         if source_id not in part_codes:
             raise ValueError(f"Report part code missing for {source_id}")
-        order = replace(order, label=part_codes[source_id])
-        # Exclude only placement and quantity. Exact blanks, basis, grain and
-        # requested finishes must agree even when a provider cannot encode them.
-        properties = asdict(order)
-        for field in ("source_id", "quantity", "frame_world"):
-            properties.pop(field)
-        properties["machining"] = machining_signature(part)
-        signatures[source_id] = json.dumps(
-            properties, sort_keys=True, separators=(",", ":")
-        )
         row = _row(order, provider, issues)
         key = (
             order.material,
             order.panel_type,
-            order.thickness,
+            int(order.thickness) if order.thickness % 1 == 0 else order.thickness,
             order.provider_material,
             order.purchase_type,
+        )
+        # Supplier identity contains only material context and the final encoded
+        # order fields. Manufacturing identity stays in the per-source trace.
+        signatures[source_id] = json.dumps(
+            [key, row[2:] if provider == "zagenzagen" else row[1:3] + row[4:]],
+            sort_keys=True,
+            separators=(",", ":"),
         )
         grouped.setdefault(key, []).append((order, row))
         trace.append(
             {
                 "source_id": source_id,
-                "label": order.label,
+                "label": "",
                 "part_code": part_codes[source_id],
                 "csv_rows": [],
                 "outcome": "exported",
@@ -707,6 +713,8 @@ def plan_export(
                 "basis": order.basis,
                 "frame_world": order.frame_world,
                 "edges": order.edges,
+                "operations": part.get("operations", []),
+                "source_stock": part.get("stock"),
             }
         )
     traces_by_id = {
@@ -714,36 +722,18 @@ def plan_export(
     }
     files: dict[str, str] = {}
     groups: list[dict] = []
-    # Label variants across all material files, not just within one file.
-    by_code = {}
-    for members in grouped.values():
-        for order, _ in members:
-            by_code.setdefault(order.label, set()).add(signatures[order.source_id])
-    labels = {}
-    # Reserve safe report codes before assigning aliases or variant suffixes.
-    safe_codes = {
-        code
-        for code in part_codes.values()
-        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,19}", code)
+    project_name = result.get("name")
+    words = re.findall(
+        r"[A-Za-z0-9]+", project_name if isinstance(project_name, str) else ""
+    )
+    prefix = settings["label_prefix"] or "".join(word[0] for word in words)[:10].upper()
+    prefix = prefix or "PRJ"
+    labels = {
+        signature: f"{prefix}-B{number:02}"
+        for number, signature in enumerate(sorted(set(signatures.values())), 1)
     }
-    used_labels = set(safe_codes)
-    alias_number = 0
-    for code, variants in sorted(by_code.items()):
-        for i, signature in enumerate(sorted(variants), 1):
-            label = code if code in safe_codes else None
-            if label is not None and len(variants) > 1:
-                suffix = f"-{i:02}"
-                label = code[: 20 - len(suffix)] + suffix
-                if label in used_labels:
-                    label = None
-            if label is None:
-                while True:
-                    alias_number += 1
-                    label = f"L{alias_number:02}"
-                    if label not in used_labels:
-                        break
-            used_labels.add(label)
-            labels[signature] = label
+    if any(len(label) > 20 for label in labels.values()):
+        raise ValueError("too many distinct blanks for supplier labels")
     for key in sorted(
         grouped,
         key=lambda item: tuple("" if value is None else str(value) for value in item),
@@ -832,6 +822,36 @@ def plan_export(
     )
     summary = {
         "provider": provider,
+        "project_name": project_name,
+        "label_prefix": prefix,
+        "label_prefix_source": "config"
+        if settings["label_prefix"]
+        else "project_name"
+        if words
+        else "fallback",
+        "blank_mapping": [
+            {
+                "label": label,
+                "parts": [
+                    {
+                        "part_code": code,
+                        "quantity": sum(
+                            item["quantity"]
+                            for item in trace
+                            if item.get("label") == label and item["part_code"] == code
+                        ),
+                    }
+                    for code in sorted(
+                        {
+                            item["part_code"]
+                            for item in trace
+                            if item.get("label") == label
+                        }
+                    )
+                ],
+            }
+            for label in sorted(labels.values())
+        ],
         "provider_product_selection_required": True,
         "source_revision": result.get("source_revision"),
         "status": status,

@@ -419,7 +419,7 @@ def test_report_codes_merge_identical_parts_and_trace_chunk_sources(
     assert [int(row[qindex]) for row in parsed] == (
         [500, 102] if provider == "zagenzagen" else [602]
     )
-    assert {row[lindex] for row in parsed} == {"P07"}
+    assert {row[lindex] for row in parsed} == {"PRJ-B01"}
     for source in plan.summary["trace"]:
         assert (
             sum(item["quantity"] for item in source["csv_rows"]) == source["quantity"]
@@ -445,39 +445,72 @@ def test_report_codes_merge_identical_parts_and_trace_chunk_sources(
         assert len(plan.summary["trace"][1]["csv_rows"]) == 2
 
 
-@pytest.mark.parametrize(
-    "difference", ["grain", "finish", "machining", "exact_blank", "material", "code"]
-)
-def test_matching_code_does_not_merge_different_order_requirements(difference):
+@pytest.mark.parametrize("provider", ["zagenzagen", "opmaatzagen"])
+@pytest.mark.parametrize("difference", ["grain", "finish", "material", "thickness"])
+def test_different_supplier_requirements_stay_separate(provider, difference):
     first, second = space_part("a"), space_part("b")
-    codes = {"a": "P01", "b": "P01"}
     config = None
     if difference == "grain":
         second["grain_axis_local"] = "y"
     elif difference == "finish":
-        # Unsupported finishes produce equal CSV blanks, but remain distinct orders.
-        config = {
-            "parts": {
-                "b": {"edge_finishes": {"y-": {"kind": "roundover", "size_mm": 3}}}
-            }
-        }
-    elif difference == "machining":
-        second["operations"] = [{"type": "drill", "diameter": 5}]
-    elif difference == "exact_blank":
-        second["stock"]["dimensions"][0] = 179.9
-        second["stock_mm"]["width"] = 179.9
+        config = {"parts": {"b": {"edge_finishes": {"y-": {"kind": "band"}}}}}
     elif difference == "material":
         second["material"] = "oak"
     else:
-        codes["b"] = "P02"
-    plan = plan_export(
-        {"parts": [first, second]}, "opmaatzagen", config, part_codes=codes
-    )
+        second = space_part("b", dimensions=(180, 400, 16))
+    plan = plan_export({"parts": [first, second]}, provider, config)
     assert plan.summary["row_count"] == 2
-    trace = plan.summary["trace"]
-    assert len({entry["label"] for entry in trace}) == 2
-    assert all(len(entry["label"]) <= 24 for entry in trace)
-    assert {entry["part_code"] for entry in trace} == set(codes.values())
+    assert len({item["label"] for item in plan.summary["trace"]}) == 2
+
+
+@pytest.mark.parametrize("provider", ["zagenzagen", "opmaatzagen"])
+@pytest.mark.parametrize(
+    "difference",
+    [
+        "machining",
+        "exact_blank",
+        "code",
+        "unsupported_finish",
+        "basis",
+        "thickness_number",
+    ],
+)
+def test_equal_supplier_blanks_merge_and_keep_source_trace(provider, difference):
+    first, second = space_part("a"), space_part("b")
+    codes = {"a": "P01", "b": "P02"}
+    config = None
+    if difference == "machining":
+        first["operations"] = [{"id": "groove-a", "type": "groove", "depth": 4}]
+        second["operations"] = [{"id": "mortise-b", "type": "mortise", "depth": 8}]
+    elif difference == "exact_blank":
+        second["stock"]["dimensions"][0] = 179.9
+        second["stock_mm"]["width"] = 179.9
+    elif difference == "unsupported_finish":
+        config = {
+            "parts": {"b": {"edge_finishes": {"y-": {"kind": "mitre", "face": "both"}}}}
+        }
+    elif difference == "thickness_number":
+        second["stock_mm"]["thickness"] = 18.0
+    elif difference == "basis":
+        config = {"parts": {"b": {"show_face": "b"}}}
+    plan = plan_export({"parts": [first, second]}, provider, config, part_codes=codes)
+    assert plan.summary["row_count"] == 1
+    assert plan.summary["blank_mapping"] == [
+        {
+            "label": "PRJ-B01",
+            "parts": [
+                {"part_code": "P01", "quantity": 1},
+                {"part_code": "P02", "quantity": 1},
+            ],
+        }
+    ]
+    trace = {item["source_id"]: item for item in plan.summary["trace"]}
+    for part in (first, second):
+        assert trace[part["id"]]["original_stock_mm"] == part["stock_mm"]
+        assert trace[part["id"]]["operations"] == part.get("operations", [])
+    if difference == "unsupported_finish":
+        assert trace["b"]["edges"]
+        assert any(issue["part_id"] == "b" for issue in plan.summary["issues"])
 
 
 def test_native_copy_placement_does_not_split_report_group():
@@ -501,7 +534,7 @@ def test_native_copy_placement_does_not_split_report_group():
     plan = plan_export(
         {"parts": [first, second]}, "opmaatzagen", part_codes={"a": "P01", "b": "P01"}
     )
-    assert rows(plan, delimiter=",")[0][1][:4] == ["2", "400", "180", "P01"]
+    assert rows(plan, delimiter=",")[0][1][:4] == ["2", "400", "180", "PRJ-B01"]
     assert plan.summary["trace"][1]["frame_world"]["origin_mm"] == [100, 200, 300]
 
 
@@ -526,7 +559,7 @@ def test_chunk_boundary_can_split_one_row_after_a_different_row():
         ("zagenzagen", ";", 0),
     ],
 )
-def test_csv_aliases_preserve_custom_report_codes_and_bound_variants(
+def test_blank_labels_preserve_custom_report_codes_in_trace(
     provider, delimiter, lindex
 ):
     codes = {
@@ -548,10 +581,7 @@ def test_csv_aliases_preserve_custom_report_codes_and_bound_variants(
     )
     assert plan.files == reverse.files
     labels = {item["source_id"]: item["label"] for item in plan.summary["trace"]}
-    assert len(set(labels.values())) == len(parts)
-    assert labels["c"] == "L01"
-    assert labels["d"] == "P07"
-    assert labels["g"] == codes["g"]
+    assert set(labels.values()) == {"PRJ-B01"}
     assert all(0 < len(label) <= 20 and " " not in label for label in labels.values())
     assert {
         item["source_id"]: item["part_code"] for item in plan.summary["trace"]
@@ -560,3 +590,28 @@ def test_csv_aliases_preserve_custom_report_codes_and_bound_variants(
     assert {
         row[lindex] for chunk in rows(plan, delimiter=delimiter) for row in chunk[1:]
     } == set(labels.values())
+
+
+@pytest.mark.parametrize(
+    "name,prefix",
+    [
+        ("two-under-window", "TUW"),
+        ("attic-clothing-storage", "ACS"),
+        ("a-" * 30, "AAAAAAAAAA"),
+        ("", "PRJ"),
+    ],
+)
+def test_project_initials_and_prefix_override(name, prefix):
+    result = {"name": name, "parts": [space_part()]}
+    plan = plan_export(result, "zagenzagen")
+    assert plan.summary["label_prefix"] == prefix
+    assert plan.summary["trace"][0]["label"] == prefix + "-B01"
+    overridden = plan_export(result, "zagenzagen", {"label_prefix": "CUSTOM1234"})
+    assert overridden.summary["trace"][0]["label"] == "CUSTOM1234-B01"
+    assert overridden.summary["label_prefix_source"] == "config"
+
+
+@pytest.mark.parametrize("prefix", ["", "A B", "x", "A" * 11, 1])
+def test_invalid_label_prefix_is_rejected(prefix):
+    with pytest.raises(ValueError, match="label_prefix"):
+        plan_export({"parts": []}, "zagenzagen", {"label_prefix": prefix})

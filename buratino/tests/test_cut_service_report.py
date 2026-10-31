@@ -176,3 +176,19 @@ def test_preview_only_serves_manifest_listed_cutlists(tmp_path, monkeypatch, cat
                 assert request(route + denied)[0] == [404]
     finally:
         server.server_close()
+
+
+def test_report_collapsed_blank_mapping_combines_drawing_codes(tmp_path):
+    result = {
+        "name": "two-under-window",
+        "parts": [part("a", quantity=3), part("b", quantity=5)],
+        "report_part_codes": {"a": "P01", "b": "P02"},
+    }
+    report = write_cutlists(tmp_path, result)
+    assert "<details><summary>Supplier blanks and drawing codes</summary>" in report
+    assert "TUW-B01" in report
+    assert "P01 × 3, P02 × 5" in report
+    for provider in ("zagenzagen", "opmaatzagen"):
+        index = read_json(tmp_path / "cutlists" / provider / "index.json")
+        assert index["row_count"] == 1
+        assert index["groups"][0]["quantity"] == 8

@@ -7,13 +7,20 @@ including omitted source records. The CSV files and their `index.json` source
 traces are captured under `build/REVISION/cutlists/PROVIDER/` and remain with
 that build. `parts.csv` is secondary internal parts data.
 
-CSV names use report part codes, for example `P07`. Repeated parts with the
-same code, exact blank, machining, grain and requested finishes share one row
-with a summed quantity. Different order requirements get separate names, such
-as `P07-01`. CSV labels have at most 20 letters, digits, hyphens or underscores.
-Long report codes or codes with other characters use short aliases such as
-`L01`. The trace preserves the exact report code for each label. Aliases and
-variant names avoid collisions with existing report codes.
+CSV labels identify supplier blanks, for example `TUW-B01` for
+`two-under-window` and `ACS-B01` for `attic-clothing-storage`. The prefix uses
+project name initials, with at most 10 characters (`PRJ` without a project name).
+Labels use at most 20 characters and are stable when source records are reordered.
+The optional `label_prefix` config field accepts 1 to 10 uppercase letters or digits.
+
+Equal final ordered Length, Width and provider edge finishes share one row
+within the same material, product context, panel type and thickness group.
+Report codes, later machining, exact fractional source sizes and local axes do
+not split equal supplier blanks. Ordered Length and Width keep grain orientation.
+The report has a collapsed mapping from each supplier label to drawing codes
+and quantities. Drawings keep their P codes. The trace keeps source machining,
+exact dimensions, grain, basis, requested finishes and each row allocation.
+Unsupported finishes stay in source issues and do not split equal blank orders.
 The index keeps each full source ID, its quantity, and each CSV
 file and row number (header is row 1). A source can span several files.
 The build captures the exact report code map in `result.json` as
@@ -55,6 +62,7 @@ select a band by its display color.
 
 ```json
 {
+  "label_prefix": "TUW",
   "materials": {
     "birch-plywood": {
       "panel_type": "plywood",
