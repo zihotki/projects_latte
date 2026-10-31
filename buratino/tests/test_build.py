@@ -45,6 +45,10 @@ def test_build_captures_consistent_outputs_without_editing_inputs(root, project)
     report = (directory / "report.html").read_text()
     assert not (directory / "assembly.html").exists()
     assert 'id="assembly"' in report and 'id="part-drawings"' in report
+    assert all(
+        f'href="report.html#{anchor}"' in report
+        for anchor in ("cutlists", "part-drawings", "assembly")
+    )
     assert "Physical part IDs" not in report
     assert all(code in report for row in rows for code in row["part_code"].split(", "))
     viewer = (directory / "preview.html").read_text()

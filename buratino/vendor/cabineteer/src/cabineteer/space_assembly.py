@@ -489,7 +489,7 @@ def resolve_space_assembly(project):
                     pos = [a+b for a,b in zip(placement.origin_mm, rail.origin_mm)]
                     sz = [rail.width_mm, rail.depth_mm, rail.height_mm]
                     axis = 1 if rail.name in ("front", "back") else 0
-                    part = box_part(path+"/"+rail.name, "frame", sz, pos, node.material, node.stock_mm, axis)
+                    part = box_part(path+"/"+rail.name, "frame", sz, pos, node.material, node.stock_mm, axis, report_member="rail_" + rail.name, report_item=path)
                     if host and any(a < b-1e-6 or c > d+1e-6 for a,b,c,d in zip(part["bounds"][0], host[0], part["bounds"][1], host[1])):
                         raise ValueError(f"{part['id']}: part protrudes outside host clear space")
                     parts.append(part)

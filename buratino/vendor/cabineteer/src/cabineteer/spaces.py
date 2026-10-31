@@ -251,11 +251,11 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
         bottom = carcass_panel(cfg, "bottom")
         top = carcass_panel(cfg, "top")
         back = back_capture_geometry(cfg)
-        part("/carcass/side_left", "carcass", (0,0,0), (carcass.side_thickness,side.width,carcass.height), carcass.material, carcass.side_thickness, 0)
-        part("/carcass/side_right", "carcass", (carcass.width-carcass.side_thickness,0,0), (carcass.side_thickness,side.width,carcass.height), carcass.material, carcass.side_thickness, 0)
-        part("/carcass/bottom", "carcass", (carcass.side_thickness,0,0), (bottom.length,bottom.width,carcass.bottom_thickness), carcass.material, carcass.bottom_thickness, 2)
-        part("/carcass/top", "carcass", (carcass.side_thickness,0,carcass.height-carcass.top_thickness), (top.length,top.width,carcass.top_thickness), carcass.material, carcass.top_thickness, 2)
-        part("/carcass/back", "carcass", (0,carcass.depth-carcass.back_thickness,0), (back.width,carcass.back_thickness,back.height), carcass.back_material, carcass.back_thickness, 1)
+        part("/carcass/side_left", "carcass", (0,0,0), (carcass.side_thickness,side.width,carcass.height), carcass.material, carcass.side_thickness, 0, report_member="side_left")
+        part("/carcass/side_right", "carcass", (carcass.width-carcass.side_thickness,0,0), (carcass.side_thickness,side.width,carcass.height), carcass.material, carcass.side_thickness, 0, report_member="side_right")
+        part("/carcass/bottom", "carcass", (carcass.side_thickness,0,0), (bottom.length,bottom.width,carcass.bottom_thickness), carcass.material, carcass.bottom_thickness, 2, report_member="bottom")
+        part("/carcass/top", "carcass", (carcass.side_thickness,0,carcass.height-carcass.top_thickness), (top.length,top.width,carcass.top_thickness), carcass.material, carcass.top_thickness, 2, report_member="top")
+        part("/carcass/back", "carcass", (0,carcass.depth-carcass.back_thickness,0), (back.width,carcass.back_thickness,back.height), carcass.back_material, carcass.back_thickness, 1, report_member="back")
 
         for member in ("side_left", "side_right", "bottom", "top"):
             contact("/carcass/back", "/carcass/" + member, "butt")
@@ -308,7 +308,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
                     name = panel["id"].rsplit("/", 1)[-1]
                     p = tuple(a+b for a,b in zip(box_origin, panel["transform"]["translation"]))
                     stock = panel["stock"]
-                    part(panel["id"], panel["kind"], p, stock["dimensions"], box.bottom_material if name == "bottom" else box.material, stock["thickness"], stock["thickness_axis"], owner=cid, motion_group=cid)
+                    part(panel["id"], panel["kind"], p, stock["dimensions"], box.bottom_material if name == "bottom" else box.material, stock["thickness"], stock["thickness_axis"], owner=cid, motion_group=cid, report_member={"side_L": "side_left", "side_R": "side_right", "sub_front": "front", "back": "back", "bottom": "bottom"}[name])
                     parts[-1]["operations"] = panel["operations"]
                 for wall in ("side_L", "side_R", "sub_front", "back"):
                     contact(cid + "/bottom", cid + "/" + wall, "bottom_groove")
@@ -390,7 +390,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
                             raise ValueError(f"{child_path}: adjustable divider cannot have fixed joinery")
                         recipe = None
                     dividers.append(dict(id=child_path, owner=path, axis=split.axis, role=child.role, origin=co, size=cs, recess=recess))
-                    part(child_path, "divider", tuple(co), tuple(cs), child.material, length, axis, owner=path, role=child.role)
+                    part(child_path, "divider", tuple(co), tuple(cs), child.material, length, axis, owner=path, role=child.role, report_member="shelf" if axis == 2 else "divider")
                     # The panel spans the parent in the perpendicular direction.
                     ends = ("bottom", "top") if axis == 0 else ("left", "right")
                     for boundary in ends:

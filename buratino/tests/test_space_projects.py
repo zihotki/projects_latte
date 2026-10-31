@@ -52,6 +52,15 @@ def test_space_projects_use_resolved_native_records(root, name, expected_heights
         == 12
     )
     assert parts_by_id["/cabinet/carcass/side_left"]["stock_mm"]["thickness"] == 18
+    assert parts_by_id["/cabinet/carcass/side_left"]["report"]["member"] == "side_left"
+    assert (
+        parts_by_id["/cabinet/root/lower/box-lower/side_L"]["report"]["recipe"]
+        == "drawer"
+    )
+    assert (
+        parts_by_id["/cabinet/root/lower/box-lower/side_L"]["report"]["item_id"]
+        == "/cabinet/root/lower/box-lower"
+    )
     assert calculation.native_assembly is None
     assert calculation.space_model is not None
     snapshot = native_snapshot(inputs)
@@ -247,6 +256,23 @@ def test_nested_bare_and_complete_references_keep_qualified_part_ids(root):
     assert any(item["hinge_side"] == "right" for item in plan["fronts"])
     assert host["id"] in nested["ancestor_ids"]
     assert nested_parts and host["id"] in nested_parts[0]["ancestor_ids"]
+    body = next(
+        p
+        for p in nested_parts
+        if p.get("report", {}).get("member") == "side_left"
+        and p["report"]["recipe"] == "rectangular"
+    )
+    assert body["report"]["item_id"] == body["cabinet_id"]
+    assert body["cabinet_id"].startswith(nested["id"] + "/")
+    assert any(
+        instance["id"] == body["cabinet_id"] and instance["kind"] == "cabinet"
+        for instance in instances
+    )
+    assert all(
+        p["report"]["axes"] == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        for p in nested_parts
+        if p.get("report")
+    )
     assert nested["parent_id"] in {item["id"] for item in instances}
     snapshot = native_snapshot(inputs)
     assert snapshot["resolved_space_plan"]["plan_version"] == plan["plan_version"]

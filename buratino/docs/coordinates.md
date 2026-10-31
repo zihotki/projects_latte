@@ -255,3 +255,33 @@ shape's current minimum corner, dimensions, or part name.
 Keep the original main faces where they survive and reject inset machining
 faces. Pixel checks remain useful for overlay appearance and the full door
 and drawer controls; triangle checks do not prove those visual details.
+
+## Exploded report views
+
+Native generators publish an additive `report` record on each eligible part:
+`item_id`, `member`, `recipe`, and three world-oriented item `axes` (X, Y, Z).
+Members identify sides, bottom, top, back, front, dividers, shelves, or frame
+rails. Recipes are `drawer`, `rectangular`, `profiled`, and `frame`. CAD `role`
+stays the object lookup name. Report membership can differ from manufacturing
+ownership: roof caps keep their physical owner and IDs but join the upper
+cabinet illustration through the source assembly relationship. Facades are
+excluded. Projects normally need no report vectors.
+
+The renderer reads the already placed machined solid. For nested CAD input it
+adds each ancestor location once. Item axes set the translation directions and
+camera. Stock `local_frame` axes are already world-oriented; the renderer does
+not transform them again or use them as cabinet axes. Current Space generators
+still accept translation-only physical placement.
+
+Display recipes produce one flat set of world translations. Roof segments
+move together; dividers and shelves keep their relative poses. Global CAD
+hidden-line removal includes whole context panels. Only subjects get labels.
+Overview, interior, and whole-component details provide finite coverage.
+A short edge or small visible footprint does not count as readable coverage.
+The renderer rejects duplicate physical membership, unknown members, missing
+shapes or codes, and unresolved coverage with the affected IDs.
+
+Equivalent items share a view only when codes, machined geometry, canonical
+operations, relative arrangement, and presentation agree. Context is not an
+additional physical item. Display copies do not change CAD objects, stock,
+operations, or provider cut lists.

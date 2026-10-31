@@ -56,6 +56,13 @@ for CSV fields, grouping, configuration, and open provider questions.
 Each build writes a new folder under that project's `build/` directory. It
 contains `result.json`, `parts.csv`, a 3D preview and one report with cut lists,
 part drawings and exploded assembly views, plus captured source and provenance.
+Exploded views use moved copies of the machined solids. Cabinet bodies, drawer
+boxes and frames use fixed display recipes. Profiled bodies include their roof
+panels. The report labels the structure in an overview and the dividers and
+shelves in an interior view. Equivalent items share one view and a quantity.
+A remaining hidden part gets a whole-part detail. A missing or unreadable part
+stops the build and reports its ID. Part drawings retain machining details.
+
 Previous builds stay in place. Failed
 exports do not replace the latest completed build. Use `--json` for the full
 result and checks.

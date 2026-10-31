@@ -475,7 +475,8 @@ class CabinetProject:
 
         return apply_native_joinery(
             ProfileAssembly(
-                result.layout, parts, hardware=hardware, part_grain=tuple(self.part_grain)
+                result.layout, parts, hardware=hardware, part_grain=tuple(self.part_grain),
+                report_items=result.report_items
             ),
             spec,
         )

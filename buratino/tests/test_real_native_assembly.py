@@ -40,6 +40,30 @@ def test_real_native_report_has_cabinet_and_drawer_summaries(root):
         "buratino_hettich_quadro_v6_eb20_380",
     }
     assert all(item["part_ids"] for item in result["drawers"])
+    eligible = [
+        p
+        for p in result["parts"]
+        if p["component"] not in {"door", "drawer_front", "applied_faceboard"}
+    ]
+    assert all(p.get("report") for p in eligible)
+    assert all(
+        p["report"]["axes"] == ((1, 0, 0), (0, 1, 0), (0, 0, 1)) for p in eligible
+    )
+    caps = [p for p in eligible if p["component"] == "cap"]
+    assert {p["owner"] for p in caps} == {"upper.roof"}
+    assert {p["report"]["item_id"] for p in caps} == {"upper"}
+    assert {p["report"]["recipe"] for p in caps} == {"profiled"}
+    rails = [p for p in eligible if p["owner"].startswith("frame.")]
+    assert {p["report"]["member"] for p in rails} == {
+        "rail_left",
+        "rail_right",
+        "rail_front",
+        "rail_back",
+    }
+    assert all(p["report"]["recipe"] == "frame" for p in rails)
+    drawer = next(p for p in eligible if p["id"] == "upper.section-1.drawer.side_left")
+    assert drawer["report"]["item_id"] == "upper.section-1.drawer"
+    assert drawer["report"]["recipe"] == "drawer"
     assert result["manufacturing_ready"] is False
     snapshot = native_snapshot(project)
     assert snapshot["project"]["input_schema_version"] == 2

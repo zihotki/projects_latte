@@ -338,6 +338,7 @@ class ProfileAssembly:
     part_grain: tuple = ()
     joints: tuple[dict, ...] = ()
     joinery_checks: tuple[dict, ...] = ()
+    report_items: tuple[tuple[str, str, str], ...] = ()
 
 
 def _layout_with_profile_heights(
@@ -675,7 +676,12 @@ def resolve_profile_assembly(
         parts.extend(
             part.placed(placements[item.name].origin_mm) for part in frame_parts(item)
         )
-    return ProfileAssembly(resolved, tuple(parts))
+    # Report ownership follows the source assembly relationship. Physical owners stay intact.
+    owners = (shared_owner,) if shared_owner else tuple(box.name for box in boxes)
+    report_items = tuple((owner, owner, "profiled") for owner in owners)
+    report_items += ((cap_owner, shared_owner or anchor.name, "profiled"),)
+    report_items += tuple((item.name, item.name, "frame") for item in frames)
+    return ProfileAssembly(resolved, tuple(parts), report_items=report_items)
 
 
 @dataclass(frozen=True)
@@ -707,6 +713,7 @@ class NativeCarcassPart:
     operations: tuple = ()
     local_profile_mm: None = None
     local_extrusion_mm: None = None
+    report_item: str = ""
 
     def solid(self):
         return self.shape
@@ -1149,6 +1156,7 @@ def _placed_drawer_parts(drawer, origin, section, owner, material, bottom_materi
                 ident, owner, component,
                 bottom_material if component == "bottom" and bottom_material else material,
                 shape, LocalFrame(local_origin, *axes), stock, operations=operations,
+                report_item=f"{section}.drawer",
             )
         )
     return tuple(parts)
@@ -1895,6 +1903,7 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
 
     parts = []
     viewer_parts = {}
+    report_items = {owner: (item, recipe) for owner, item, recipe in assembly.report_items}
     for part in assembly.parts:
         geometry = None
         if isinstance(part, NativeCarcassPart) or part.machined_shape is not None:
@@ -1925,6 +1934,18 @@ def assembly_records(assembly: ProfileAssembly) -> dict:
             "mounting": getattr(part, "mounting", ""),
         }
         viewer = {"role": part.id, "cabinet_id": part.owner}
+        item, recipe = report_items.get(part.owner, (part.owner, "rectangular"))
+        drawer_item = getattr(part, "report_item", "")
+        member = {"cap": "top", "adjustable_shelf": "shelf", "inner_front": "front", "inner_back": "back", "floor": "bottom"}.get(part.component, part.component)
+        if recipe == "frame":
+            member = "rail_" + member
+        if drawer_item:
+            item, recipe = drawer_item, "drawer"
+        if part.component not in ("door", "drawer_front", "applied_faceboard", "face"):
+            record["report"] = dict(
+                item_id=item, member=member, recipe=recipe,
+                axes=((1, 0, 0), (0, 1, 0), (0, 0, 1)),
+            )
         if part.component == "adjustable_shelf":
             viewer["label"] = "Adjustable shelf"
         if part.component in ("door", "drawer_front"):

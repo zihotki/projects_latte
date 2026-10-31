@@ -39,6 +39,13 @@ def space_model_records(model: ResolvedModel, cabinet_id: str = "cabinet") -> di
                     label=item["kind"].replace("_", " ").title(),
                     datum={"origin": "localminXYZ", "axes": "partXYZ"},
                     operations=deepcopy(item.get("operations", [])))
+        if item.get("report_member"):
+            item["report"] = {
+                "item_id": motion if motion in drawer_ids else item.get("report_item", owner),
+                "member": item["report_member"],
+                "recipe": "drawer" if motion in drawer_ids else "frame" if item["kind"] == "frame" else "rectangular",
+                "axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            }
         if item["kind"] == "door":
             item.update(hinge_side=item.get("hinge_side", "right"),
                         preview_pose="illustrative_only")

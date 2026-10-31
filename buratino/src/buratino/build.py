@@ -360,9 +360,9 @@ def render_documents(
         (directory / "parts.csv").write_text(buffer.getvalue(), encoding="utf-8")
     navigation = (
         '<nav aria-label="Report navigation"><a href="preview.html">Model</a> · '
-        '<a href="#cutlists">Cut lists</a> · '
-        '<a href="#part-drawings">Part drawings</a> · '
-        '<a href="#assembly">Assembly</a></nav>'
+        '<a href="report.html#cutlists">Cut lists</a> · '
+        '<a href="report.html#part-drawings">Part drawings</a> · '
+        '<a href="report.html#assembly">Assembly</a></nav>'
     )
     dims = result.get("overall_dimensions_mm") or result["dimensions_mm"]
     overview = (
