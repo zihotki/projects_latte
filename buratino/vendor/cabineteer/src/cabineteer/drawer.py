@@ -175,6 +175,9 @@ class DrawerConfig:
     pull_count: int = 0
     pull_vertical: VerticalPolicy = "center"
 
+    # Full-length outer rebate below the bottom panel; zero leaves stock intact.
+    runner_relief_depth: float = 0.0
+
     def __post_init__(self) -> None:
         """Resolve the size-based bottom-thickness default.
 
@@ -272,9 +275,37 @@ class DrawerConfig:
         return snap_to_standard_box_height(raw)
 
     @property
+    def runner_zone_thickness(self) -> float:
+        """Finished side thickness below the bottom, with stock sizing retained."""
+        depth = self.runner_relief_depth
+        if (
+            isinstance(depth, bool) or not isinstance(depth, (int, float))
+            or not math.isfinite(depth) or depth < 0
+        ):
+            raise ValueError("runner_relief_depth must be a nonnegative finite number")
+        if depth >= self.side_thickness:
+            raise ValueError("runner relief must leave positive side thickness")
+        if depth:
+            if depth + self.bottom_dado_depth >= self.side_thickness:
+                raise ValueError("runner relief and bottom groove must leave a positive side web")
+            inset = self.bottom_dado_inset
+            if (
+                not math.isfinite(inset) or inset <= 0
+                or inset + self.bottom_thickness > self.box_height
+            ):
+                raise ValueError("runner relief requires a positive bottom inset within the side")
+            if (
+                self.joinery.engagement_x and not self.joinery.laps_front
+                and depth + self.joinery.engagement_x >= self.side_thickness
+            ):
+                raise ValueError("runner relief intersects the corner joint through the side")
+        return self.side_thickness - depth
+
+    @property
     def box_depth(self) -> float:
         """Drawer box depth (front to back, exterior)."""
-        if self.slide.maximum_side_thickness and self.side_thickness > self.slide.maximum_side_thickness:
+        finished_side = self.runner_zone_thickness
+        if self.slide.maximum_side_thickness and finished_side > self.slide.maximum_side_thickness:
             raise ValueError(f"{self.slide.name} drawer sides must be at most {self.slide.maximum_side_thickness:g} mm")
         recess = self.slide.bottom_recess_range
         if recess and not recess[0] <= self.bottom_dado_inset <= recess[1]:
@@ -377,6 +408,7 @@ def drawer_recipe(cfg: DrawerConfig, prefix: str = "") -> tuple[dict, ...]:
     from .operations import drawer_pockets
     from .space_parts import box_part
 
+    _ = cfg.runner_zone_thickness  # Validate even without a slide stock limit.
     offsets = drawer_part_offsets(cfg)
     sizes = {
         "side_L": (cfg.side_thickness, cfg.side_panel_length, cfg.box_height),
@@ -394,6 +426,14 @@ def drawer_recipe(cfg: DrawerConfig, prefix: str = "") -> tuple[dict, ...]:
                 part["id"], name, size, cfg.bottom_dado_inset,
                 cfg.bottom_thickness, cfg.bottom_dado_depth, cfg.joinery,
             )
+        if name.startswith("side") and cfg.runner_relief_depth:
+            part["operations"].append(dict(
+                id=f"drawer/{part['id']}/runner_relief",
+                part_id=part["id"], type="pocket", source="drawer",
+                role="runner_relief", face="x-" if name == "side_L" else "x+",
+                u=0, v=0, size_u=cfg.side_panel_length,
+                size_v=cfg.bottom_dado_inset, depth=cfg.runner_relief_depth,
+            ))
         parts.append(part)
     return tuple(parts)
 

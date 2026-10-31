@@ -38,6 +38,7 @@ class DrawerBox:
     bottom_material: str = "baltic_birch"
     depth: float | None = None
     corner_joinery: DominoJoinery | None = None
+    runner_relief_depth: float = 0
 
 
 @dataclass(frozen=True)
@@ -287,7 +288,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
                 raise ValueError(f"{cid}: drawer box does not fit its allocated space")
             for key in ("side_thickness", "front_back_thickness", "bottom_dado_depth"):
                 _number(getattr(box, key), cid + " " + key)
-            for key in ("front_gap", "bottom_dado_inset"):
+            for key in ("front_gap", "bottom_dado_inset", "runner_relief_depth"):
                 if getattr(box, key) is not None:
                     _number(getattr(box, key), cid + " " + key, zero=True)
             if box.bottom_thickness is not None:
@@ -296,6 +297,7 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
                 d = DrawerConfig(opening_width=size[0], opening_height=size[2], opening_depth=size[1], slide_key=box.slide_key, box_depth_override=box.depth,
                     side_thickness=box.side_thickness, front_back_thickness=box.front_back_thickness, bottom_thickness=box.bottom_thickness,
                     bottom_dado_depth=box.bottom_dado_depth, bottom_dado_inset=box.bottom_dado_inset, front_gap=box.front_gap,
+                    runner_relief_depth=box.runner_relief_depth,
                     vertical_gap=size[2] - height - get_slide(box.slide_key).min_bottom_clearance,
                     use_standard_height=False, applied_face=False, joinery_style=DrawerJoineryStyle(box.joinery_style))
                 if bottom_clear < d.slide.min_bottom_clearance or d.box_width <= 2*d.side_thickness or d.box_depth > size[1] or d.box_depth <= 2*d.front_back_thickness or d.bottom_dado_depth <= 0 or d.bottom_dado_depth > min(d.side_thickness, d.front_back_thickness) or d.bottom_dado_inset + d.bottom_thickness > height:

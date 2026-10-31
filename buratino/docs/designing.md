@@ -106,6 +106,12 @@ panel underside. Profile drawer cut records use each part's native stock
 length/width/thickness frame. Their face polygons, cut depths and inward axes
 are also shown in the `report.html#part-drawings` section. These are draft dimensions, not CNC paths.
 
+Set `runner_relief_depth_mm` on either profile drawer recipe, or
+`runner_relief_depth` on `DrawerBox` / `DrawerConfig`, to cut an outer runner
+rebate on both sides. It runs the full side length from the lower edge to the
+bottom panel underside. The default is zero. Runner limits use the remaining
+side thickness; box sizing and stock cutlists still use the full stock thickness.
+
 ## Nest modules and arrange cabinets
 
 `AssemblyRef` places a named `AssemblyModule` inside a host space. A module

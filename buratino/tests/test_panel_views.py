@@ -330,15 +330,21 @@ def test_real_project_groove_anchors_touch_the_actual_machined_solid(root, name)
         ).solid()
     else:
         shape = materialize_box_part(part).translate(part["transform"]["translation"])
-    (feature,) = groove_dimensions(part)
-    assert (feature.width_mm, feature.inset_mm, feature.depth_mm) == (12, 13, 6)
+    feature, *rebates = groove_dimensions(part)
+    depth = 8 if name == "attic-clothing-storage" else 6
+    assert (feature.width_mm, feature.inset_mm, feature.depth_mm) == (12, 13, depth)
+    if name == "attic-clothing-storage":
+        assert len(rebates) == 1
+        assert (rebates[0].width_mm, rebates[0].depth_mm) == (13, 2)
     for point in feature.width_points + feature.inset_points:
         assert shape.val().distance(cq.Vertex.makeVertex(*point)) < 1e-6
     assembly = cq.Assembly(name="root")
     assembly.add(shape, name=part["role"])
     view = panel_views(assembly, [part])[part["id"]]
     assert "G1 width: 12 mm" in view and "G1 inset: 13 mm" in view
-    assert "6 mm deep" in view
+    assert f"{depth} mm deep" in view
+    if rebates:
+        assert "G2 width: 13 mm" in view and "2 mm deep" in view
 
 
 def test_multiple_grooves_keep_labels_sections_and_leaders_in_separate_rows():

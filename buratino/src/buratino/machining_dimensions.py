@@ -35,7 +35,7 @@ def groove_dimensions(part: dict) -> list[GrooveDimension]:
 
     result = []
     for cut in part.get("operations", []):
-        bottom = cut.get("role") == "bottom_groove"
+        bottom = cut.get("role") in {"bottom_groove", "runner_relief"}
         explicit = cut.get("input_type") == "groove"
         if not bottom and not explicit:
             continue
@@ -172,7 +172,7 @@ def groove_callouts(features, project, start_y=260):
         dim_x = right + 12
         output.append(
             f'<text x="180" y="{row + 14}" text-anchor="middle" stroke="none" '
-            f'fill="#17566d" font-size="9">{label} section detail at groove</text>'
+            f'fill="#17566d" font-size="9">{label} section detail at cut</text>'
             f'<path class="groove-section" d="{_path(outline)}" fill="#edf3f5"/>'
             f'<path d="{_path(((far, top), (dim_x + 3, top)))} '
             f"{_path(((far, floor), (dim_x + 3, floor)))} "

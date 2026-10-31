@@ -99,6 +99,7 @@ def _validate_space_inputs(space, path, *, root=False):
             if getattr(content, field) is not None:
                 _number(getattr(content, field), f"{label} {field}", zero=True)
         _number(content.front_gap, label + " front_gap", zero=True)
+        _number(content.runner_relief_depth, label + " runner_relief_depth", zero=True)
         for field in ("side_thickness", "front_back_thickness", "bottom_dado_depth"):
             _number(getattr(content, field), f"{label} {field}")
         if content.bottom_thickness is not None:

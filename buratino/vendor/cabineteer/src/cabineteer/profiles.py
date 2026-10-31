@@ -828,6 +828,7 @@ class ProfileDrawerSpec:
     joinery_style: str = "butt"
     material: str = ""
     bottom_material: str = ""
+    runner_relief_depth_mm: float = 0
 
     def __post_init__(self):
         if not self.section or not self.slide_key:
@@ -839,7 +840,7 @@ class ProfileDrawerSpec:
             self.bottom_mm,
             self.bottom_dado_depth_mm,
         )
-        optional = (self.bottom_clearance_mm, self.front_gap_mm)
+        optional = (self.bottom_clearance_mm, self.front_gap_mm, self.runner_relief_depth_mm)
         if any(not math.isfinite(v) or v <= 0 for v in positive):
             raise ValueError("drawer stock and height must be positive and finite")
         if any(not math.isfinite(v) or v < 0 for v in optional):
@@ -889,6 +890,7 @@ class ProfileLowerDrawerSpec:
     material: str = ""
     bottom_material: str = ""
     drawer_count: int = 0
+    runner_relief_depth_mm: float = 0
 
     def __post_init__(self):
         if not self.cabinet or not self.slide_key:
@@ -909,6 +911,7 @@ class ProfileLowerDrawerSpec:
             for value in (
                 self.bottom_clearance_mm,
                 self.front_gap_mm,
+                self.runner_relief_depth_mm,
             )
         ):
             raise ValueError("lower drawer dimensions must be finite and valid")
@@ -1232,6 +1235,7 @@ def upper_drawer_configs(spec: ProfileAssemblySpec):
             bottom_thickness=item.bottom_mm,
             bottom_dado_depth=item.bottom_dado_depth_mm,
             bottom_dado_inset=item.bottom_dado_inset_mm,
+            runner_relief_depth=item.runner_relief_depth_mm,
             front_gap=item.front_gap_mm,
             vertical_gap=opening_height
             - slide.min_bottom_clearance
@@ -1440,6 +1444,7 @@ def lower_drawer_parts(spec, configs, placements):
                 bottom_thickness=recipe.bottom_mm,
                 bottom_dado_depth=recipe.bottom_dado_depth_mm,
                 bottom_dado_inset=recipe.bottom_dado_inset_mm,
+                runner_relief_depth=recipe.runner_relief_depth_mm,
                 front_gap=recipe.front_gap_mm,
                 vertical_gap=opening.height_mm
                 - slide.min_bottom_clearance
