@@ -4,7 +4,15 @@ import xml.etree.ElementTree as ET
 import cadquery as cq
 import pytest
 
-from buratino.exploded_views import _explode, _items, _layout, exploded_views
+from buratino.exploded_views import (
+    _DIRECTION,
+    _X_DIRECTION,
+    _explode,
+    _items,
+    _layout,
+    _visible_projections,
+    exploded_views,
+)
 
 NS = {"s": "http://www.w3.org/2000/svg"}
 
@@ -64,8 +72,8 @@ def test_exploded_views_uses_machined_profile_solids_without_mutation():
     assert sorted(e.text for e in root.findall(".//s:text", NS)) == ["P01", "P02"]
     panels = root.findall(".//s:g[@data-part-id]", NS)
     assert {p.get("data-part-id") for p in panels} == {"left", "right"}
-    assert all(len(p.findall("s:path", NS)) == 2 for p in panels)
-    # Actual filled face triangles and CAD edge paths both have geometry.
+    assert all(len(p.findall("s:path", NS)) == 1 for p in panels)
+    assert all(path.get("fill") == "none" for p in panels for path in p)
     assert all(len(path.get("d")) > 100 for p in panels for path in p)
 
 
@@ -444,3 +452,83 @@ def test_facades_are_removed_and_structural_subfront_stays_in_the_cabinet():
     assert rendered_ids == {"subfront", "back"}
     for ident, shape in copies.items():
         assert shape.Volume() == pytest.approx(original[ident].Volume())
+
+
+def _segments(shape):
+    return sorted(
+        tuple(
+            sorted(
+                tuple(round(value, 7) for value in point.toTuple())
+                for point in (edge.startPoint(), edge.endPoint())
+            )
+        )
+        for edge in shape.Edges()
+    )
+
+
+def test_global_hlr_front_plate_hides_rear_plate():
+    rear = cq.Workplane("XY").box(10, 10, 1).val()
+    front = cq.Workplane("XY").box(20, 20, 1).translate((0, 0, 10)).val()
+    alone = _visible_projections([rear], (0, 0, 1), (1, 0, 0))[0]
+    rear_view, front_view = _visible_projections([rear, front], (0, 0, 1), (1, 0, 0))
+    assert len(alone.Edges()) == 4
+    assert rear_view.Edges() == []
+    assert sum(edge.Length() for edge in front_view.Edges()) == pytest.approx(80)
+
+
+def test_global_hlr_clips_rear_edges_and_is_independent_of_input_order():
+    rear = cq.Workplane("XY").box(10, 10, 1).val()
+    front = cq.Workplane("XY").box(10, 20, 1).translate((5, 0, 10)).val()
+    views = _visible_projections([rear, front], (0, 0, 1), (1, 0, 0))
+    reversed_views = _visible_projections([front, rear], (0, 0, 1), (1, 0, 0))
+    assert _segments(views[0]) == [
+        ((-5, -5, 0), (-5, 5, 0)),
+        ((-5, -5, 0), (0, -5, 0)),
+        ((-5, 5, 0), (0, 5, 0)),
+    ]
+    assert [_segments(view) for view in views] == [
+        _segments(view) for view in reversed(reversed_views)
+    ]
+
+
+def test_fully_hidden_part_keeps_metadata_without_edges_or_label():
+    plane = cq.Plane(origin=(0, 0, 0), xDir=_X_DIRECTION, normal=_DIRECTION)
+    rear = cq.Workplane(plane).box(10, 10, 1).val()
+    front = cq.Workplane(plane).transformed(offset=(0, 0, 10)).box(20, 20, 1).val()
+    assembly = cq.Assembly()
+    parts = []
+    for name, shape in (("rear", rear), ("front", front)):
+        assembly.add(shape, name=name)
+        parts.append({"id": name, "role": name})
+    before = _shape_state(assembly)
+    root = ET.fromstring(
+        f"<div>{exploded_views(assembly, parts, {'rear': 'P01', 'front': 'P02'})}</div>"
+    )
+    groups = {g.get("data-part-id"): g for g in root.findall(".//s:g", NS)}
+    assert set(groups) == {"rear", "front"}
+    assert json.loads(groups["rear"].get("data-part-ids")) == ["rear"]
+    assert groups["rear"].find("s:path", NS).get("d") == ""
+    assert [label.text for label in root.findall(".//s:text", NS)] == ["P02"]
+    assert len(root.findall(".//s:circle", NS)) == 1
+    assert _shape_state(assembly) == before
+
+
+def test_label_anchor_is_on_a_visible_edge():
+    assembly = cq.Assembly()
+    shape = cq.Workplane("XY").box(120, 80, 12).val()
+    assembly.add(shape, name="panel")
+    parts = [{"id": "panel", "role": "panel"}]
+    html = exploded_views(assembly, parts, {"panel": "P01"})
+    root = ET.fromstring(f"<div>{html}</div>")
+    projected = _visible_projections([assembly.objects["panel"].toCompound()])[0]
+    bounds = projected.BoundingBox()
+    scale = min(292 / bounds.xlen, (340 - 32) / bounds.ylen)
+    left = (440 - bounds.xlen * scale) / 2
+    top = (340 - bounds.ylen * scale) / 2
+    circle = root.find(".//s:circle", NS)
+    anchor = (float(circle.get("cx")), float(circle.get("cy")))
+    candidates = [
+        (left + (point.x - bounds.xmin) * scale, top + (bounds.ymax - point.y) * scale)
+        for point in (edge.positionAt(0.5) for edge in projected.Edges())
+    ]
+    assert any(anchor == pytest.approx(point, abs=0.051) for point in candidates)

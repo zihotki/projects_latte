@@ -4,7 +4,7 @@ import json
 from collections import defaultdict
 from html import escape
 
-from .panel_views import _projected_geometry, _svg_projector
+from .panel_views import _svg_projector
 
 _DIRECTION = (1, -1.5, 1.1)
 _X_DIRECTION = (1.5, 1, 0)
@@ -142,72 +142,95 @@ def _explode(rows, *, drawer=False):
     return panels
 
 
-def _front_facing(a, b, c):
-    return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) < -1e-8
+def _visible_projections(shapes, direction=_DIRECTION, x_direction=_X_DIRECTION):
+    """Remove hidden lines once for the complete scene, retaining part identity."""
+    from cadquery import Compound, Shape
+    from cadquery.occ_impl.shapes import TOLERANCE
+    from OCP.BRepLib import BRepLib
+    from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+    from OCP.HLRAlgo import HLRAlgo_Projector
+    from OCP.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
+
+    projection = HLRBRep_Algo()
+    # Add each shape separately: selecting children of one added compound does
+    # not return their edges in HLRBRep_HLRToShape.
+    for shape in shapes:
+        projection.Add(shape.wrapped)
+    axes = gp_Ax2(gp_Pnt(), gp_Dir(*direction), gp_Dir(*x_direction))
+    projection.Projector(HLRAlgo_Projector(axes))
+    projection.Update()
+    projection.Hide()
+    edges = HLRBRep_HLRToShape(projection)
+    results = []
+    for shape in shapes:
+        visible = []
+        for extract in (
+            edges.VCompound,
+            edges.Rg1LineVCompound,
+            edges.OutLineVCompound,
+        ):
+            compound = extract(shape.wrapped)
+            if not compound.IsNull():
+                BRepLib.BuildCurves3d_s(compound, TOLERANCE)
+                visible.append(Shape(compound))
+        results.append(Compound.makeCompound(visible))
+    return results
 
 
 def _drawing(rows, copies, *, drawer=False):
     from cadquery.occ_impl.exporters.svg import makeSVGedge
 
     panels = _explode(rows, drawer=drawer)
-    projections = [
-        _projected_geometry(shape, _DIRECTION, _X_DIRECTION) for _, shape in panels
-    ]
+    projections = _visible_projections([shape for _, shape in panels])
     bounds = _bounds(projections)
     width = 440
-    # The projected centers can put nearly every label on the same side.
+    # Visible edge anchors can put nearly every label on the same side.
     # Count those sides before sizing the viewport; positive scaling preserves them.
     project_unit = _svg_projector(_DIRECTION, bounds, 1, 0, 0, x_direction=_X_DIRECTION)
+    anchors = []
+    for (_, shape), projected in zip(panels, projections, strict=True):
+        center_x, center_y = project_unit(shape.Center().toTuple())
+        candidates = [edge.positionAt(0.5) for edge in projected.Edges()]
+        anchors.append(
+            min(
+                candidates,
+                key=lambda p: (p.x - bounds.xmin - center_x) ** 2
+                + (bounds.ymax - p.y - center_y) ** 2,
+            )
+            if candidates
+            else None
+        )
     right_count = sum(
-        project_unit(shape.Center().toTuple())[0] >= bounds.xlen / 2
-        for _, shape in panels
+        anchor.x - bounds.xmin >= bounds.xlen / 2
+        for anchor in anchors
+        if anchor is not None
     )
-    height = max(340, 32 + max(right_count, len(panels) - right_count) * 25)
+    visible_count = sum(anchor is not None for anchor in anchors)
+    height = max(340, 32 + max(right_count, visible_count - right_count) * 25)
     scale = min(292 / bounds.xlen, (height - 32) / bounds.ylen)
     left = (width - bounds.xlen * scale) / 2
     top = (height - bounds.ylen * scale) / 2
-    project = _svg_projector(
-        _DIRECTION, bounds, scale, left, top, x_direction=_X_DIRECTION
-    )
     labels = [[], []]
     drawing = []
-    # Draw far panels first; all cut edges remain available in the projection.
-    order = sorted(
-        range(len(panels)),
-        key=lambda i: sum(
-            a * b
-            for a, b in zip(panels[i][1].Center().toTuple(), _DIRECTION, strict=True)
-        ),
-    )
-    for index in order:
-        part, shape = panels[index]
+    for index, (part, _) in enumerate(panels):
         projected = projections[index]
-        vertices, triangles = shape.tessellate(1, 0.5)
-        points = [project(vertex.toTuple()) for vertex in vertices]
-        faces = " ".join(
-            "M"
-            + " L".join(f"{points[v][0]:.1f},{points[v][1]:.1f}" for v in tri)
-            + " Z"
-            for tri in triangles
-            # Keep camera-facing triangles so opposite solid faces do not
-            # cancel their fill winding in the combined SVG path.
-            if _front_facing(*(points[v] for v in tri))
-        )
         edges = " ".join(makeSVGedge(edge) for edge in projected.Edges())
         ident = escape(part["id"], quote=True)
         code = escape(rows[index][0][0])
         ids = escape(json.dumps([copy[index][1]["id"] for copy in copies]), quote=True)
         drawing.append(
             f'<g data-part-id="{ident}" data-part-ids="{ids}">'
-            f'<path d="{faces}" fill="#e4edf4" stroke="none"/>'
             f'<path d="{edges}" transform="translate({left:g} {top:g}) '
             f"scale({scale:g} {-scale:g}) "
             f'translate({-bounds.xmin:g} {-bounds.ymax:g})" '
             f'fill="none" stroke="#33485a" stroke-width="{0.65 / scale:g}"/>'
             "</g>"
         )
-        x, y = project(shape.Center().toTuple())
-        labels[int(x >= width / 2)].append((y, x, code))
+        anchor = anchors[index]
+        if anchor is not None:
+            x = left + (anchor.x - bounds.xmin) * scale
+            y = top + (bounds.ymax - anchor.y) * scale
+            labels[int(x >= width / 2)].append((y, x, code))
     for side, entries in enumerate(labels):
         entries.sort()
         for index, (anchor_y, anchor_x, code) in enumerate(entries):
@@ -235,7 +258,7 @@ def _drawing(rows, copies, *, drawer=False):
 
 
 def exploded_views(assembly, parts: list[dict], part_codes: dict[str, str]) -> str:
-    """Return item diagrams, with one label per panel and no CAD modifications.
+    """Return item diagrams, with labels on visible panels and no CAD modifications.
 
     Equivalent items share a view only when codes and relative placed bounds
     match. Part codes already distinguish panel geometry and machining.
