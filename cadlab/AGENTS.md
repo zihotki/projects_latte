@@ -6,6 +6,8 @@
 - Use global Node, npm, uv, and Python tools. Setup owns the base `.venv`;
   install extra model packages through SOMA's project environment.
 - Keep SOMA's project settings and agent guidance. Keep generated outputs out of Git.
+- Add practical chamfers for printability and handling while preserving functional fits.
+- Use fine quality for mesh exports. For native SOMA commands, pass `--detail fine`.
 - Validate CAD Lab with `bin/cadlab doctor`, `bin/cadlab check`, and a named
   model build. Do not run repository-wide validation scripts for CAD Lab work;
   those scripts also validate other projects.

@@ -1,0 +1,74 @@
+---
+title: Tolerances and fits
+name: Tolerances and fits
+summary: Clearances as named constants, interference checks in code, clearance holes and tap drills, counterbores for socket head screws, ISO fits.
+order: 20
+category: Design knowledge
+default: on-demand
+when: parts must fit together: clearances, holes for screws, sliding or press fits
+topics: Manufacturing: unknown; Clearances as named constants; Checking interference and gaps in code; Clearance holes (medium) and tap drills; Counterbores for socket head screws; ISO fits for machined parts
+var process: unknown | | Manufacturing | unknown=not decided yet (agent asks), 3D printing=3D printing, CNC milling=CNC milling, laser cutting=Laser cutting, plasma cutting=Plasma cutting, sheet metal=Sheet metal
+var hole_fit: medium | | Clearance holes to ISO 273 | fine=fine, medium=medium, coarse=coarse
+var min_gap: 0.2 | mm | Minimum gap between parts | 0..5
+---
+# Skill: Tolerances and fits
+
+> **On demand:** the user has not switched this rule set on for every change. Follow it while the conversation is
+> about its topic, and add one line to `NOTES.md` under `## Requirements` that names this file, so that a later
+> session follows it too.
+> The values in this file are defaults of the app, the user has not
+> chosen them: say which ones you rely on, or ask when one matters.
+> In the app, the user can switch this skill to "Always" and change its settings.
+
+Every real part deviates from its nominal size. Design so that parts still fit when they do.
+
+## General rules
+
+- Manufacturing process from the app: **unknown**. If it is "unknown" and `NOTES.md` does not say how the parts
+  are made, ask: the clearances depend on it. The skill for the process (if you follow one) has more specific values,
+  they take precedence over this one.
+- Every clearance, fit and allowance is a named constant at the top of `model.py` or in `parts/params.py`
+  (`SCREW_CLEARANCE`, `LID_GAP`), never hidden in expressions.
+- Mating faces never share the exact same coordinate: a defined gap, or a defined overlap for a press fit.
+- Parts that must not touch keep at least 0.2 mm distance (`MIN_GAP = 0.2`).
+- Dimension from the functional faces: a hole follows the part it has to meet, not an arbitrary outer edge.
+- Tight tolerances only where they matter. Everything else: general tolerance ISO 2768-m.
+
+## Checking clearances in code
+
+- Interference: `a.intersect(b).val().Volume()` is (close to) 0 for parts that must not touch, also for a part and a
+  reference (`role="reference"`).
+- Smallest gap in mm: `a.val().distance(b.val())`, at least 0.2 mm.
+- Tell the user the critical gaps. Remove the debug output afterwards.
+
+## Holes for metric screws
+
+Clearance holes after ISO 273 and tap drills for coarse threads, in mm. The user chose the **medium** column.
+
+| Thread | Fine | Medium | Coarse | Tap drill |
+|---|---|---|---|---|
+| M2 | 2.2 | 2.4 | 2.6 | 1.6 |
+| M2.5 | 2.7 | 2.9 | 3.1 | 2.05 |
+| M3 | 3.2 | 3.4 | 3.6 | 2.5 |
+| M4 | 4.3 | 4.5 | 4.8 | 3.3 |
+| M5 | 5.3 | 5.5 | 5.8 | 4.2 |
+| M6 | 6.4 | 6.6 | 7.0 | 5.0 |
+| M8 | 8.4 | 9.0 | 10.0 | 6.8 |
+
+## Counterbores for socket head screws
+
+ISO 4762 (DIN 912), head flush, with some room around it:
+
+| Thread | M2 | M2.5 | M3 | M4 | M5 | M6 | M8 |
+|---|---|---|---|---|---|---|---|
+| Counterbore Ø | 4.4 | 5.5 | 6.5 | 8.0 | 10.0 | 11.0 | 15.0 |
+| Depth | 2.4 | 2.9 | 3.4 | 4.4 | 5.4 | 6.4 | 8.6 |
+
+In CadQuery: `.cboreHole(diameter, cboreDiameter, cboreDepth)`. Countersunk screws (ISO 10642, 90°):
+`.cskHole(diameter, cskDiameter, 90)`.
+
+## Fits for machined parts (ISO 286)
+
+- Shaft turning or sliding in a hole: H7/g6. Located, assembled by hand: H7/h6. Press fit: H7/p6.
+- Model the nominal size and write the fit as a comment and in `NOTES.md` (`BORE = 8  # H7`). Do not build the
+  tolerance band into the geometry.

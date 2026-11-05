@@ -1,0 +1,106 @@
+---
+title: 3D printing (FDM)
+name: 3D printing (FDM)
+summary: Printable wall thicknesses, overhangs up to 45°, clearance for fits, orientation on the print bed, threads with heat-set inserts.
+order: 10
+category: Manufacturing
+default: on-demand
+when: the parts will be 3D printed on a filament printer (FDM)
+topics: Printer and material; Walls and small features; Overhangs and bridges; Orientation and build volume; Clearances and fits; Screws and threads; Checks and export
+var material: PLA | | Material | PLA, PETG, ABS, ASA, TPU
+var nozzle: 0.4 | mm | Nozzle | 0.1..1.2
+var layer: 0.2 | mm | Layer height | 0.04..0.8
+var bed_x: 220 | mm | Build volume X | 30..2000
+var bed_y: 220 | mm | Build volume Y | 30..2000
+var bed_z: 250 | mm | Build volume Z | 30..2000
+var overhang: 45 | ° | Max. overhang angle | 10..85
+var bridge: 10 | mm | Max. bridge without support | 0..200
+var min_wall: 1.2 | mm | Minimum wall | 0.2..20
+var clearance: 0.3 | mm | Clearance per side (sliding fit) | 0..3
+---
+# Skill: 3D printing (FDM)
+
+> **On demand:** the user has not switched this rule set on for every change. Follow it while the conversation is
+> about its topic, and add one line to `NOTES.md` under `## Requirements` that names this file, so that a later
+> session follows it too.
+> The values in this file are defaults of the app, the user has not
+> chosen them: say which ones you rely on, or ask when one matters.
+> In the app, the user can switch this skill to "Always" and change its settings.
+
+The parts are printed on a filament printer (FDM). Settings from the app, they apply unless the user says otherwise
+in the chat or in `NOTES.md`:
+
+| Setting | Value |
+|---|---|
+| Material | PLA |
+| Nozzle | 0.4 mm |
+| Layer height | 0.2 mm |
+| Build volume | 220 × 220 × 250 mm |
+| Max. overhang without support | 45° from vertical |
+| Max. bridge without support | 10 mm |
+| Minimum wall | 1.2 mm |
+| Clearance per side for sliding fits | 0.3 mm |
+
+Constants at the top of `model.py` (or in `parts/params.py`): `NOZZLE = 0.4`, `CLEARANCE = 0.3`, `MAX_OVERHANG = 45`,
+`BED = (220, 220, 250)`.
+
+## Walls and small features
+
+- Walls at least 1.2 mm, more where the part carries load or holds screws. Prefer multiples of the nozzle width.
+- No feature thinner than two nozzle widths, no gap narrower than 0.5 mm, no pin thinner than 2 mm.
+- Text: at least three layers high or deep, letters at least 5 mm tall.
+
+## Overhangs and bridges
+
+- Overhangs up to 45° from vertical (0° is a vertical wall, 90° a flat ceiling) print without support. Avoid
+  shapes that need support, or say where they do.
+- Bridges (flat ceilings between two walls) up to 10 mm are fine.
+- Horizontal holes: pointed (teardrop) or flat top instead of round when the top would overhang too much.
+- Edges on the bed: chamfer 0.5 to 1 mm, no fillet. A fillet there is an overhang, the chamfer also hides the
+  squashed first layer.
+
+## Orientation and size
+
+- Largest flat face on the bed. Say which orientation you assume.
+- Layers are the weak direction (about half the strength). Loads run along the layers, snap hooks and clips lie flat.
+- Parts larger than the build volume: split them (alignment pins or a lap joint), each piece its own `add_part`.
+- One `add_part` per printed body.
+
+## Material
+
+PLA: stiff, soft above about 55 °C. PETG: tougher, add 0.1 mm to sliding clearances. ABS and ASA: shrink and warp,
+round the corners of large flat parts. TPU: flexible, thicker walls, no press fits.
+
+## Fits and clearances
+
+- Sliding or turning: 0.3 mm per side. Loose: add 0.1 mm. Press fit: 0.1 mm or less, suggest a test print.
+- Printed holes come out 0.1 to 0.2 mm small: model screw holes 0.2 mm larger than the nominal clearance hole.
+- Mating faces never touch with zero gap.
+
+## Screws and threads
+
+- No printed metric threads below M6: heat-set inserts or self-tapping screws.
+- Heat-set inserts (short ones), hole Ø: M2 3.2, M2.5 3.6, M3 4.0, M4 5.6, M5 6.4 mm, depth insert length + 1 mm.
+  Makers differ: note your assumption in `NOTES.md`.
+- Self-tapping screws for plastic (about 3 mm): hole Ø 2.5 mm.
+- Screw bosses: outer Ø at least 2.5 × the hole, joined to a wall or ribs.
+
+## Checks before you finish
+
+Rotate a copy of each part into print orientation (bed at Z = 0), then:
+
+```python
+import math
+bb = part.val().BoundingBox()
+assert bb.xlen <= BED[0] and bb.ylen <= BED[1] and bb.zlen <= BED[2]
+
+def overhang_faces(part):
+    """Flat faces pointing down more than MAX_OVERHANG, not on the bed: bridges or support."""
+    s = part.val()
+    zmin, lim = s.BoundingBox().zmin, -math.sin(math.radians(MAX_OVERHANG))
+    return [f for f in s.Faces() if f.geomType() == "PLANE" and f.normalAt().z < lim and f.Center().z > zmin + 0.01]
+```
+
+Curved faces (holes, fillets underneath) are not covered here. `soma analyze overhang --threshold 45` and
+`soma analyze thickness --threshold 1.2` check every spot, curved faces too (skill for analysis). Export each
+printable part as STL or 3MF: `soma export "Lid" --format 3mf`. References are not printed.

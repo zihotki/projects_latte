@@ -13,6 +13,23 @@ SOURCE = ROOT / "vendor/soma"
 APP = SOURCE / "app"
 PYTHON = ROOT / ".venv/bin/python"
 COMMIT = "195c29c9a6d9cfcf20ecb03f678b6b11e7cd8999"
+MESH_FORMATS = {"stl", "3mf", "amf", "obj", "glb", "gltf"}
+
+
+def soma_arguments(args):
+    """Use fine mesh exports unless the caller explicitly selects a detail level."""
+    if not args or args[0] != "export":
+        return args
+    fmt = ""
+    for i, arg in enumerate(args):
+        if arg == "--format" and i + 1 < len(args):
+            fmt = args[i + 1]
+        elif arg.startswith("--format="):
+            fmt = arg.split("=", 1)[1]
+    has_detail = any(a == "--detail" or a.startswith("--detail=") for a in args)
+    if fmt.lower() in MESH_FORMATS and not has_detail:
+        return [*args, "--detail", "fine"]
+    return args
 
 
 def run(*args, cwd=ROOT, capture=False, env=None):
@@ -127,7 +144,7 @@ def main():
     elif command == "soma":
         source_check()
         # Preserve the caller's design directory for the native SOMA CLI.
-        run(PYTHON, "-m", "soma", *sys.argv[2:], cwd=Path.cwd())
+        run(PYTHON, "-m", "soma", *soma_arguments(sys.argv[2:]), cwd=Path.cwd())
     elif command == "check":
         source_check()
         run("npm", "run", "typecheck", cwd=APP)

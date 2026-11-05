@@ -1,0 +1,6 @@
+{
+  "note": "Values the user set in the Parameters panel of SOMA. They take the place of the defaults of param() in the code.",
+  "values": {
+    "REFERENCES": false
+  }
+}
