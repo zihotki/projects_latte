@@ -9,6 +9,7 @@ A repository for small, focused software projects.
 | [Cut on Eight](cut_on_eight/README.md) | Local browser-based dance-video segmentation and cataloguing. |
 | [LiteLLM gateway](litellm/README.md) | Local AI model gateway with per-app keys and PostgreSQL backups. |
 | [Buratino](buratino/README.md) | Local furniture design project with a pinned Cabineteer foundation. |
+| [CAD Lab](cadlab/README.md) | Pinned SOMA source workspace for CadQuery designs with Codex. |
 
 ## Working with a project
 
@@ -39,6 +40,18 @@ Set up and run the first Buratino cabinet draft:
 ./buratino/bin/buratino build projects/simple-cabinet
 ./buratino/bin/buratino preview projects/simple-cabinet
 ```
+
+Set up and run CAD Lab from pinned SOMA source:
+
+```bash
+git submodule update --init -- cadlab/vendor/soma
+./cadlab/bin/cadlab setup
+./cadlab/bin/cadlab run
+```
+
+Use **Open folder** in SOMA for designs under `cadlab/projects/`. Open the same
+design folder in Codex. See the [CAD Lab guide](cadlab/README.md) for project
+creation, commands, upgrades, and platform limits.
 
 ## Repository checks
 

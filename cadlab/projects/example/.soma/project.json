@@ -1,0 +1,35 @@
+{
+  "id": "9d326787-38c6-4e6c-baf7-cb9ffe981de9",
+  "name": "example",
+  "api_version": 1,
+  "app_version": "0.11.0",
+  "entry": "model.py",
+  "main_output": "output/model.step",
+  "created": "2026-11-05T13:07:27.096Z",
+  "requirements": ".soma/requirements.txt",
+  "skills": [
+    "design-workflow",
+    "cadquery",
+    "parametric",
+    "standard-parts"
+  ],
+  "skills_on_demand": [
+    "cadquery-scripts",
+    "shell-environment",
+    "soma-app",
+    "3d-printing",
+    "resin-powder",
+    "cnc",
+    "laser",
+    "sheet-metal",
+    "plasma",
+    "tolerances",
+    "joints",
+    "strength",
+    "assemblies",
+    "analysis",
+    "animation",
+    "fem",
+    "drawings"
+  ]
+}

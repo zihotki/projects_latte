@@ -14,7 +14,7 @@ dev = [
 [tool.ruff]
 target-version = "py313"
 line-length = 88
-extend-exclude = [".local", ".pnpm-store", "cut_on_eight/node_modules"]
+extend-exclude = [".local", ".pnpm-store", "cut_on_eight/node_modules", "cadlab/vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -22,7 +22,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.pyright]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
-exclude = ["**/.local", ".pnpm-store", ".venv", "cut_on_eight/node_modules", "buratino"]
+exclude = ["**/.local", ".pnpm-store", ".venv", "cut_on_eight/node_modules", "buratino", "cadlab"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
