@@ -1,0 +1,13 @@
+.venv/
+.cache/
+__pycache__/
+projects/**/.soma/env/
+projects/**/.soma/model.glb
+projects/**/.soma/model.map.json
+projects/**/.soma/build.json
+projects/**/.soma/geometry/
+projects/**/.soma/feedback/
+projects/**/.soma/help/
+projects/**/output/
+projects/**/exports/
+projects/**/renders/

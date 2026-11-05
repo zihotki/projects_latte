@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Run the pinned SOMA source with global tools and a local Python environment."""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "vendor/soma"
+APP = SOURCE / "app"
+PYTHON = ROOT / ".venv/bin/python"
+COMMIT = "195c29c9a6d9cfcf20ecb03f678b6b11e7cd8999"
+
+
+def run(*args, cwd=ROOT, capture=False, env=None):
+    return subprocess.run(
+        [str(arg) for arg in args],
+        cwd=cwd,
+        env=env or environment(),
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+    ).stdout
+
+
+def environment():
+    env = dict(os.environ)
+    cache = ROOT / ".cache"
+    env.update(
+        UV_CACHE_DIR=str(cache / "uv"),
+        UV_PYTHON_INSTALL_DIR=str(cache / "python"),
+        npm_config_cache=str(cache / "npm"),
+        electron_config_cache=str(cache / "electron"),
+        SOMA_PYTHON=str(PYTHON),
+        SOMA_USER_DATA=str(cache / "app-data"),
+        PYTHONDONTWRITEBYTECODE="1",
+    )
+    # Codex and other Electron hosts can export this; it prevents a GUI launch.
+    env.pop("ELECTRON_RUN_AS_NODE", None)
+    return env
+
+
+def source_check():
+    if not (SOURCE / ".git").exists():
+        raise ValueError("Run git submodule update --init -- cadlab/vendor/soma first.")
+    actual = run("git", "rev-parse", "HEAD", cwd=SOURCE, capture=True).strip()
+    if actual != COMMIT:
+        raise ValueError(f"SOMA source is {actual}; expected {COMMIT}.")
+    dirty = run("git", "status", "--porcelain", cwd=SOURCE, capture=True).strip()
+    if dirty:
+        raise ValueError(
+            "SOMA source has local changes. Save them in the fork "
+            "before updating the pin."
+        )
+
+
+def setup():
+    source_check()
+    for tool in ("node", "npm", "uv"):
+        if not shutil.which(tool):
+            raise ValueError(f"Global {tool} is missing from PATH.")
+    if not PYTHON.exists():
+        run("uv", "venv", "--python", sys.executable, ROOT / ".venv")
+    run(
+        "uv", "pip", "sync", "--python", PYTHON, SOURCE / "python/requirements-base.txt"
+    )
+    run(
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        PYTHON,
+        "--no-deps",
+        "--editable",
+        SOURCE / "python",
+    )
+    run("npm", "ci", cwd=APP)
+    # Recent npm versions can defer dependency install scripts. Complete the
+    # official Electron installer here so the first launch also works offline.
+    run("node", APP / "node_modules/electron/install.js", cwd=APP)
+    # Upstream applies this fix in afterPack; source launches need it too.
+    if sys.platform == "darwin":
+        for helper in (APP / "node_modules/node-pty").glob("**/spawn-helper"):
+            helper.chmod(helper.stat().st_mode | 0o111)
+    run("npm", "run", "build", cwd=APP)
+    doctor()
+
+
+def doctor():
+    source_check()
+    versions = {"soma_commit": COMMIT}
+    for tool in ("node", "npm", "uv"):
+        versions[tool] = run(tool, "--version", capture=True).strip()
+    versions["python"] = run(PYTHON, "--version", capture=True).strip()
+    versions["cad"] = json.loads(
+        run(
+            PYTHON,
+            "-c",
+            "import json, sys, cadquery, soma; "
+            "print(json.dumps(dict(cadquery=cadquery.__version__, "
+            "soma=soma.__version__, python=sys.executable)))",
+            capture=True,
+        )
+    )
+    if not (APP / "dist/main/main.js").is_file():
+        raise ValueError("SOMA app build is missing. Run setup.")
+    if not (APP / "node_modules/electron/path.txt").is_file():
+        raise ValueError("Electron is missing. Run setup.")
+    print(json.dumps(versions, indent=2))
+
+
+def main():
+    command = sys.argv[1] if len(sys.argv) > 1 else "help"
+    if command == "setup":
+        setup()
+    elif command == "doctor":
+        doctor()
+    elif command == "run":
+        source_check()
+        if not PYTHON.exists() or not (APP / "dist/main/main.js").exists():
+            raise ValueError("Run setup first.")
+        (ROOT / ".cache/app-data").mkdir(parents=True, exist_ok=True)
+        run("node", APP / "node_modules/electron/cli.js", APP, *sys.argv[2:], cwd=APP)
+    elif command == "soma":
+        source_check()
+        # Preserve the caller's design directory for the native SOMA CLI.
+        run(PYTHON, "-m", "soma", *sys.argv[2:], cwd=Path.cwd())
+    elif command == "check":
+        source_check()
+        run("npm", "run", "typecheck", cwd=APP)
+        run("npm", "run", "test:unit", cwd=APP)
+    else:
+        print("Usage: cadlab/bin/cadlab {setup|doctor|run|soma ARGS...|check}")
+        if command != "help":
+            return 2
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+        print(f"cadlab: {error}", file=sys.stderr)
+        sys.exit(1)

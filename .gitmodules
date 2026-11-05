@@ -1,0 +1,3 @@
+[submodule "cadlab/vendor/soma"]
+	path = cadlab/vendor/soma
+	url = https://github.com/zihotki/SOMA.git
