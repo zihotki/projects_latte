@@ -74,7 +74,14 @@ repository root, or this command from a design folder:
 ../../bin/cadlab soma export --all --format stl
 ```
 
-The wrapper passes native SOMA arguments through unchanged. Add `--help` after
+The wrapper defaults mesh exports (STL, 3MF, AMF, OBJ, GLB, GLTF) to **fine**
+quality. An explicit `--detail` overrides this default. For native `soma`
+commands in SOMA's terminal, add `--detail fine`; in the app's Export menu,
+select **Mesh settings → Fine**. The app remembers this selection in its local
+state. A fresh app profile needs the selection again. STEP exports retain
+CAD surfaces and do not use mesh quality settings.
+
+Other native SOMA arguments pass through unchanged. Add `--help` after
 `soma`, `build`, or `export` to see the available options. Geometry builds and
 exports work with the app closed. `soma render` needs the app running with the
 same design open. For feedback from SOMA, use **Send to agent**, then paste the
