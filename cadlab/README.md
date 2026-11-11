@@ -65,13 +65,19 @@ restore Git revisions. Use this repository's normal Git workflow.
 
 ## Use Codex and the command line
 
+Use the [CAD Lab skill](.agents/skills/cadlab/SKILL.md) when you open CAD Lab
+or a design folder in Codex. If the skill is absent from your session's
+skill list, ask Codex to read
+`cadlab/.agents/skills/cadlab/SKILL.md` relative to the repository root.
+
 SOMA's terminal has `soma` and the model's Python environment on PATH. An
 external Codex shell can have a different PATH. Use the wrapper from the
 repository root, or this command from a design folder:
 
 ```sh
-../../bin/cadlab soma build
-../../bin/cadlab soma export --all --format stl
+repo_root=$(git rev-parse --show-toplevel)
+"$repo_root/cadlab/bin/cadlab" soma build
+"$repo_root/cadlab/bin/cadlab" soma export --all --format stl
 ```
 
 The wrapper defaults mesh exports (STL, 3MF, AMF, OBJ, GLB, GLTF) to **fine**
