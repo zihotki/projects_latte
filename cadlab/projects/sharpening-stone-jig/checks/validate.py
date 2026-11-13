@@ -1,4 +1,4 @@
-"""Run with cadlab/.venv/bin/python; checks only this design, in a temporary copy."""
+"""Run with cadlab/bin/cadlab python; checks only this design, in a temporary copy."""
 
 import json
 import math

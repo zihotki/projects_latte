@@ -1,5 +1,16 @@
 # Local validation
 
+## Shared setup — 2026-11-13
+
+The shared installation was checked on macOS Apple Silicon at SOMA fork commit
+`c9ca52634df0d2b0622c268ae326e50350ecbf29` on `feat/open-folder`. CAD Lab's
+wrapper tests, SOMA type checks and unit suite passed. A temporary model built
+with the shared runtime and opened in the viewer without a setup dialog. An
+isolated installation and replacement were also checked, including a project
+package after a base-environment change. No unrelated project checks ran.
+
+## Earlier worktree setup
+
 Checked on 2026-11-05, macOS Apple Silicon, in this worktree.
 
 | Tool | Global version |

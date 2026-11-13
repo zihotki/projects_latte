@@ -7,9 +7,8 @@ from `soma export --all`.
 
 ## Open and adjust
 
-Start `./cadlab/bin/cadlab run` from the repo root. In SOMA, use **Open folder**
-for `cadlab/projects/sharpening-stone-jig`. Open that same folder in Codex.
-SOMA creates its project settings and agent guidance there.
+Start `./cadlab/bin/cadlab run --project cadlab/projects/sharpening-stone-jig`
+from the repo root. Open the same folder in Codex.
 
 The Parameters panel has 15 settings:
 
@@ -81,7 +80,7 @@ guides do not replace a single-bevel knife's sharpening method.
 ## Check this design only
 
 ```sh
-cadlab/.venv/bin/python cadlab/projects/sharpening-stone-jig/checks/validate.py
+./cadlab/bin/cadlab python cadlab/projects/sharpening-stone-jig/checks/validate.py
 ```
 
 The check uses a temporary source copy. It never writes test values into the

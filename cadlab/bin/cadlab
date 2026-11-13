@@ -1,23 +1,181 @@
 #!/usr/bin/env python3
-"""Run the pinned SOMA source with global tools and a local Python environment."""
+"""Run CAD Lab with one shared source-based SOMA installation."""
 
+import argparse
+import fcntl
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "vendor/soma"
+DEFAULTS = ROOT / "soma-source.json"
+HOME = Path(os.environ.get("CADLAB_HOME", Path.home() / "Library/Application Support/CAD Lab")).expanduser().resolve()
+INSTALL = HOME / "SOMA"
+SOURCE = INSTALL / "source"
 APP = SOURCE / "app"
-PYTHON = ROOT / ".venv/bin/python"
-COMMIT = "195c29c9a6d9cfcf20ecb03f678b6b11e7cd8999"
+PYTHON = INSTALL / "venv/bin/python"
+MARKER = INSTALL / "installation.json"
+PROFILES = HOME / "profiles"
 MESH_FORMATS = {"stl", "3mf", "amf", "obj", "glb", "gltf"}
 
 
+def environment(project=None):
+    env = dict(os.environ)
+    env.pop("ELECTRON_RUN_AS_NODE", None)
+    env.update(SOMA_PYTHON=str(PYTHON), PYTHONDONTWRITEBYTECODE="1")
+    if project is not None:
+        env["SOMA_USER_DATA"] = str(profile_for(project))
+    else:
+        env["SOMA_USER_DATA"] = str(PROFILES / "home")
+    return env
+
+
+def run(*args, cwd=ROOT, capture=False, env=None):
+    try:
+        return subprocess.run(
+            [str(arg) for arg in args], cwd=cwd, env=env or environment(),
+            check=True, text=True, stdout=subprocess.PIPE if capture else None,
+        ).stdout
+    except subprocess.CalledProcessError as error:
+        if capture and error.stdout:
+            print(error.stdout.rstrip(), file=sys.stderr)
+        raise
+
+
+def profile_for(project):
+    digest = hashlib.sha256(os.fsencode(str(project.resolve()))).hexdigest()[:24]
+    return PROFILES / digest
+
+
+def defaults():
+    return json.loads(DEFAULTS.read_text())
+
+
+def valid_state(state):
+    return isinstance(state, dict) and all(isinstance(state.get(k), str) and state[k] for k in ('branch', 'commit', 'repository'))
+
+
+def installed():
+    try:
+        state = json.loads(MARKER.read_text())
+    except (OSError, ValueError):
+        raise ValueError(f"SOMA is not ready at {INSTALL}. Run 'cadlab install'.") from None
+    if not valid_state(state):
+        raise ValueError(f"SOMA installation metadata is invalid at {MARKER}. Run 'cadlab update'.")
+    if not (SOURCE / ".git").exists():
+        raise ValueError(f"SOMA source is missing from {INSTALL}. Run 'cadlab update'.")
+    actual = run("git", "rev-parse", "HEAD", cwd=SOURCE, capture=True).strip()
+    if actual != state.get("commit"):
+        raise ValueError("The SOMA source differs from the installed version. Run 'cadlab update'.")
+    dirty = run("git", "status", "--porcelain", "--untracked-files=normal", cwd=SOURCE, capture=True).strip()
+    if dirty:
+        raise ValueError("The shared SOMA source has local changes. Save them before updating.")
+    if not PYTHON.is_file() or not (APP / "dist/main/init.js").is_file() or not (APP / "dist/main/main.js").is_file():
+        raise ValueError("The SOMA installation is incomplete. Run 'cadlab update'.")
+    electron = APP / 'node_modules/electron'
+    try:
+        binary = electron / 'dist' / (electron / 'path.txt').read_text().strip()
+    except OSError:
+        raise ValueError("Electron is missing. Run 'cadlab update'.") from None
+    if not (electron / 'cli.js').is_file() or not binary.is_file():
+        raise ValueError("Electron is missing. Run 'cadlab update'.")
+    return state
+
+
+def install(branch=None, update=False):
+    HOME.mkdir(parents=True, exist_ok=True)
+    with (HOME / '.install.lock').open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError('Another CAD Lab installation or update is running.') from None
+        install_locked(branch, update)
+
+
+def install_locked(branch=None, update=False):
+    if not update and MARKER.is_file():
+        try:
+            state = installed()
+        except (ValueError, subprocess.CalledProcessError):
+            pass
+        else:
+            print(f"Using SOMA {state['branch']} at {state['commit']} in {INSTALL}")
+            return
+    for tool in ("git", "node", "npm", "uv"):
+        if not shutil.which(tool):
+            raise ValueError(f"Global {tool} is missing from PATH.")
+    config = defaults()
+    try:
+        previous_state = json.loads(MARKER.read_text())
+        if not valid_state(previous_state):
+            previous_state = None
+    except (OSError, ValueError):
+        previous_state = None
+    if INSTALL.exists() and not (INSTALL / '.cadlab-owned').is_file() and previous_state is None:
+        raise ValueError(f'{INSTALL} is not a recognized CAD Lab installation. Move it aside before installing.')
+    if (SOURCE / '.git').exists():
+        dirty = run('git', 'status', '--porcelain', '--untracked-files=normal', cwd=SOURCE, capture=True).strip()
+        if dirty:
+            raise ValueError('The shared SOMA source has local changes. Save them before updating.')
+    selected_branch = branch or (previous_state or config)["branch"]
+    repo = (previous_state or config)["repository"]
+    HOME.mkdir(parents=True, exist_ok=True)
+    backup = HOME / "SOMA.previous"
+    if backup.exists():
+        raise ValueError(f"Previous SOMA installation exists at {backup}. Move the current SOMA folder aside, rename SOMA.previous to SOMA, then retry.")
+    staging = Path(tempfile.mkdtemp(prefix="SOMA.installing-", dir=HOME))
+    activated = False
+    try:
+        checkout = staging / "source"
+        run("git", "init", "--quiet", checkout)
+        run("git", "remote", "add", "origin", repo, cwd=checkout)
+        ref = f"refs/heads/{selected_branch}" if update or branch else (previous_state or config)["commit"]
+        run("git", "fetch", "--quiet", "--depth=1", "origin", ref, cwd=checkout)
+        run("git", "checkout", "--quiet", "--detach", "FETCH_HEAD", cwd=checkout)
+        commit = run("git", "rev-parse", "HEAD", cwd=checkout, capture=True).strip()
+        if not (checkout / "app/src/cli/init.ts").is_file():
+            raise ValueError(f"SOMA branch '{selected_branch}' lacks headless project initialization.")
+        (staging / '.cadlab-owned').write_text('CAD Lab SOMA installation\n')
+        if INSTALL.exists():
+            os.replace(INSTALL, backup)
+        os.replace(staging, INSTALL)
+        activated = True
+        run("uv", "venv", "--python", sys.executable, INSTALL / "venv")
+        run("uv", "pip", "sync", "--python", PYTHON, SOURCE / "python/requirements-base.txt")
+        run("uv", "pip", "install", "--python", PYTHON, "--no-deps", "--editable", SOURCE / "python")
+        run("npm", "ci", cwd=APP)
+        run("node", APP / "node_modules/electron/install.js", cwd=APP)
+        if sys.platform == "darwin":
+            for helper in (APP / "node_modules/node-pty").glob("**/spawn-helper"):
+                helper.chmod(helper.stat().st_mode | 0o111)
+        run("npm", "run", "build", cwd=APP)
+        run(PYTHON, "-c", "import cadquery, soma")
+        if not (APP / "dist/main/init.js").is_file():
+            raise ValueError("The selected SOMA branch did not build its init command.")
+        if '--open-folder' not in (APP / 'dist/main/main.js').read_text():
+            raise ValueError('The selected SOMA branch does not support direct folder opening.')
+        MARKER.write_text(json.dumps({"repository": repo, "branch": selected_branch, "commit": commit}, indent=2) + "\n")
+        installed()
+    except BaseException:
+        if activated and INSTALL.exists():
+            shutil.rmtree(INSTALL)
+        if backup.exists() and not INSTALL.exists():
+            os.replace(backup, INSTALL)
+        raise
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+    if backup.exists():
+        shutil.rmtree(backup)
+    print(f"Installed SOMA {selected_branch} at {commit} in {INSTALL}")
+
+
 def soma_arguments(args):
-    """Use fine mesh exports unless the caller explicitly selects a detail level."""
     if not args or args[0] != "export":
         return args
     fmt = ""
@@ -26,139 +184,153 @@ def soma_arguments(args):
             fmt = args[i + 1]
         elif arg.startswith("--format="):
             fmt = arg.split("=", 1)[1]
-    has_detail = any(a == "--detail" or a.startswith("--detail=") for a in args)
-    if fmt.lower() in MESH_FORMATS and not has_detail:
+    if fmt.lower() in MESH_FORMATS and not any(a == "--detail" or a.startswith("--detail=") for a in args):
         return [*args, "--detail", "fine"]
     return args
 
 
-def run(*args, cwd=ROOT, capture=False, env=None):
-    return subprocess.run(
-        [str(arg) for arg in args],
-        cwd=cwd,
-        env=env or environment(),
-        check=True,
-        text=True,
-        stdout=subprocess.PIPE if capture else None,
-    ).stdout
+def project_arg(args):
+    project = None
+    for i, arg in enumerate(args):
+        if arg == '--':
+            break
+        key, separator, value = arg.partition('=')
+        if key.startswith('--') and len(key) > 2 and '--project'.startswith(key):
+            value = value if separator else (args[i + 1] if i + 1 < len(args) else '')
+            if not value or value.startswith('--'):
+                return None
+            project = Path(value).resolve()
+    return project or Path.cwd().resolve()
 
 
-def environment():
-    env = dict(os.environ)
-    cache = ROOT / ".cache"
-    env.update(
-        UV_CACHE_DIR=str(cache / "uv"),
-        UV_PYTHON_INSTALL_DIR=str(cache / "python"),
-        npm_config_cache=str(cache / "npm"),
-        electron_config_cache=str(cache / "electron"),
-        SOMA_PYTHON=str(PYTHON),
-        SOMA_USER_DATA=str(cache / "app-data"),
-        PYTHONDONTWRITEBYTECODE="1",
-    )
-    # Codex and other Electron hosts can export this; it prevents a GUI launch.
-    env.pop("ELECTRON_RUN_AS_NODE", None)
-    return env
+def project_entry(project):
+    if not project.is_dir():
+        raise ValueError(f"Project folder does not exist: {project}")
+    settings = project / ".soma/project.json"
+    if settings.exists():
+        try:
+            entry = json.loads(settings.read_text()).get("entry", "model.py")
+        except (OSError, ValueError, AttributeError) as error:
+            raise ValueError(f"Invalid SOMA project settings: {settings}") from error
+    else:
+        entry = "model.py"
+    if not isinstance(entry, str) or not (project / entry).is_file():
+        raise ValueError(f"Project entry does not exist: {project / str(entry)}")
+    return entry
 
 
-def source_check():
-    if not (SOURCE / ".git").exists():
-        raise ValueError("Run git submodule update --init -- cadlab/vendor/soma first.")
-    actual = run("git", "rev-parse", "HEAD", cwd=SOURCE, capture=True).strip()
-    if actual != COMMIT:
-        raise ValueError(f"SOMA source is {actual}; expected {COMMIT}.")
-    dirty = run("git", "status", "--porcelain", cwd=SOURCE, capture=True).strip()
-    if dirty:
-        raise ValueError(
-            "SOMA source has local changes. Save them in the fork "
-            "before updating the pin."
-        )
+def reject_install_project(project):
+    resolved = project.resolve()
+    for candidate in (resolved, *resolved.parents):
+        try:
+            if candidate.samefile(INSTALL):
+                raise ValueError('Keep project folders outside the shared SOMA installation; updates replace it.')
+        except FileNotFoundError:
+            continue
 
 
-def setup():
-    source_check()
-    for tool in ("node", "npm", "uv"):
-        if not shutil.which(tool):
-            raise ValueError(f"Global {tool} is missing from PATH.")
-    if not PYTHON.exists():
-        run("uv", "venv", "--python", sys.executable, ROOT / ".venv")
-    run(
-        "uv", "pip", "sync", "--python", PYTHON, SOURCE / "python/requirements-base.txt"
-    )
-    run(
-        "uv",
-        "pip",
-        "install",
-        "--python",
-        PYTHON,
-        "--no-deps",
-        "--editable",
-        SOURCE / "python",
-    )
-    run("npm", "ci", cwd=APP)
-    # Recent npm versions can defer dependency install scripts. Complete the
-    # official Electron installer here so the first launch also works offline.
-    run("node", APP / "node_modules/electron/install.js", cwd=APP)
-    # Upstream applies this fix in afterPack; source launches need it too.
-    if sys.platform == "darwin":
-        for helper in (APP / "node_modules/node-pty").glob("**/spawn-helper"):
-            helper.chmod(helper.stat().st_mode | 0o111)
-    run("npm", "run", "build", cwd=APP)
-    doctor()
+def prepare_environment(project):
+    reject_install_project(project)
+    env_dir = project / ".soma/env"
+    if (project / '.soma').is_symlink() or env_dir.is_symlink() or not env_dir.resolve().is_relative_to(project.resolve()):
+        raise ValueError('The SOMA project environment must be a local folder inside the project.')
+    settings = project / ".soma/project.json"
+    req = project / "requirements.txt"
+    if settings.is_file():
+        config = json.loads(settings.read_text())
+        if config.get("requirements"):
+            req = (project / config["requirements"]).resolve()
+            if not req.is_relative_to(project.resolve()):
+                raise ValueError("Project requirements must be inside the project folder.")
+    req = req.resolve()
+    if not req.is_relative_to(project.resolve()):
+        raise ValueError('Project requirements must be inside the project folder.')
+    if not env_dir.exists() and not req.is_file():
+        return
+    run(PYTHON, "-m", "soma", "env", "--project", project, "--json", capture=True)
+    if req.is_file() and req.read_text().strip():
+        env = environment(project)
+        env.pop('PIP_PYTHON', None)
+        env.pop('PIP_CONSTRAINT', None)
+        run(env_dir / 'bin/python', '-m', 'pip', 'install', '-r', req, cwd=project, capture=True, env=env)
 
 
 def doctor():
-    source_check()
-    versions = {"soma_commit": COMMIT}
+    state = installed()
+    versions = {"installation": str(INSTALL), **state}
     for tool in ("node", "npm", "uv"):
         versions[tool] = run(tool, "--version", capture=True).strip()
     versions["python"] = run(PYTHON, "--version", capture=True).strip()
-    versions["cad"] = json.loads(
-        run(
-            PYTHON,
-            "-c",
-            "import json, sys, cadquery, soma; "
-            "print(json.dumps(dict(cadquery=cadquery.__version__, "
-            "soma=soma.__version__, python=sys.executable)))",
-            capture=True,
-        )
-    )
-    if not (APP / "dist/main/main.js").is_file():
-        raise ValueError("SOMA app build is missing. Run setup.")
-    if not (APP / "node_modules/electron/path.txt").is_file():
-        raise ValueError("Electron is missing. Run setup.")
+    versions["cad"] = json.loads(run(PYTHON, "-c", "import json,sys,cadquery,soma; print(json.dumps(dict(cadquery=cadquery.__version__,soma=soma.__version__,python=sys.executable)))", capture=True))
     print(json.dumps(versions, indent=2))
 
 
 def main():
-    command = sys.argv[1] if len(sys.argv) > 1 else "help"
-    if command == "setup":
-        setup()
-    elif command == "doctor":
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("install", aliases=["setup"])
+    update = sub.add_parser("update", help="replace the shared installation from a branch")
+    update.add_argument("--branch", help="fork branch to select")
+    sub.add_parser("doctor")
+    sub.add_parser("paths")
+    sub.add_parser("check")
+    sub.add_parser('soma', help='run the native SOMA command')
+    sub.add_parser('python', help='run the shared CAD Python')
+    launch = sub.add_parser("run")
+    launch.add_argument("project", nargs="?")
+    launch.add_argument("--project", dest="project_option")
+    args, rest = parser.parse_known_args()
+    if args.command not in ("soma", "python") and rest:
+        parser.error("unrecognized arguments: " + " ".join(rest))
+    if args.command in ("install", "setup"):
+        install()
+    elif args.command == "update":
+        install(args.branch, update=True)
+    elif args.command == "doctor":
         doctor()
-    elif command == "run":
-        source_check()
-        if not PYTHON.exists() or not (APP / "dist/main/main.js").exists():
-            raise ValueError("Run setup first.")
-        (ROOT / ".cache/app-data").mkdir(parents=True, exist_ok=True)
-        run("node", APP / "node_modules/electron/cli.js", APP, *sys.argv[2:], cwd=APP)
-    elif command == "soma":
-        source_check()
-        # Preserve the caller's design directory for the native SOMA CLI.
-        run(PYTHON, "-m", "soma", *soma_arguments(sys.argv[2:]), cwd=Path.cwd())
-    elif command == "check":
-        source_check()
+    elif args.command == "paths":
+        state = installed()
+        print(json.dumps({"home": str(HOME), "installation": str(INSTALL), "source": str(SOURCE), "python": str(PYTHON), "skills": str(APP / "resources/skills"), **state}, indent=2))
+    elif args.command == "check":
+        installed()
+        run(sys.executable, '-m', 'unittest', 'discover', '-s', ROOT / 'tests')
         run("npm", "run", "typecheck", cwd=APP)
         run("npm", "run", "test:unit", cwd=APP)
-    else:
-        print("Usage: cadlab/bin/cadlab {setup|doctor|run|soma ARGS...|check}")
-        if command != "help":
-            return 2
+    elif args.command == "run":
+        installed()
+        if args.project and args.project_option:
+            raise ValueError("Select the project once.")
+        selected = args.project_option or args.project
+        cwd = Path.cwd()
+        project = Path(selected).resolve() if selected else (cwd.resolve() if (cwd / "model.py").is_file() or (cwd / '.soma/project.json').is_file() else None)
+        if project is not None:
+            reject_install_project(project)
+            entry = project_entry(project)
+            profile = profile_for(project)
+            profile.mkdir(parents=True, exist_ok=True)
+            run("node", APP / "dist/main/init.js", "init", project, "--entry", entry, "--profile", profile, capture=True)
+            prepare_environment(project)
+            run("node", APP / "node_modules/electron/cli.js", APP, "--open-folder", project, cwd=project, env=environment(project))
+        else:
+            PROFILES.joinpath("home").mkdir(parents=True, exist_ok=True)
+            run("node", APP / "node_modules/electron/cli.js", APP, cwd=ROOT)
     return 0
 
 
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        if len(sys.argv) > 1 and sys.argv[1] in ("soma", "python"):
+            command, arguments = sys.argv[1], sys.argv[2:]
+            installed()
+            if command == "python":
+                run(PYTHON, *arguments, cwd=Path.cwd())
+            else:
+                project = project_arg(arguments)
+                if arguments and arguments[0] in ("build", "export") and not any(a in ('--help', '-h') for a in arguments) and project and project.is_dir():
+                    prepare_environment(project)
+                run(PYTHON, "-m", "soma", *soma_arguments(arguments), cwd=Path.cwd(), env=environment(project))
+        else:
+            sys.exit(main())
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         print(f"cadlab: {error}", file=sys.stderr)
         sys.exit(1)

@@ -42,17 +42,16 @@ Set up and run a Buratino assembly example. See the
 ./buratino/bin/buratino preview projects/space-assembly-fronts
 ```
 
-Set up and run CAD Lab from pinned SOMA source:
+Set up the shared CAD Lab installation and open a design:
 
 ```bash
-git submodule update --init -- cadlab/vendor/soma
-./cadlab/bin/cadlab setup
-./cadlab/bin/cadlab run
+./cadlab/bin/cadlab install
+./cadlab/bin/cadlab run --project cadlab/projects/example
 ```
 
-Use **Open folder** in SOMA for designs under `cadlab/projects/`. Open the same
-design folder in Codex. See the [CAD Lab guide](cadlab/README.md) for project
-creation, commands, upgrades, and platform limits.
+CAD Lab uses one shared SOMA installation for all worktrees. See the
+[CAD Lab guide](cadlab/README.md) for project creation, source updates, and
+validation.
 
 ## Repository checks
 
