@@ -454,6 +454,7 @@ class TestCheckDrawerJoinery:
         return DrawerConfig(
             opening_width=564, opening_height=200, opening_depth=500,
             joinery_style=style, side_thickness=t_s,
+            bottom_dado_depth=min(6.0, t_s / 2),
         )
 
     def test_butt_no_issues(self):

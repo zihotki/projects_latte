@@ -123,8 +123,13 @@ def test_real_native_project_consumers(monkeypatch, tmp_path):
         assert Path(cutlist["files"]["csv"]).is_file()
         import csv
 
-        with Path(cutlist["files"]["csv"]).open(newline="") as stream:
-            rows = {row["id"]: row for row in csv.DictReader(stream)}
+        # Machined meshes can exceed Python's default 128 KiB CSV field limit.
+        previous_limit = csv.field_size_limit(16 * 1024 * 1024)
+        try:
+            with Path(cutlist["files"]["csv"]).open(newline="") as stream:
+                rows = {row["id"]: row for row in csv.DictReader(stream)}
+        finally:
+            csv.field_size_limit(previous_limit)
         for name in ("left-drawers", "right-drawers"):
             back = rows[f"{name}.carcass.back"]
             assert back["material"] == "6 mm board"

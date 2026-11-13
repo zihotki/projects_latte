@@ -5,9 +5,9 @@ description: Use when starting a design project or creating, editing, checking, 
 
 # CAD Lab
 
-Read the [workspace instructions](../../../AGENTS.md) and identify the exact
+Read the [workspace instructions](../../../cadlab/AGENTS.md) and identify the exact
 design folder. A design can have its own project inside another design folder.
-Use the [CAD Lab guide](../../../README.md) to set up the harness. For a new
+Use the [CAD Lab guide](../../../cadlab/README.md) to set up the harness. For a new
 design, create a project folder under `cadlab/projects/` and create its `model.py`.
 Run `cadlab/bin/cadlab run --project <folder>` to initialize it and open that
 exact folder in SOMA. Keep the viewer available for the user to review edits.
@@ -47,6 +47,6 @@ parts and format. The wrapper defaults mesh exports to fine detail. For native
 mesh exports, pass `--detail fine`. If you need an image from `soma render`, use the SOMA terminal in the viewer
 for that exact design; each project has its own app profile and connection.
 
-Use the guide's [CAD Lab validation commands](../../../README.md#build-export-and-validate)
+Use the guide's [CAD Lab validation commands](../../../cadlab/README.md#build-export-and-validate)
 for changes to the harness. Report the checks you ran and the paths to requested
 deliverables.

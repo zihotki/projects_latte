@@ -9,7 +9,7 @@ A repository for small, focused software projects.
 | [Cut on Eight](cut_on_eight/README.md) | Local browser-based dance-video segmentation and cataloguing. |
 | [LiteLLM gateway](litellm/README.md) | Local AI model gateway with per-app keys and PostgreSQL backups. |
 | [Buratino](buratino/README.md) | Furniture design harness with declarative cabinets, assemblies, and fronts. |
-| [CAD Lab](cadlab/README.md) | Pinned SOMA source workspace for CadQuery designs with Codex. |
+| [CAD Lab](cadlab/README.md) | Shared SOMA harness for CadQuery designs with Codex. |
 
 ## Working with a project
 

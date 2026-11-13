@@ -146,6 +146,8 @@ class Carcass:
     drawer_front_gap: float = 2
     outer_reveal: float = 2
     joinery: DominoJoinery | None = None
+    back_height: float | None = None
+    horizontal_panels_full_width: bool = False
 
 
 @dataclass(frozen=True)
@@ -211,6 +213,12 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
     """Resolve an applied-back, butt carcass and its rectangular clear spaces."""
     for k in ("width", "height", "depth", "side_thickness", "bottom_thickness", "top_thickness", "back_thickness"):
         _number(getattr(carcass, k), f"carcass.{k}")
+    if carcass.back_height is not None:
+        _number(carcass.back_height, "carcass.back_height")
+        if carcass.back_height < carcass.height:
+            raise ValueError("carcass.back_height cannot be less than carcass.height")
+    if not isinstance(carcass.horizontal_panels_full_width, bool):
+        raise ValueError("carcass.horizontal_panels_full_width must be a boolean")
     for key in ("door_gap", "drawer_front_gap", "outer_reveal"):
         _number(getattr(carcass, key), f"carcass.{key}", zero=True)
     validate_domino_joinery(carcass.joinery, "carcass.joinery")
@@ -252,11 +260,16 @@ def resolve_model(carcass: Carcass, root: Space, fronts: tuple[Door | AppliedDra
         bottom = carcass_panel(cfg, "bottom")
         top = carcass_panel(cfg, "top")
         back = back_capture_geometry(cfg)
-        part("/carcass/side_left", "carcass", (0,0,0), (carcass.side_thickness,side.width,carcass.height), carcass.material, carcass.side_thickness, 0, report_member="side_left")
-        part("/carcass/side_right", "carcass", (carcass.width-carcass.side_thickness,0,0), (carcass.side_thickness,side.width,carcass.height), carcass.material, carcass.side_thickness, 0, report_member="side_right")
-        part("/carcass/bottom", "carcass", (carcass.side_thickness,0,0), (bottom.length,bottom.width,carcass.bottom_thickness), carcass.material, carcass.bottom_thickness, 2, report_member="bottom")
-        part("/carcass/top", "carcass", (carcass.side_thickness,0,carcass.height-carcass.top_thickness), (top.length,top.width,carcass.top_thickness), carcass.material, carcass.top_thickness, 2, report_member="top")
-        part("/carcass/back", "carcass", (0,carcass.depth-carcass.back_thickness,0), (back.width,carcass.back_thickness,back.height), carcass.back_material, carcass.back_thickness, 1, report_member="back")
+        full_width = carcass.horizontal_panels_full_width
+        side_z = carcass.bottom_thickness if full_width else 0
+        side_height = cfg.interior_height if full_width else carcass.height
+        panel_x = 0 if full_width else carcass.side_thickness
+        panel_width = carcass.width if full_width else bottom.length
+        part("/carcass/side_left", "carcass", (0,0,side_z), (carcass.side_thickness,side.width,side_height), carcass.material, carcass.side_thickness, 0, report_member="side_left")
+        part("/carcass/side_right", "carcass", (carcass.width-carcass.side_thickness,0,side_z), (carcass.side_thickness,side.width,side_height), carcass.material, carcass.side_thickness, 0, report_member="side_right")
+        part("/carcass/bottom", "carcass", (panel_x,0,0), (panel_width,bottom.width,carcass.bottom_thickness), carcass.material, carcass.bottom_thickness, 2, report_member="bottom")
+        part("/carcass/top", "carcass", (panel_x,0,carcass.height-carcass.top_thickness), (panel_width,top.width,carcass.top_thickness), carcass.material, carcass.top_thickness, 2, report_member="top")
+        part("/carcass/back", "carcass", (0,carcass.depth-carcass.back_thickness,0), (back.width,carcass.back_thickness,carcass.back_height or back.height), carcass.back_material, carcass.back_thickness, 1, report_member="back")
 
         for member in ("side_left", "side_right", "bottom", "top"):
             contact("/carcass/back", "/carcass/" + member, "butt")

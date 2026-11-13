@@ -45,9 +45,10 @@ class TestFinishParams:
             assert len(p["base"]) == 3, key
             for c in p["base"]:
                 assert c.startswith("#") and len(c) == 7, key
-            assert len(p["grain_lo"]) == 3 and len(p["grain_hi"]) == 3, key
-            assert len(p["grain_alpha"]) == 2, key
-            assert len(p["fleck_rgba"]) == 5, key
+            if p.get("pattern") != "osb":
+                assert len(p["grain_lo"]) == 3 and len(p["grain_hi"]) == 3, key
+                assert len(p["grain_alpha"]) == 2, key
+                assert len(p["fleck_rgba"]) == 5, key
             assert p["scale_u"] > 0 and p["scale_v"] > 0, key
             assert 0 < p["roughness"] <= 1, key
             assert p["label"], key
@@ -59,10 +60,11 @@ class TestFinishParams:
     def test_expected_catalogue(self):
         assert set(WOOD_FINISHES) == {
             "rift_white_oak", "flat_sawn_white_oak", "maple", "walnut",
-            "black_walnut", "bamboo", "baltic_birch", "cherry",
+            "black_walnut", "bamboo", "baltic_birch", "cherry", "osb",
         }
         assert WOOD_FINISHES["flat_sawn_white_oak"]["pattern"] == "cathedral"
         assert WOOD_FINISHES["black_walnut"]["label"] == "Black Walnut"
+        assert WOOD_FINISHES["osb"]["pattern"] == "osb"
         assert "fleck_size" in WOOD_FINISHES["bamboo"]  # node knuckles
 
 

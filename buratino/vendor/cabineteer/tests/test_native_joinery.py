@@ -119,12 +119,12 @@ def test_recipe_round_trip_and_validation(models):
     )
     with pytest.raises(ValueError, match="profile_assembly.joinery"):
         replace(project.profile_assembly, joinery="domino")
-    # A 16 mm drawer wall must retain a blind outer wall.
+    # An 18 mm drawer wall must retain a blind outer wall.
     with pytest.raises(ValueError, match="blind mortise depth"):
         replace(
             project,
             profile_assembly=replace(
-                project.profile_assembly, corner_joinery=DominoJoinery(face_depth=16)
+                project.profile_assembly, corner_joinery=DominoJoinery(face_depth=18)
             ),
         ).resolved_assembly()
 

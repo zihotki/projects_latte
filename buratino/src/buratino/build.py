@@ -502,6 +502,7 @@ def render_geometry(root: Path, directory: Path, calculation):
         output_dir=directory,
         name="cabinet",
         open_browser=False,
+        finish=calculation.result.get("variables", {}).get("preview_finish"),
         info={
             "status": "DRAFT — NOT FOR MANUFACTURING",
             **calculation.result["dimensions_mm"],

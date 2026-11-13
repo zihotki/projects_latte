@@ -528,9 +528,9 @@ function addPartOverlays() {
       mesh.receiveShadow = false;
       const geometry = new THREE.EdgesGeometry(mesh.geometry, 20);
       const line = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({
-        color: 0x344153,
+        color: 0x20232a,
         transparent: true,
-        opacity: 0.67,
+        opacity: 0.95,
         depthTest: true,
       }));
       line.name = `cabinet-outline-${role}`;

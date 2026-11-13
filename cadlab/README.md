@@ -74,7 +74,7 @@ project environment when its viewer opens.
 
 `cadlab check` runs SOMA's TypeScript and unit checks only. It does not run
 checks for Buratino, Cut on Eight, or LiteLLM. Use the project-specific checks
-when they apply. The [CAD Lab skill](.agents/skills/cadlab/SKILL.md) explains
+when they apply. The [CAD Lab skill](../.agents/skills/cadlab/SKILL.md) explains
 the modeling workflow and how to find SOMA's skills.
 
 ## Select or update a source branch

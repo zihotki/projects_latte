@@ -86,6 +86,14 @@ def _validate_name(name: str) -> str:
 #   scale_u/v   — mm of wood covered by one texture tile (across / along grain)
 
 WOOD_FINISHES: dict[str, dict] = {
+    "osb": {
+        "label": "OSB",
+        "pattern": "osb",
+        "base": ["#d3b78a", "#dcc499", "#d3b78a"],
+        "roughness": 0.88,
+        "scale_u": 512,
+        "scale_v": 2048,
+    },
     "rift_white_oak": {
         "label": "Rift-Sawn White Oak",
         "base": ["#e6d9bd", "#ddcfae", "#e2d4b6"],
@@ -260,6 +268,40 @@ function makeGrainTexture(P) {
   let seed = 42;
   const rnd  = () => (seed = (Math.imul(seed, 1103515245) + 12345) | 0, ((seed >>> 16) & 0x7fff) / 32768);
   const lerp = (a, b, t) => a + (b - a) * t;
+  if (P.pattern === 'osb') {
+    const colors = ['#ead4ad', '#d1b38a', '#bc9b70', '#dfc398', '#b59a78', '#efddbd'];
+    for (let i = 0; i < 9500; i++) {
+      const x = rnd() * 512, y = rnd() * 2048;
+      const length = 18 + rnd() * 75, width = 3 + rnd() * 11;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate((rnd() - 0.5) * Math.PI);
+      ctx.fillStyle = colors[Math.floor(rnd() * colors.length)];
+      ctx.globalAlpha = 0.28 + rnd() * 0.35;
+      ctx.beginPath();
+      ctx.moveTo(-length / 2, -width * 0.3);
+      ctx.lineTo(length * 0.3, -width / 2);
+      ctx.lineTo(length / 2, width * 0.15);
+      ctx.lineTo(-length * 0.35, width / 2);
+      ctx.closePath();
+      ctx.fill();
+      if (rnd() < 0.55) {
+        ctx.globalAlpha = 0.12;
+        ctx.strokeStyle = '#796449';
+        ctx.lineWidth = 0.6;
+        ctx.beginPath();
+        ctx.moveTo(-length * 0.35, 0);
+        ctx.lineTo(length * 0.35, (rnd() - 0.5) * width * 0.35);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    const tex = new THREE.CanvasTexture(cvs);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    return tex;
+  }
   let x = 0;
   while (x < 512) {
     x += P.line_gap[0] + rnd() * P.line_gap[1];

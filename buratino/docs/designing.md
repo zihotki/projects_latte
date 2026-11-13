@@ -19,7 +19,11 @@ and export frames. Read it before adding geometry or machining logic.
 | A profiled or sloped assembly | [profile-row-sloped](../projects/profile-row-sloped/project.py) | `ProfileAssemblySpec` |
 
 Use a Space model for rectangular, butt-joined carcasses with an applied back.
-It does not define sloped or changing-height clear spaces. Use
+Set `Carcass.back_height` when the applied back must extend above the carcass;
+it starts at the carcass bottom and must be at least as high as the carcass.
+Set `Carcass.horizontal_panels_full_width=True` to place the sides between
+full-width top and bottom panels.
+Space models do not define sloped or changing-height clear spaces. Use
 `ProfileAssemblySpec` for supported profiled assemblies. See the larger
 [attic clothing storage design](../projects/attic-clothing-storage/project.py) for a
 complete example.

@@ -14,23 +14,29 @@ from buratino.engine import calculate
 from buratino.project import load_project
 
 _PROVIDER_CSV_SHA256 = {
+    "zagenzagen-front-panel-panel-18mm-14791277f2b4-001.csv": (
+        "473607e6b253d6781426285be02aee0f0dcaeacd61a6ef683f068fb16b0167ae"
+    ),
+    "opmaatzagen-front-panel-panel-18mm-14791277f2b4-001.csv": (
+        "59e2bdd5be44ba03c07fc774857490d3723b1bb9031efd2e2cf896f5ed3c7c00"
+    ),
     "zagenzagen-melamine-panel-18mm-c9f85f74df9c-001.csv": (
-        "e11d656ef37bc3f65ffe385fe1ea72521164d0908e81c70fcc52312d55717f64"
+        "afe1c73873c07de44145a75ad05dddeea1b03f8a6158818a703bee23a1474210"
     ),
     "zagenzagen-plywood-panel-12mm-58d0115cf732-001.csv": (
-        "ba40f3f842d98c5b694457f0e314cf52b07cccb0b0bade9e1a9cd6205cd07886"
+        "da8c87ada840c08f371b7c384946c5eb718414442487511795015623fc5eb973"
     ),
     "zagenzagen-plywood-panel-18mm-109afb8af209-001.csv": (
-        "244e52435159161e2de00b61d697cdbaaba8495e836b4217e436dc13b6f88732"
+        "27dc0255b964529c8f3d1a0837379fac584a1160437e1368d3a7e55f864548cf"
     ),
     "opmaatzagen-melamine-panel-18mm-c9f85f74df9c-001.csv": (
-        "8abc4b1e18ba239cf8c5e0fb4cfc42979f493c58392973c9bdae131ec5bb65e6"
+        "1734ba237a08fe4c29bfbf3906aa51b46c49535147a213ce5ff520893bc3ed3d"
     ),
     "opmaatzagen-plywood-panel-12mm-58d0115cf732-001.csv": (
-        "d33882407552b22b72052821633042756c83c0b8fedf0b32e637cb81e84fb261"
+        "85840a09b774462a43054f51618037e3e7b713e7acf3211156127c707af4a7dd"
     ),
     "opmaatzagen-plywood-panel-18mm-109afb8af209-001.csv": (
-        "40564d43e955822f2d549e243f78a89a2f051f6d6ee86e82359cb1d043cdf6d2"
+        "c9ed079bfa958037a1271e19438780535ac4ddafa219dfdce9aa49fc3187f90f"
     ),
 }
 
@@ -86,7 +92,7 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
     }
     assert len(result["parts"]) == 36
     assert all(
-        d["box_mm"] == {"width": 973, "depth": 544, "height": 270}
+        d["box_mm"] == {"width": 973, "depth": 544, "height": 260}
         and d["runner_travel_mm"] == 500
         for d in result["drawers"]
     )
@@ -103,9 +109,9 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
         elif "/carcass/" in part["id"] or part["id"].endswith("/front-rail"):
             assert part["material"] == "melamine"
         else:
-            assert part["material"] == "plywood"
+            assert part["material"] == "front-panel"
     joints = result["joints"]
-    assert len(joints) == 92
+    assert len(joints) == 76
     assert all(len(joint["mortises"]) == 2 for joint in joints)
     geometry = sorted(
         (
@@ -121,7 +127,7 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
         for joint in joints
         for mortise in joint["mortises"]
     )
-    assert len(geometry) == 184
+    assert len(geometry) == 152
     cuts = [
         op
         for p in parts.values()
@@ -139,7 +145,7 @@ def test_under_window_stock_joint_pairs_and_report(root, tmp_path):
             # These x-face mortises have local v = Z. The groove ends at 25.
             assert op["v"] - op["length"] / 2 > 25
     assert (
-        next(h for h in result["hardware"] if h["type"] == "domino")["quantity"] == 92
+        next(h for h in result["hardware"] if h["type"] == "domino")["quantity"] == 76
     )
     assert len(result["cutting_groups"]) == 11
     for provider in ("zagenzagen", "opmaatzagen"):

@@ -1,5 +1,7 @@
 .venv/
 .cache/
+/soma-fork-work/
+/vendor/soma/
 __pycache__/
 projects/**/.soma/env/
 projects/**/.soma/model.glb

@@ -1,0 +1,35 @@
+{
+  "id": "36e30a7a-74b5-46d2-b5d5-06bf905d038a",
+  "name": "router-template",
+  "api_version": 1,
+  "app_version": "0.11.0",
+  "entry": "model.py",
+  "main_output": "output/model.step",
+  "created": "2026-11-13T17:42:31.510Z",
+  "requirements": ".soma/requirements.txt",
+  "skills": [
+    "design-workflow",
+    "cadquery",
+    "parametric",
+    "standard-parts"
+  ],
+  "skills_on_demand": [
+    "cadquery-scripts",
+    "shell-environment",
+    "soma-app",
+    "3d-printing",
+    "resin-powder",
+    "cnc",
+    "laser",
+    "sheet-metal",
+    "plasma",
+    "tolerances",
+    "joints",
+    "strength",
+    "assemblies",
+    "analysis",
+    "animation",
+    "fem",
+    "drawings"
+  ]
+}

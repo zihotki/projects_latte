@@ -56,6 +56,8 @@ def _validate_carcass(carcass, path):
     _number(carcass.depth, path + ".depth")
     for field in ("side_thickness", "bottom_thickness", "top_thickness", "back_thickness"):
         _number(getattr(carcass, field), f"{path}.{field}")
+    if carcass.back_height is not None:
+        _number(carcass.back_height, f"{path}.back_height")
     for field in ("door_gap", "drawer_front_gap", "outer_reveal"):
         _number(getattr(carcass, field), f"{path}.{field}", zero=True)
     for field, stock in (("width", 2 * carcass.side_thickness),
