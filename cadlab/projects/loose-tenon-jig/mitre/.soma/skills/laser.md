@@ -1,0 +1,57 @@
+---
+title: Laser cutting
+name: Laser cutting
+summary: plywood, 3 mm: tab and slot joints with kerf 0.15 mm, minimum webs, assembly in 3D, one DXF per plate.
+order: 13
+category: Manufacturing
+default: on-demand
+when: parts will be laser cut from flat sheets (plywood, MDF, acrylic)
+topics: Material and sheet thickness; Kerf and joints; Webs, holes, corners; Structure in the model; Checks and export as DXF
+var material: plywood | | Material | plywood=Plywood, MDF=MDF, acrylic=Acrylic (PMMA), cardboard=Cardboard
+var thickness: 3 | mm | Sheet thickness | 0.5..25
+var kerf: 0.15 | mm | Kerf | 0..1
+---
+# Skill: Laser cutting
+
+> **On demand:** the user has not switched this rule set on for every change. Follow it while the conversation is
+> about its topic, and add one line to `NOTES.md` under `## Requirements` that names this file, so that a later
+> session follows it too.
+> The values in this file are defaults of the app, the user has not
+> chosen them: say which ones you rely on, or ask when one matters.
+> In the app, the user can switch this skill to "Always" and change its settings.
+
+The parts are cut by a laser from flat sheets of **plywood**, 3 mm thick. The values apply unless the
+user says otherwise in the chat or in `NOTES.md`. Constants at the top: `THICKNESS = 3`, `KERF = 0.15`.
+Real sheets differ from nominal (plywood "3 mm" is often 2.8 to 3.2 mm): ask the user to measure when fits matter.
+
+## Kerf and joints
+
+- The laser burns away `KERF` along every cut: holes and slots come out `KERF` wider, outlines and tabs `KERF` smaller.
+  Ask whether the laser compensates this already. If it does, model nominal sizes.
+- Snug slot for a plate: `THICKNESS - KERF` wide. Slip fit: 0.1 mm more.
+- Finger joints and tabs: draw the fingers `KERF` wider and the gaps `KERF` narrower than nominal.
+- Acrylic cracks under press fits: slip fit plus glue or screws. Wood and MDF take press fits.
+- Screwed joints: T-slot with a captive nut in the plate that the screw enters.
+
+## Webs, holes, corners
+
+- Webs between cuts and distances to the edge at least 1.5 × `THICKNESS`, never below 2 mm.
+- Holes at least `THICKNESS` in diameter.
+- Acrylic: inner corners with 0.5 mm radius against cracks. Sharp inner corners are fine in wood.
+
+## In the model
+
+- One part per plate. A function builds it lying flat on XY (an extruded 2D profile, thickness along Z), then it is
+  rotated and moved into the assembly.
+- Constant `FLAT = False` at the top. With `FLAT = True`, `model.py` registers the plates flat on XY next to each other
+  instead of assembled. `soma export` writes a DXF from a section through the middle of the part, so it only works on
+  flat plates.
+- Engravings (lines, text) are not in the cut DXF: list them in `NOTES.md` or ask how the user's laser takes them.
+
+## Checks and export
+
+- Plates that are not joined do not intersect: `a.intersect(b).val().Volume()` is 0. Joined plates overlap only by the
+  kerf allowance.
+- Every plate fits the sheet or laser bed: ask for its size when a part is longer than 300 mm.
+- DXF files: set `FLAT = True`, `soma build`, `soma export "Side" --format dxf` for each plate, then `FLAT = False` and
+  build again.

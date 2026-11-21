@@ -7,3 +7,18 @@
 - Add practical chamfers for printability and handling while preserving functional fits.
 - Use fine quality for mesh exports. For native SOMA commands, pass `--detail fine`.
 - Run CAD Lab's scoped checks only; repository-wide checks also validate other projects.
+
+## SOMA skills
+
+- Before modeling, read the target project's `AGENTS.md` and its `Always follow`
+  skills. Use its `Read when relevant` list for the task at hand. Read the
+  files in the project's `.soma/skills/` for active settings. For a new project,
+  use the shared skill path from `cadlab paths` until SOMA initializes it.
+- For printed parts, read `3d-printing.md` and `tolerances.md` before sizing gaps,
+  engravings, and mating features. Use the selected nozzle, layer height, and
+  print orientation. Use `analysis.md` when checking geometry for printability.
+  See [Design for filament printing](FDM-DESIGN.md) for CAD Lab examples and
+  source guidance.
+- For locating features and fasteners, read `assemblies.md`, `joints.md`, and
+  `tolerances.md`. Check the parts in their assembled positions, including
+  locating contact, fastener access, and clearance.

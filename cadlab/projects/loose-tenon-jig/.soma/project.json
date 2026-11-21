@@ -1,0 +1,35 @@
+{
+  "id": "89d77c63-ee3c-4e58-8954-f38b9c198dee",
+  "name": "loose-tenon-jig",
+  "api_version": 1,
+  "app_version": "0.11.0",
+  "entry": "model.py",
+  "main_output": "output/model.step",
+  "created": "2026-11-21T13:46:26.218Z",
+  "requirements": ".soma/requirements.txt",
+  "skills": [
+    "design-workflow",
+    "cadquery",
+    "parametric",
+    "standard-parts"
+  ],
+  "skills_on_demand": [
+    "cadquery-scripts",
+    "shell-environment",
+    "soma-app",
+    "3d-printing",
+    "resin-powder",
+    "cnc",
+    "laser",
+    "sheet-metal",
+    "plasma",
+    "tolerances",
+    "joints",
+    "strength",
+    "assemblies",
+    "analysis",
+    "animation",
+    "fem",
+    "drawings"
+  ]
+}
