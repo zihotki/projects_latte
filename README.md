@@ -42,16 +42,14 @@ Set up and run a Buratino assembly example. See the
 ./buratino/bin/buratino preview projects/space-assembly-fronts
 ```
 
-Set up the shared CAD Lab installation and open a design:
+Set up the CAD Lab source checkout using the
+[CAD Lab guide](cadlab/README.md), then open a design:
 
 ```bash
-./cadlab/bin/cadlab install
 ./cadlab/bin/cadlab run --project cadlab/projects/example
 ```
 
-CAD Lab uses one shared SOMA installation for all worktrees. See the
-[CAD Lab guide](cadlab/README.md) for project creation, source updates, and
-validation.
+The guide also covers project creation and validation.
 
 ## Repository checks
 

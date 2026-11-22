@@ -18,8 +18,8 @@
 - Fit the parts on the A1. Use separate print views for the face plate, edge
   fence and pins. Allow a 4 mm brim. Use a 0.4 mm nozzle and
   0.20 mm layers as design assumptions.
-- Follow the SOMA 3D printing, tolerances, joints, assemblies, and analysis
-  skills in `.soma/skills/` and the [CAD Lab FDM guide](../../FDM-DESIGN.md).
+- Follow the shared SOMA 3D printing, tolerances, joints, assemblies, and
+  analysis skills and the [CAD Lab FDM guide](../../FDM-DESIGN.md).
 
 ## SOMA views
 

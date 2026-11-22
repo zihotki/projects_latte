@@ -39,7 +39,7 @@ The pocket walls below the chamfers retain the specified clearance.
    needed across the guide opening. The numerical angle labels face the bed.
 4. Export the holder and guides as separate STL files using **Fine** mesh
    quality. The CAD Lab wrapper applies it by default; select Fine in SOMA's
-   export menu or pass `--detail fine` in its terminal. The print layout fits
+   export menu or pass `--detail fine` to the export command. The print layout fits
    the A1 bed over the declared parameter ranges. Review the Bambu Studio
    preview and selected material profile before printing. Geometry checks do
    not prove a support-free slicer result or physical fit.

@@ -58,75 +58,25 @@ class WrapperTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'inside the project'):
                 cadlab.prepare_environment(project)
 
-    def test_project_inside_installation_is_rejected(self):
+    def test_environment_selects_profile_and_shared_skills(self):
         with tempfile.TemporaryDirectory() as tmp:
-            install = Path(tmp) / 'SOMA'
-            project = install / 'source' / 'project'
-            project.mkdir(parents=True)
-            with patch.object(cadlab, 'INSTALL', install):
-                with self.assertRaisesRegex(ValueError, 'outside the shared SOMA'):
-                    cadlab.reject_install_project(project)
-                alternate = Path(tmp) / 'soma' / 'source' / 'project'
-                if alternate.exists():
-                    with self.assertRaisesRegex(ValueError, 'outside the shared SOMA'):
-                        cadlab.reject_install_project(alternate)
+            project = Path(tmp)
+            with patch.dict('os.environ', {'SOMA_APP': 'other', 'SOMA_APP_TOKEN': 'other'}):
+                env = cadlab.environment(project)
+            self.assertNotIn('SOMA_APP', env)
+            self.assertNotIn('SOMA_APP_TOKEN', env)
+            self.assertEqual(env['SOMA_USER_DATA'], str(cadlab.profile_for(project)))
+            self.assertEqual(env['SOMA_SHARED_SKILLS_PROJECT'], str(project.resolve()))
 
-    def test_source_update_lock_rejects_competing_installs(self):
-        import fcntl
+    def test_source_checkout_can_be_dirty(self):
         with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp)
-            with patch.object(cadlab, 'HOME', home), (home / '.install.lock').open('a') as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                with self.assertRaisesRegex(ValueError, 'Another CAD Lab'):
-                    cadlab.install()
-
-    def test_existing_install_is_not_rebuilt(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp)
-            marker = home / 'marker'
-            marker.write_text('{}')
-            with patch.object(cadlab, 'HOME', home), patch.object(cadlab, 'MARKER', marker), \
-                 patch.object(cadlab, 'installed', return_value={'branch': 'test', 'commit': 'abc'}), \
-                 patch.object(cadlab, 'run') as run:
-                cadlab.install()
-                run.assert_not_called()
-
-    def test_unrecognized_installation_is_not_replaced(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp)
-            installation = home / 'SOMA'
-            installation.mkdir()
-            (installation / 'user-file').write_text('keep')
-            with patch.object(cadlab, 'HOME', home), patch.object(cadlab, 'INSTALL', installation), \
-                 patch.object(cadlab, 'SOURCE', installation / 'source'), patch.object(cadlab, 'MARKER', installation / 'installation.json'):
-                with self.assertRaisesRegex(ValueError, 'not a recognized'):
-                    cadlab.install(update=True)
-            self.assertEqual((installation / 'user-file').read_text(), 'keep')
-
-    def test_repair_fetches_installed_commit_not_default(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp)
-            installation = home / 'SOMA'
-            installation.mkdir()
-            marker = installation / 'installation.json'
-            marker.write_text(json.dumps({'branch': 'other', 'commit': 'selected-commit', 'repository': 'test-repo'}))
-            calls = []
-
-            def fake_run(*args, **kwargs):
-                calls.append(args)
-                if args[:2] == ('git', 'fetch'):
-                    raise subprocess.CalledProcessError(1, args)
-                return ''
-
-            with patch.object(cadlab, 'HOME', home), patch.object(cadlab, 'INSTALL', installation), \
-                 patch.object(cadlab, 'SOURCE', installation / 'source'), patch.object(cadlab, 'MARKER', marker), \
-                 patch.object(cadlab, 'installed', side_effect=ValueError('incomplete')), \
-                 patch.object(cadlab, 'defaults', return_value={'branch': 'default', 'commit': 'default-commit', 'repository': 'test-repo'}), \
-                 patch.object(cadlab, 'run', side_effect=fake_run):
-                with self.assertRaises(subprocess.CalledProcessError):
-                    cadlab.install()
-            self.assertTrue(any(args[:2] == ('git', 'fetch') and args[-1] == 'selected-commit' for args in calls))
-            self.assertTrue(marker.is_file())
+            source = Path(tmp)
+            (source / 'python/soma').mkdir(parents=True)
+            python = source / '.venv/bin/python'
+            python.parent.mkdir(parents=True)
+            python.touch()
+            with patch.object(cadlab, 'SOURCE', source), patch.object(cadlab, 'PYTHON', python):
+                cadlab.source_ready()
 
 
 if __name__ == '__main__':

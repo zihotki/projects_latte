@@ -10,6 +10,7 @@ projects/**/.soma/build.json
 projects/**/.soma/geometry/
 projects/**/.soma/feedback/
 projects/**/.soma/help/
+projects/**/.soma/skills/
 projects/**/output/
 projects/**/exports/
 projects/**/renders/

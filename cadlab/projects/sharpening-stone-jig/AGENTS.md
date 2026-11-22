@@ -3,7 +3,7 @@
 
 The SOMA app writes and replaces everything between the two `soma:folder` markers. The rest of this file belongs to the folder.
 
-A person designs a 3D model with code in this folder, together with you. The model is written in Python with CadQuery, the entry point is `model.py`. The SOMA app shows the result in a 3D viewer next to the terminal.
+A person designs a 3D model with code in this folder, together with you. The model is written in Python with CadQuery, the entry point is `model.py`. CAD Lab Viewer shows the result in a 3D viewer.
 ## Project layout
 
 | Path | Purpose |
@@ -18,7 +18,7 @@ A person designs a 3D model with code in this folder, together with you. The mod
 | `analyses/` | Optional. Load cases for `soma analyze fem` in Python (`soma.fem`), one file per load case. The skill for FEM explains them |
 | `drawings/` | Optional. Technical drawings in Python (`soma.drawing`), one file per drawing or set of sheets. `soma drawing build` writes PDF and DXF to `output/drawings/`, all sheets together to `output/drawings.pdf`. The skill for technical drawings explains them |
 | `renders/` | Pictures and videos written by `soma render`. Not in the version history and not in the saved .soma file |
-| `.soma/` | App data (viewer cache, build status, feedback images, skills, built animations, analysis results, drawing pictures). Do not edit. Read the skills in `.soma/skills/` as the list at the end of this file says, and files in `.soma/feedback/` when the user points you to them |
+| `.soma/` | App data (viewer cache, build status, feedback images, skills, built animations, analysis results, drawing pictures). Do not edit. Use the skill sources listed below and open files in `.soma/feedback/` when the user points you to them |
 
 ## Rules for model.py
 
@@ -34,7 +34,7 @@ A person designs a 3D model with code in this folder, together with you. The mod
 
 ## Commands
 
-Run them in this terminal. They work without the app.
+Run them from a shell. They work without the app.
 
 | Command | Purpose |
 |---|---|
@@ -82,37 +82,38 @@ The user can also edit files directly in the app's editor. Read a file again rig
 <!-- soma:skills -->
 ## Skills
 
+Run each CAD Lab command from the repository root. Replace `<project-folder>` with this project's path.
+
 ### Always follow
 
-The user switched these rule sets on for this model. **Read each file before you change the model and follow it.**
+The user switched these rule sets on for this model. **Read each skill before you change the model and follow it.**
 They take precedence over your general habits, but not over explicit wishes of the user. If a rule cannot be met, say so.
 
-- `.soma/skills/design-workflow.md`: Design workflow
-- `.soma/skills/cadquery.md`: Clean CadQuery modeling
-- `.soma/skills/parametric.md`: Parametric models
-- `.soma/skills/standard-parts.md`: Standard parts
+- `cadlab/bin/cadlab skill design-workflow --project <project-folder>`: Design workflow
+- `cadlab/bin/cadlab skill cadquery --project <project-folder>`: Clean CadQuery modeling
+- `cadlab/bin/cadlab skill parametric --project <project-folder>`: Parametric models
+- `cadlab/bin/cadlab skill standard-parts --project <project-folder>`: Standard parts
 
 ### Read when relevant
 
 These rule sets are available, but not switched on for every change. **Read one as soon as the conversation turns to
 its topic** (for example the user wants the part 3D printed), not all of them up front. Follow it while the topic applies.
 
-- `.soma/skills/cadquery-scripts.md`: CadQuery scripts. Read when `soma build` reports "Compatibility mode", the model came from an existing CadQuery script, the code calls show_object() or ocp_vscode, or a file contains a "soma-compat" block.
-- `.soma/skills/shell-environment.md`: Shell environment. Read when `soma` or `pip` is not found, `soma build` says the shell lacks the environment of the app's terminals, or umlauts in files look garbled (Ã¤, Ã¼).
-- `.soma/skills/soma-app.md`: Using the SOMA app. Read when the user asks how to do something in the SOMA app, cannot find a button or panel, or asks what a part of the window does.
-- `.soma/skills/3d-printing.md`: 3D printing (FDM). Read when the parts will be 3D printed on a filament printer (FDM).
-- `.soma/skills/resin-powder.md`: Resin and powder 3D printing (SLA, SLS, MJF). Read when the parts will be printed in resin (SLA, DLP) or powder (SLS, MJF).
-- `.soma/skills/cnc.md`: CNC milling and turning. Read when parts will be CNC milled or turned.
-- `.soma/skills/laser.md`: Laser cutting. Read when parts will be laser cut from flat sheets (plywood, MDF, acrylic).
-- `.soma/skills/sheet-metal.md`: Sheet metal. Read when parts will be made from bent sheet metal.
-- `.soma/skills/plasma.md`: Plasma cutting. Read when parts will be cut from metal plate on a CNC plasma table.
-- `.soma/skills/tolerances.md`: Tolerances and fits. Read when parts must fit together: clearances, holes for screws, sliding or press fits.
-- `.soma/skills/joints.md`: Joints and fasteners. Read when parts are joined: screws, snap fits, hinges, pins, magnets or glue.
-- `.soma/skills/strength.md`: Strength and stiffness. Read when a part carries load or must be stiff, strong or light.
-- `.soma/skills/assemblies.md`: Assemblies and motion. Read when several parts are assembled or move against each other.
-- `.soma/skills/analysis.md`: Analysis. Read when you check printability, wall thickness or gaps between parts, or the user asks for an analysis.
-- `.soma/skills/animation.md`: Animation and video. Read when the user wants to see parts move, an assembly sequence, a camera flight, a video or a presentation of the model.
-- `.soma/skills/fem.md`: Strength with FEM. Read when a part carries a real load and the user wants to know whether it holds, where it is weakest or how far it bends.
-- `.soma/skills/drawings.md`: Technical drawings. Read when the user wants a technical drawing, a manufacturing or assembly drawing, a PDF or DXF with dimensions, or a parts list.
+- `cadlab/bin/cadlab skill cadquery-scripts --project <project-folder>`: CadQuery scripts. Read when `soma build` reports "Compatibility mode", the model came from an existing CadQuery script, the code calls show_object() or ocp_vscode, or a file contains a "soma-compat" block.
+- `cadlab/bin/cadlab skill soma-app --project <project-folder>`: Using the SOMA app. Read when the user asks how to do something in the SOMA app, cannot find a button or panel, or asks what a part of the window does.
+- `cadlab/bin/cadlab skill 3d-printing --project <project-folder>`: 3D printing (FDM). Read when the parts will be 3D printed on a filament printer (FDM).
+- `cadlab/bin/cadlab skill resin-powder --project <project-folder>`: Resin and powder 3D printing (SLA, SLS, MJF). Read when the parts will be printed in resin (SLA, DLP) or powder (SLS, MJF).
+- `cadlab/bin/cadlab skill cnc --project <project-folder>`: CNC milling and turning. Read when parts will be CNC milled or turned.
+- `cadlab/bin/cadlab skill laser --project <project-folder>`: Laser cutting. Read when parts will be laser cut from flat sheets (plywood, MDF, acrylic).
+- `cadlab/bin/cadlab skill sheet-metal --project <project-folder>`: Sheet metal. Read when parts will be made from bent sheet metal.
+- `cadlab/bin/cadlab skill plasma --project <project-folder>`: Plasma cutting. Read when parts will be cut from metal plate on a CNC plasma table.
+- `cadlab/bin/cadlab skill tolerances --project <project-folder>`: Tolerances and fits. Read when parts must fit together: clearances, holes for screws, sliding or press fits.
+- `cadlab/bin/cadlab skill joints --project <project-folder>`: Joints and fasteners. Read when parts are joined: screws, snap fits, hinges, pins, magnets or glue.
+- `cadlab/bin/cadlab skill strength --project <project-folder>`: Strength and stiffness. Read when a part carries load or must be stiff, strong or light.
+- `cadlab/bin/cadlab skill assemblies --project <project-folder>`: Assemblies and motion. Read when several parts are assembled or move against each other.
+- `cadlab/bin/cadlab skill analysis --project <project-folder>`: Analysis. Read when you check printability, wall thickness or gaps between parts, or the user asks for an analysis.
+- `cadlab/bin/cadlab skill animation --project <project-folder>`: Animation and video. Read when the user wants to see parts move, an assembly sequence, a camera flight, a video or a presentation of the model.
+- `cadlab/bin/cadlab skill fem --project <project-folder>`: Strength with FEM. Read when a part carries a real load and the user wants to know whether it holds, where it is weakest or how far it bends.
+- `cadlab/bin/cadlab skill drawings --project <project-folder>`: Technical drawings. Read when the user wants a technical drawing, a manufacturing or assembly drawing, a PDF or DXF with dimensions, or a parts list.
 <!-- /soma:skills -->
 <!-- /soma:folder -->

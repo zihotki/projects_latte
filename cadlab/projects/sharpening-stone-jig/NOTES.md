@@ -13,8 +13,8 @@
 - Holder and fit coupon: 0.5 mm chamfers on the top edges. Pocket dimensions
   below the edge relief are unchanged.
 - All geometry and validation are scoped to this CAD project.
-- Follow `.soma/skills/3d-printing.md`, `.soma/skills/tolerances.md`, and
-  `.soma/skills/assemblies.md` for this FDM assembly. The confirmed A1 bed
+- Follow the shared `3d-printing`, `tolerances`, and `assemblies` skills for
+  this FDM assembly. The confirmed A1 bed
   dimensions replace the app default. Bearing faces intentionally touch.
 
 ## Assumptions and limits
